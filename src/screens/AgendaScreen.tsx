@@ -1869,7 +1869,10 @@ export function AgendaScreen(): React.JSX.Element {
 
           {settingsTab === 'notes' && (
             <>
-          <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Daily Notes</Text>
+          {/* Named for the filename alone: the folder and template for daily
+              notes live in the per-kind blocks below, alongside meeting and
+              class, so there is only one place to set each. */}
+          <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Daily Note Filename</Text>
           <Text style={styles.bodyText}>
             The Day View's Daily Log button opens that day's journal note, creating it only if it
             isn't already there. The plugin cannot search your folders, so this has to match your
@@ -1882,12 +1885,6 @@ export function AgendaScreen(): React.JSX.Element {
             date codes. "Daily" becomes "5aily" on the 5th; write{' '}
             <Text style={styles.bodyStrong}>[Daily] YYYY-MM-DD</Text> instead.
           </Text>
-
-          <Text style={styles.fieldLabel}>Folder</Text>
-          <Text style={styles.codePath}>{dailyNoteFolder}</Text>
-          <TouchableOpacity style={styles.pickerOpenBtn} onPress={() => handleChooseNoteFolder('daily')}>
-            <Text style={styles.pickerOpenBtnText}>📁 Change Daily Notes Folder...</Text>
-          </TouchableOpacity>
 
           <Text style={styles.fieldLabel}>Filename format</Text>
           <TextInput
