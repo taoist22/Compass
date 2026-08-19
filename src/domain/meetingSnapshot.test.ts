@@ -1,4 +1,4 @@
-import { createMeetingSnapshot, generateNoteFilename } from './meetingSnapshot';
+import { createMeetingSnapshot, generateNoteFilename, noteIdentity } from './meetingSnapshot';
 import { CalendarEvent } from './types';
 
 describe('meetingSnapshot', () => {
@@ -59,5 +59,27 @@ describe('meetingSnapshot', () => {
     expect(snapshot.attendeesStr).toContain('No attendees listed');
     expect(snapshot.locationStr).toBe('N/A');
     expect(snapshot.descriptionStr).toContain('No agenda or description provided.');
+  });
+});
+
+describe('noteIdentity', () => {
+  test('a one-off event is its own identity', () => {
+    expect(noteIdentity({ uid: 'evt-1', recurringSeriesId: undefined })).toBe('evt-1');
+  });
+
+  test('every occurrence of a series shares the series identity', () => {
+    // expandRruleInstances mints `${seriesUid}_${date}` per occurrence, so
+    // without this a weekly class would be asked its kind every week.
+    const week1 = { uid: 'class-101_2026-08-24', recurringSeriesId: 'class-101' };
+    const week2 = { uid: 'class-101_2026-08-31', recurringSeriesId: 'class-101' };
+
+    expect(noteIdentity(week1)).toBe('class-101');
+    expect(noteIdentity(week2)).toBe(noteIdentity(week1));
+  });
+
+  test('two different series stay distinct', () => {
+    expect(noteIdentity({ uid: 'a_2026-08-24', recurringSeriesId: 'a' })).not.toBe(
+      noteIdentity({ uid: 'b_2026-08-24', recurringSeriesId: 'b' })
+    );
   });
 });

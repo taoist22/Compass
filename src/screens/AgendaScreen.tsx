@@ -27,7 +27,7 @@ import { expandEventsForDate, parseIcsContent } from '../domain/icsParser';
 import { filterEvents } from '../domain/eventFilters';
 import { meetingNoteService } from '../supernote/meetingNoteService';
 import { calendarStorage } from '../storage/calendarStorage';
-import { createMeetingSnapshot, generateNoteFilename } from '../domain/meetingSnapshot';
+import { createMeetingSnapshot, generateNoteFilename, noteIdentity } from '../domain/meetingSnapshot';
 import { generateMarkdownSnapshot, generatePlainTextSnapshot } from '../domain/noteExporter';
 import { caldavService, CaldavProviderType, isTaskItem } from '../domain/caldavService';
 import {
@@ -1041,7 +1041,9 @@ export function AgendaScreen(): React.JSX.Element {
    */
   const handleRequestNoteCreation = (event: CalendarEvent) => {
     setShowDateActionSheet(false);
-    const known = calendarStorage.getEventKind(event.uid);
+    // Keyed on the series, so a weekly class is asked once rather than
+    // every occurrence.
+    const known = calendarStorage.getEventKind(noteIdentity(event));
     if (known) {
       void handleExecuteNoteCreation(event, known);
       return;
@@ -1053,8 +1055,8 @@ export function AgendaScreen(): React.JSX.Element {
     const event = kindPromptEvent;
     setKindPromptEvent(null);
     if (!event) return;
-    calendarStorage.setEventKind(event.uid, kind);
-    setNoteKindByEvent(prev => ({ ...prev, [event.uid]: kind }));
+    calendarStorage.setEventKind(noteIdentity(event), kind);
+    setNoteKindByEvent(prev => ({ ...prev, [noteIdentity(event)]: kind }));
     void handleExecuteNoteCreation(event, kind);
   };
 
@@ -1094,13 +1096,13 @@ export function AgendaScreen(): React.JSX.Element {
    */
   const defaultNoteKind = (): NoteKind => (themeMode === 'academic' ? 'class' : 'meeting');
 
-  const kindForEvent = (uid: string): NoteKind =>
-    calendarStorage.getEventKind(uid) || defaultNoteKind();
+  const kindForEvent = (event: CalendarEvent): NoteKind =>
+    calendarStorage.getEventKind(noteIdentity(event)) || defaultNoteKind();
 
   const handleExportItemFormat = async (event: CalendarEvent, format: 'md' | 'txt') => {
     // Reads the note's own kind rather than whatever mode happens to be
     // active, so exporting an old class note no longer relabels it a meeting.
-    const kind = kindForEvent(event.uid);
+    const kind = kindForEvent(event);
     const snapshot = createMeetingSnapshot(event, kind);
     const content =
       format === 'md'
@@ -1174,7 +1176,13 @@ export function AgendaScreen(): React.JSX.Element {
     const mappings = calendarStorage.getAllMappings();
     const byEvent: Record<string, NoteKind | undefined> = {};
     for (const mapping of Object.values(mappings)) {
-      if (mapping?.eventUid) byEvent[mapping.eventUid] = mapping.kind;
+      if (!mapping?.eventUid) continue;
+      const identity = mapping.seriesId || mapping.eventUid;
+      byEvent[identity] = mapping.kind;
+    }
+    // Tags set without a note yet still badge the grid.
+    for (const [identity, kind] of Object.entries(calendarStorage.getAllEventKinds())) {
+      if (!byEvent[identity]) byEvent[identity] = kind;
     }
     setNoteKindByEvent(byEvent);
   }, [events, themeMode, targetNotesDir, eventNotePaths, refreshState]);
@@ -1238,7 +1246,8 @@ export function AgendaScreen(): React.JSX.Element {
           // every render, so listing it as a dependency would re-run this
           // sweep continuously. themeMode, its only reactive input, is
           // already in the dependency list below.
-          calendarStorage.getEventKind(evt.uid) || (themeMode === 'academic' ? 'class' : 'meeting')
+          calendarStorage.getEventKind(noteIdentity(evt)) ||
+            (themeMode === 'academic' ? 'class' : 'meeting')
         );
         const path = `${dir}/${name}`;
         try {
@@ -2321,7 +2330,7 @@ export function AgendaScreen(): React.JSX.Element {
           <EventDetailModal
             visible={showEventDetail}
             event={detailEvent}
-            noteKind={detailEvent ? calendarStorage.getEventKind(detailEvent.uid) : undefined}
+            noteKind={detailEvent ? calendarStorage.getEventKind(noteIdentity(detailEvent)) : undefined}
             existingNotePath={detailEvent ? eventNotePaths[detailEvent.uid] : undefined}
             onClose={() => {
               setShowEventDetail(false);
@@ -2332,8 +2341,8 @@ export function AgendaScreen(): React.JSX.Element {
               handleRequestNoteCreation(evt);
             }}
             onChangeKind={(evt, kind) => {
-              calendarStorage.setEventKind(evt.uid, kind);
-              setNoteKindByEvent(prev => ({ ...prev, [evt.uid]: kind }));
+              calendarStorage.setEventKind(noteIdentity(evt), kind);
+              setNoteKindByEvent(prev => ({ ...prev, [noteIdentity(evt)]: kind }));
               setStatusMsg(`"${evt.summary}" is now a ${kind} note.`);
             }}
             onOpenExistingNote={path => {

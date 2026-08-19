@@ -1,6 +1,19 @@
 import { CalendarEvent, MeetingSnapshot, NoteKind } from './types';
 
 /**
+ * The identity a note-related fact belongs to.
+ *
+ * Recurrence is expanded locally into one CalendarEvent per occurrence, each
+ * with its own uid of the form `${seriesUid}_${date}`. Anything that should
+ * hold for the whole series — which template, which folder, whether it is a
+ * class — must therefore key on the series, or a weekly class would ask again
+ * every single week. Mirrors what setMapping already does for note paths.
+ */
+export function noteIdentity(event: Pick<CalendarEvent, 'uid' | 'recurringSeriesId'>): string {
+  return event.recurringSeriesId || event.uid;
+}
+
+/**
  * Generates a clean, filesystem-safe filename for a meeting or class note.
  */
 export function generateNoteFilename(

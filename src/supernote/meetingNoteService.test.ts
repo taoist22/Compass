@@ -1,6 +1,7 @@
 import { meetingNoteService } from './meetingNoteService';
 import { CalendarEvent } from '../domain/types';
 import { calendarStorage } from '../storage/calendarStorage';
+import { noteIdentity } from '../domain/meetingSnapshot';
 import { PluginFileAPI, PluginNoteAPI, FileUtils } from 'sn-plugin-lib';
 
 jest.mock('sn-plugin-lib', () => ({
@@ -186,5 +187,26 @@ describe('event kind store', () => {
     calendarStorage.setEventKind('evt-precedence', 'meeting');
 
     expect(calendarStorage.getEventKind('evt-precedence')).toBe('class');
+  });
+});
+
+describe('recurring series identity', () => {
+  test('one occurrence answers for the whole series', () => {
+    // Occurrences are minted as `${seriesUid}_${date}` by expandRruleInstances,
+    // so keying on the raw uid would ask again every week — on exactly the
+    // events most likely to be classes.
+    const week1 = { uid: 'phys301_2026-08-24', recurringSeriesId: 'phys301' };
+    const week2 = { uid: 'phys301_2026-08-31', recurringSeriesId: 'phys301' };
+
+    calendarStorage.setEventKind(noteIdentity(week1), 'class');
+
+    expect(calendarStorage.getEventKind(noteIdentity(week2))).toBe('class');
+    // The occurrence's own uid was never stored.
+    expect(calendarStorage.getEventKind(week2.uid)).toBeUndefined();
+  });
+
+  test('a one-off event is unaffected by series handling', () => {
+    calendarStorage.setEventKind(noteIdentity({ uid: 'standalone' }), 'meeting');
+    expect(calendarStorage.getEventKind('standalone')).toBe('meeting');
   });
 });

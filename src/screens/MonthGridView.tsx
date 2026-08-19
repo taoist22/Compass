@@ -4,6 +4,7 @@ import { allocateCellRows, generateMonthGrid, MonthGridCell } from '../domain/mo
 import { CalendarEvent, CalendarTask, NoteKind } from '../domain/types';
 import { tasksForCalendarDay } from '../domain/taskFilters';
 import { dateKey } from '../domain/dailyNote';
+import { noteIdentity } from '../domain/meetingSnapshot';
 
 interface MonthGridViewProps {
   currentDate: Date;
@@ -71,8 +72,10 @@ function cellNoteBadges(
     let unknown = false;
 
     for (const evt of cell.events) {
-      if (!(evt.uid in noteKindByEvent)) continue;
-      const kind = noteKindByEvent[evt.uid];
+      // Occurrences carry a per-instance uid; kinds are held on the series.
+      const identity = noteIdentity(evt);
+      if (!(identity in noteKindByEvent)) continue;
+      const kind = noteKindByEvent[identity];
       if (kind === 'meeting') meeting = true;
       else if (kind === 'class') klass = true;
       else if (kind !== 'daily') unknown = true;
