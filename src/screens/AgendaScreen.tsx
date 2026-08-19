@@ -139,7 +139,10 @@ export function AgendaScreen(): React.JSX.Element {
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [caldavCustomUrl, setCaldavCustomUrl] = useState<string>('');
 
-  const [, setRefreshState] = useState<number>(0);
+  // Bound, not discarded: this is the token the note-existence checks depend
+  // on. Discarding it meant creating a note re-rendered but never re-checked,
+  // so the row kept saying "Create Note" until the date changed.
+  const [refreshState, setRefreshState] = useState<number>(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -1041,9 +1044,16 @@ export function AgendaScreen(): React.JSX.Element {
       const actionText = result.isNewFile ? 'Created' : `Appended page ${result.pageNum} of`;
       setRefreshState(prev => prev + 1);
 
+      // Optimistic, so the row flips to "Open Note" straight away rather than
+      // waiting for the next existence sweep.
+      setEventNotePaths(prev => ({ ...prev, [event.uid]: result.notePath }));
+
       // Open it the way daily notes do — through the native intent. The service
       // used to call openFilePath, which drops you in the file manager.
       const opened = await openNoteInEditor(result.notePath);
+      // The panel sits in front of the note app, so without this the note
+      // opens behind the calendar and looks like nothing happened.
+      if (opened.success) closePanel();
       setStatusMsg(
         opened.success
           ? `${actionText} ${result.notePath.split('/').pop()}`
@@ -1131,7 +1141,7 @@ export function AgendaScreen(): React.JSX.Element {
       if (mapping?.eventUid) byEvent[mapping.eventUid] = mapping.kind;
     }
     setNoteKindByEvent(byEvent);
-  }, [events, themeMode, targetNotesDir, eventNotePaths]);
+  }, [events, themeMode, targetNotesDir, eventNotePaths, refreshState]);
 
   // Same check as above, across the whole visible month so the grid can badge
   // the days that have one. There is no index to consult — listFiles is
@@ -1208,7 +1218,7 @@ export function AgendaScreen(): React.JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [events, themeMode, targetNotesDir]);
+  }, [events, themeMode, targetNotesDir, refreshState]);
 
   const handleOpenDailyNote = async () => {
     const settings = calendarStorage.getSettings();
@@ -1240,6 +1250,7 @@ export function AgendaScreen(): React.JSX.Element {
 
     const opened = await openNoteInEditor(path);
     setStatusMsg(opened.success ? `Created and opened ${fileName}.note` : opened.message);
+    if (opened.success) closePanel();
   };
 
   // Tasks are grouped by the day being viewed. Past Due and No Date only
@@ -1519,10 +1530,22 @@ export function AgendaScreen(): React.JSX.Element {
     }
   };
 
+  /**
+   * Hides the plugin panel. Required whenever a note is opened: the panel sits
+   * in front of the note app, so the note otherwise launches behind it and
+   * looks like the tap did nothing.
+   */
+  const closePanel = () => {
+    try {
+      PluginManager.closePluginView();
+    } catch (e) {}
+  };
+
   const handleOpenExistingNote = async (notePath: string) => {
     setShowDateActionSheet(false);
     const res = await openNoteInEditor(notePath);
     setStatusMsg(res.message);
+    if (res.success) closePanel();
   };
 
   const handleFetchFeedUrl = async () => {
@@ -1643,7 +1666,7 @@ export function AgendaScreen(): React.JSX.Element {
                 Note Template
               </Text>
 
-              <ScrollView style={styles.templateScroll}>
+              <ScrollView style={styles.templateScroll} keyboardShouldPersistTaps="handled">
                 {systemTemplates.length === 0 && (
                   <Text style={styles.bodyTextCenter}>
                     No built-in templates reported by this device. A custom PNG still works.
@@ -1685,7 +1708,11 @@ export function AgendaScreen(): React.JSX.Element {
         </Modal>
 
       {showSettings ? (
-        <ScrollView style={styles.settingsContainer}>
+        <ScrollView
+          style={styles.settingsContainer}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.settingsContent}
+        >
           <View style={styles.settingsHeader}>
             <Text style={styles.settingsHeaderTitle}>⚙️ SETTINGS &amp; CONFIGURATION</Text>
             <TouchableOpacity onPress={() => setShowSettings(false)}>
@@ -1920,6 +1947,10 @@ export function AgendaScreen(): React.JSX.Element {
           {/* One block per note kind: template first, then where the notes are
               filed. Daily notes keep their own folder above, since that folder
               usually predates the plugin. */}
+          <Text style={styles.previewHint}>
+            Folder: type a full path and it is created if it does not exist. Browse picks any
+            file and uses the folder it sits in — the device offers no folder picker.
+          </Text>
           {(['daily', 'meeting', 'class'] as NoteKind[]).map(kind => {
             const label = kind === 'daily' ? 'Daily' : kind === 'class' ? 'Class' : 'Meeting';
             const value = noteTemplateFor(kind);
@@ -1927,36 +1958,43 @@ export function AgendaScreen(): React.JSX.Element {
 
             return (
               <View key={kind} style={styles.templateBlock}>
-                <Text style={[styles.sectionTitle, { marginTop: 15 }]}>{label} Notes</Text>
+                <Text style={[styles.sectionTitle, { marginTop: 12 }]}>{label} Notes</Text>
 
-                <Text style={styles.bodyText}>Template: {templateLabel(value)}</Text>
-                <TouchableOpacity
-                  style={styles.pickerOpenBtn}
-                  onPress={() => setTemplatePickerKind(kind)}
-                >
-                  <Text style={styles.pickerOpenBtnText}>🎨 Choose {label} Template...</Text>
-                </TouchableOpacity>
+                {/* Template and folder side by side: stacked, the three kinds
+                    ran past the bottom of the page and forced a scroll. */}
+                <View style={styles.templateColumns}>
+                  <View style={styles.templateCol}>
+                    <Text style={styles.fieldLabel}>Template</Text>
+                    <Text style={styles.bodyText} numberOfLines={1}>
+                      {templateLabel(value)}
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.pickerOpenBtn}
+                      onPress={() => setTemplatePickerKind(kind)}
+                    >
+                      <Text style={styles.pickerOpenBtnText}>🎨 Choose Template...</Text>
+                    </TouchableOpacity>
+                  </View>
 
-                <Text style={styles.fieldLabel}>Folder</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={folderDrafts[kind] ?? folder}
-                  onChangeText={text => setFolderDrafts(prev => ({ ...prev, [kind]: text }))}
-                  onEndEditing={() => saveNoteFolder(kind, folderDrafts[kind] ?? folder)}
-                  placeholder="/storage/emulated/0/Note/..."
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                <Text style={styles.previewHint}>
-                  Type a full path — it is created if it does not exist. Browse instead picks any
-                  file and uses the folder it sits in; the device has no folder picker.
-                </Text>
-                <TouchableOpacity
-                  style={styles.pickerOpenBtn}
-                  onPress={() => handleChooseNoteFolder(kind)}
-                >
-                  <Text style={styles.pickerOpenBtnText}>📁 Browse for {label} Folder...</Text>
-                </TouchableOpacity>
+                  <View style={styles.templateCol}>
+                    <Text style={styles.fieldLabel}>Folder</Text>
+                    <TextInput
+                      style={[styles.textInput, styles.folderInput]}
+                      value={folderDrafts[kind] ?? folder}
+                      onChangeText={text => setFolderDrafts(prev => ({ ...prev, [kind]: text }))}
+                      onEndEditing={() => saveNoteFolder(kind, folderDrafts[kind] ?? folder)}
+                      placeholder="/storage/emulated/0/Note/..."
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                    <TouchableOpacity
+                      style={styles.pickerOpenBtn}
+                      onPress={() => handleChooseNoteFolder(kind)}
+                    >
+                      <Text style={styles.pickerOpenBtnText}>📁 Browse...</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
               </View>
             );
           })}
@@ -2260,8 +2298,16 @@ export function AgendaScreen(): React.JSX.Element {
             onCreateTask={handleCreateNewTask}
           />
 
-          {/* Clean Main View: Full-Screen Month Grid */}
+          {/* Month view scrolls as one page: grid plus the task strip below it.
+              Previously both competed for a fixed screen height, so shrinking
+              the cells only revealed a strip that was still clipped and could
+              never show more than a row. */}
           {viewMode === 'month' && (
+            <ScrollView
+              style={styles.monthScroll}
+              contentContainerStyle={styles.monthScrollContent}
+              keyboardShouldPersistTaps="handled"
+            >
             <MonthGridView
               allTasks={tasks}
               currentDate={selectedDate}
@@ -2279,13 +2325,11 @@ export function AgendaScreen(): React.JSX.Element {
                 setShowDateActionSheet(true);
               }}
             />
-          )}
 
-          {/* The two task pools a date grid structurally cannot show: undated
-              tasks have no cell to sit in, and overdue ones are stranded on a
-              past date nobody is looking at. Without this they are invisible
-              unless you happen to be on today's Day View. */}
-          {viewMode === 'month' && (
+            {/* The two task pools a date grid structurally cannot show: undated
+                tasks have no cell to sit in, and overdue ones are stranded on a
+                past date nobody is looking at. Without this they are invisible
+                unless you happen to be on today's Day View. */}
             <View style={styles.gridStrip}>
               {([
                 ['No Date', todayTaskSections.noDate, false],
@@ -2327,13 +2371,14 @@ export function AgendaScreen(): React.JSX.Element {
                 </View>
               ))}
             </View>
+            </ScrollView>
           )}
 
           {/* ── Day View: planner layout ─────────────────────────────
               Two framed panels side by side on a Manta; stacked on a Nomad,
               where 1404px cannot carry two columns without wrapping badly. */}
           {viewMode === 'agenda' && (
-            <ScrollView style={styles.agendaViewList}>
+            <ScrollView style={styles.agendaViewList} keyboardShouldPersistTaps="handled">
               {/* Weekday strip for jumping within the current week. */}
               <View style={styles.weekStrip}>
                 {weekDays.map((d, offset) => {
@@ -3195,9 +3240,16 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#000000',
   },
+  monthScroll: {
+    flex: 1,
+  },
+  monthScrollContent: {
+    paddingBottom: 12,
+  },
   gridStrip: {
     flexDirection: 'row',
     alignSelf: 'stretch',
+    marginTop: 8,
     borderWidth: 2,
     borderColor: '#000000',
     borderRadius: 6,
@@ -3613,9 +3665,25 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 13,
   },
+  // Room to lift the last settings field above the on-screen keyboard.
+  settingsContent: {
+    paddingBottom: 260,
+  },
   templateScroll: {
     maxHeight: 360,
     marginBottom: 8,
+  },
+  templateColumns: {
+    flexDirection: 'row',
+  },
+  templateCol: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  // Half-width: the full path rarely needs reading in full, and two columns
+  // only fit if the field stops claiming the whole row.
+  folderInput: {
+    fontSize: 12,
   },
   templateBlock: {
     borderTopWidth: 1,

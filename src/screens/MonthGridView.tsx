@@ -37,13 +37,13 @@ const EVENT_CAP = 3;
 const CELL_CHROME_HEIGHT = 43;
 
 /**
- * Height of one snippet row: the 11dp font plus its 1dp bottom margin.
+ * Height of one snippet row: the 10dp font plus its 1dp bottom margin.
  *
  * Keep in step with eventSnippetText/taskSnippetText below — the row budget is
  * derived from it, so a font change without one here silently over- or
  * under-fills every cell.
  */
-const SNIPPET_ROW_HEIGHT = 15;
+const SNIPPET_ROW_HEIGHT = 14;
 
 
 /**
@@ -343,13 +343,13 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   eventSnippetText: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#000000',
     fontWeight: '500',
     marginBottom: 1,
   },
   taskSnippetText: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#000000',
     marginBottom: 1,
   },
@@ -361,7 +361,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   moreEventsText: {
-    fontSize: 10,
+    fontSize: 9,
     fontStyle: 'italic',
     color: '#505050',
   },

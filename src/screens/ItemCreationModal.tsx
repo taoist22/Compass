@@ -290,7 +290,15 @@ export function ItemCreationModal({
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.formContent}>
+          {/* keyboardShouldPersistTaps: with an input focused, the first tap
+              elsewhere is otherwise consumed dismissing focus, so a duration
+              chip needed tapping twice. "handled" still lets a tap on blank
+              space close the keyboard. */}
+          <ScrollView
+            style={styles.formContent}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.formContentInner}
+          >
             <Text style={styles.label}>{itemKind === 'event' ? 'Event Title:' : 'Task Name:'}</Text>
             <TextInput
               style={styles.textInput}
@@ -324,7 +332,12 @@ export function ItemCreationModal({
               <>
                 <Text style={styles.label}>{itemKind === 'event' ? 'Start Time:' : 'Due Time:'}</Text>
                 <View style={styles.timePickerRow}>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled"
+                    style={styles.chipScroll}
+                  >
                     {HOURS.map(h => (
                       <TouchableOpacity
                         key={h}
@@ -587,6 +600,11 @@ const styles = StyleSheet.create({
   },
   kindBtnTextActive: {
     color: '#ffffff',
+  },
+  // Room to scroll the last field clear of the on-screen keyboard; without it
+  // there is nothing below to scroll into and the field stays covered.
+  formContentInner: {
+    paddingBottom: 220,
   },
   formContent: {
     marginBottom: 12,
