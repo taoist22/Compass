@@ -153,3 +153,27 @@ export function priorityMarker(priority?: TaskPriority): string {
   if (priority === 3) return '!';
   return '';
 }
+
+/**
+ * One-line label for a task row: due date, priority marker, then title.
+ *
+ * Returned as a single string on purpose. Multiple expression children inside
+ * a <Text> produce a multi-child array, which has previously broken button
+ * registration in these plugins, and the date read as belonging to the next
+ * column when it was rendered as a separate sibling element.
+ */
+export function taskRowLabel(task: CalendarTask, showDate = false): string {
+  const parts: string[] = [];
+
+  if (showDate && task.dueDate) {
+    parts.push(
+      `${task.dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ·`
+    );
+  }
+
+  const marker = priorityMarker(task.priority);
+  if (marker) parts.push(marker);
+
+  parts.push(task.title);
+  return parts.join(' ');
+}

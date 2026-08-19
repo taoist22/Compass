@@ -5,7 +5,7 @@ import { CalendarEvent, CalendarTask, NoteKind } from '../domain/types';
 import { tasksForCalendarDay } from '../domain/taskFilters';
 import { dateKey } from '../domain/dailyNote';
 import { noteIdentity } from '../domain/meetingSnapshot';
-import { priorityMarker, statusGlyph, taskStatus } from '../domain/taskModel';
+import { statusGlyph, taskRowLabel, taskStatus } from '../domain/taskModel';
 
 interface MonthGridViewProps {
   currentDate: Date;
@@ -218,9 +218,7 @@ export function MonthGridView({
                             ]}
                             numberOfLines={1}
                           >
-                            {statusGlyph(taskStatus(t))}{' '}
-                            {priorityMarker(t.priority) ? `${priorityMarker(t.priority)} ` : ''}
-                            {t.title}
+                            {`${statusGlyph(taskStatus(t))} ${taskRowLabel(t)}`}
                           </Text>
                         ))}
                         {rows.moreTasksLine && (
@@ -307,19 +305,12 @@ const styles = StyleSheet.create({
     borderColor: '#000000',
     backgroundColor: '#f8f8f8',
   },
-  // Today's heavier ring wins when it is also the selected day.
-  todaySelectedCell: {
-    borderWidth: 4,
-    borderColor: '#000000',
-  },
-  // A solid fill made the cell's own events and tasks unreadable. Today keeps
-  // its heavy border; the selected day gets a lighter one and a faint wash, so
-  // both are identifiable without either swallowing its contents.
-  selectedCell: {
-    backgroundColor: '#f0f0f0',
-    borderColor: '#000000',
-    borderWidth: 3,
-  },
+  todaySelectedCell: {},
+  // Deliberately empty. Selecting a day navigates to the Day View, so marking
+  // the cell told the user something they had just done and could already see;
+  // the previous solid fill also made the cell's own contents unreadable. Only
+  // today is distinguished, by its heavier border.
+  selectedCell: {},
   cellTopBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',

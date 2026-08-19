@@ -25,9 +25,9 @@ import { countOpenTasks, isSameDay as isSameCalendarDay, sectionTasksForDay } fr
 import {
   isDone,
   nextStatus,
-  priorityMarker,
   statusGlyph,
   statusLabel,
+  taskRowLabel,
   taskStatus,
   withStatus,
 } from '../domain/taskModel';
@@ -2486,16 +2486,14 @@ export function AgendaScreen(): React.JSX.Element {
                             <Text style={styles.gridStripCheck}>{statusGlyph(taskStatus(task))}</Text>
                           </TouchableOpacity>
                           <TouchableOpacity style={styles.gridStripBody} onPress={() => handleEditTask(task)}>
+                            {/* One string, date first. As a separate element
+                                after the body the date floated at the right
+                                edge of the column and read as belonging to the
+                                next one. */}
                             <Text style={styles.gridStripText} numberOfLines={1}>
-                              {priorityMarker(task.priority) ? `${priorityMarker(task.priority)} ` : ''}
-                              {task.title}
+                              {taskRowLabel(task, showDate)}
                             </Text>
                           </TouchableOpacity>
-                          {showDate && task.dueDate ? (
-                            <Text style={styles.gridStripDate}>
-                              {task.dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                            </Text>
-                          ) : null}
                         </View>
                       ))}
                       {items.length > STRIP_TASK_LIMIT && (
@@ -2707,16 +2705,7 @@ export function AgendaScreen(): React.JSX.Element {
                                   style={[styles.focusTaskText, task.completed && styles.focusTaskDone]}
                                   numberOfLines={1}
                                 >
-                                  {priorityMarker(task.priority)
-                                    ? `${priorityMarker(task.priority)} `
-                                    : ''}
-                                  {task.title}
-                                  {showDate && task.dueDate
-                                    ? ` (${task.dueDate.toLocaleDateString('en-US', {
-                                        month: 'short',
-                                        day: 'numeric',
-                                      })})`
-                                    : ''}
+                                  {taskRowLabel(task, showDate)}
                                 </Text>
                               </TouchableOpacity>
 

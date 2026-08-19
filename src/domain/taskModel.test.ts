@@ -11,6 +11,7 @@ import {
   TASK_STATUSES,
   statusGlyph,
   priorityMarker,
+  taskRowLabel,
 } from './taskModel';
 import { CalendarTask } from './types';
 
@@ -185,5 +186,34 @@ describe('row presentation', () => {
     expect(priorityMarker(2)).toBe('');
     expect(priorityMarker(1)).toBe('');
     expect(priorityMarker(undefined)).toBe('');
+  });
+});
+
+describe('taskRowLabel', () => {
+  const due = new Date(2026, 7, 25);
+
+  test('is a single string, not a set of fragments', () => {
+    // Multiple expression children in a <Text> have broken button
+    // registration in these plugins before.
+    expect(typeof taskRowLabel(makeTask())).toBe('string');
+  });
+
+  test('leads with the date when one is shown', () => {
+    const label = taskRowLabel(makeTask({ dueDate: due }), true);
+    expect(label.startsWith('Aug 25 ·')).toBe(true);
+    expect(label.endsWith('Read chapter 4')).toBe(true);
+  });
+
+  test('omits the date when not asked for', () => {
+    expect(taskRowLabel(makeTask({ dueDate: due }), false)).toBe('Read chapter 4');
+  });
+
+  test('places the priority marker between date and title', () => {
+    const label = taskRowLabel(makeTask({ dueDate: due, priority: 4 }), true);
+    expect(label).toBe('Aug 25 · !! Read chapter 4');
+  });
+
+  test('an unprioritised, undated task is just its title', () => {
+    expect(taskRowLabel(makeTask())).toBe('Read chapter 4');
   });
 });

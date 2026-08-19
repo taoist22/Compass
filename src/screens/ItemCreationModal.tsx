@@ -112,6 +112,12 @@ export function ItemCreationModal({
   // Tasks may have no date at all; events always have one.
   const [noDueDate, setNoDueDate] = useState<boolean>(false);
   const [showDatePicker, setShowDatePicker] = useState<boolean>(false);
+  /**
+   * Whether this form is editing or creating a task. Derived from the task
+   * itself when there is one: itemKind is set by an effect, so gating on it
+   * alone meant the task controls could be absent on the first render.
+   */
+  const isTaskForm = Boolean(editingTask) || itemKind === 'task';
   const [taskStatusValue, setTaskStatusValue] = useState<TaskStatus>('todo');
   const [taskPriorityValue, setTaskPriorityValue] = useState<TaskPriority>(1);
 
@@ -445,18 +451,7 @@ export function ItemCreationModal({
               </>
             )}
 
-            <Text style={styles.label}>Description / Details:</Text>
-            <TextInput
-              style={[styles.textInput, styles.multilineInput]}
-              value={description}
-              onChangeText={setDescription}
-              placeholder="Item details..."
-              placeholderTextColor="#707070"
-              multiline
-              numberOfLines={3}
-            />
-
-            {itemKind === 'task' && (
+            {isTaskForm && (
               <>
                 <Text style={styles.label}>Status:</Text>
                 <View style={styles.chipRow}>
@@ -499,6 +494,18 @@ export function ItemCreationModal({
                 </View>
               </>
             )}
+
+            <Text style={styles.label}>Description / Details:</Text>
+            <TextInput
+              style={[styles.textInput, styles.multilineInput]}
+              value={description}
+              onChangeText={setDescription}
+              placeholder="Item details..."
+              placeholderTextColor="#707070"
+              multiline
+              numberOfLines={3}
+            />
+
           </ScrollView>
 
           {/* One row: stacked, Delete fell past the sheet's 85% max height and
@@ -511,15 +518,17 @@ export function ItemCreationModal({
             </TouchableOpacity>
 
             {/* Editing only: there is nothing to delete from a create form. */}
-            {editingEvent && itemKind === 'task' && onDeleteTask && (
+            {editingTask && onDeleteTask && (
               <TouchableOpacity
                 style={styles.deleteTaskBtn}
                 onPress={() => {
-                  onDeleteTask(editingEvent.uid);
+                  onDeleteTask(editingTask.uid);
                   onClose();
                 }}
               >
-                <Text style={styles.deleteTaskBtnText}>🗑️</Text>
+                {/* Labelled, not a bare icon: an unlabelled 🗑️ beside Save was
+                    easy to miss entirely. */}
+                <Text style={styles.deleteTaskBtnText}>🗑️ Delete</Text>
               </TouchableOpacity>
             )}
           </View>
