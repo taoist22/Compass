@@ -2686,11 +2686,13 @@ export function AgendaScreen(): React.JSX.Element {
                     <Text style={styles.panelEmpty}>Nothing to do.</Text>
                   ) : (
                     ([
-                      ['', daySections.dueToday, false],
-                      ['NO DATE', daySections.noDate, false],
-                      ['⚠️ Past Due:', daySections.pastDue, true],
-                      ['UPCOMING', daySections.upcoming, true],
-                      ['COMPLETED', daySections.completed, false],
+                      // Same labels and order as the month-grid strip, so the
+                      // two task surfaces read as one system.
+                      ['Today', daySections.dueToday, false],
+                      ['Upcoming', daySections.upcoming, true],
+                      ['No Date', daySections.noDate, false],
+                      ['Past Due', daySections.pastDue, true],
+                      ['Completed', daySections.completed, false],
                     ] as Array<[string, CalendarTask[], boolean]>).map(([label, items, showDate]) =>
                       items.length === 0 ? null : (
                         <View key={label || 'due'}>

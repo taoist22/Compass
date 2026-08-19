@@ -552,8 +552,10 @@ const styles = StyleSheet.create({
     borderColor: '#000000',
     borderRadius: 8,
     padding: 12,
-    width: '80%',
-    maxHeight: '72%',
+    // 92%/85% originally. 80%/72% was applied but read as unchanged, so this
+    // goes further; the form scrolls, so a lower cap costs nothing.
+    width: '72%',
+    maxHeight: '62%',
   },
   modalHeader: {
     flexDirection: 'row',
