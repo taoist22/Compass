@@ -1,11 +1,4 @@
-import {
-  countOpenTasks,
-  isLegacyTaskEvent,
-  sectionTasksForDay,
-  taskFromLegacyEvent,
-  tasksForCalendarDay,
-  toggleTaskCompletion,
-} from './taskFilters';
+import {countOpenTasks, isLegacyTaskEvent, sectionTasksForDay, taskFromLegacyEvent, tasksForCalendarDay } from './taskFilters';
 import { CalendarTask } from './types';
 
 const TODAY = new Date(2026, 7, 17); // Mon 17 Aug 2026
@@ -123,21 +116,6 @@ describe('tasksForCalendarDay', () => {
       task({ uid: 'open', dueDate: d(17) }),
     ];
     expect(tasksForCalendarDay(items, d(17)).map(t => t.uid)).toEqual(['open', 'done']);
-  });
-});
-
-describe('toggleTaskCompletion', () => {
-  test('completing stamps the time', () => {
-    const done = toggleTaskCompletion(task({ uid: 'a' }), TODAY);
-    expect(done.completed).toBe(true);
-    expect(done.completedAt).toEqual(TODAY);
-  });
-
-  test('un-completing clears the stamp so it stops showing as done that day', () => {
-    const done = toggleTaskCompletion(task({ uid: 'a' }), TODAY);
-    const undone = toggleTaskCompletion(done, TODAY);
-    expect(undone.completed).toBe(false);
-    expect(undone.completedAt).toBeUndefined();
   });
 });
 

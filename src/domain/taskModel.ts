@@ -123,3 +123,33 @@ export function compareTasks(a: CalendarTask, b: CalendarTask): number {
 export function sortTasks(tasks: CalendarTask[]): CalendarTask[] {
   return [...tasks].sort(compareTasks);
 }
+
+/**
+ * Row glyph for a status.
+ *
+ * Drawn from families already proven to render on these devices — the existing
+ * rows use ☐ and ☑, and ▶ appears in the month navigation. An untested glyph
+ * that falls back to a tofu box would be worse than a plain one.
+ */
+export function statusGlyph(status: TaskStatus): string {
+  switch (status) {
+    case 'in-progress':
+      return '▶';
+    case 'done':
+      return '☑';
+    default:
+      return '☐';
+  }
+}
+
+/**
+ * Compact priority marker for a row.
+ *
+ * Only High and Medium are marked. Low and None get nothing: a marker on every
+ * row carries no information and costs width that a Nomad cell does not have.
+ */
+export function priorityMarker(priority?: TaskPriority): string {
+  if (priority === 4) return '!!';
+  if (priority === 3) return '!';
+  return '';
+}

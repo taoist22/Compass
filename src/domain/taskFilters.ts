@@ -109,15 +109,6 @@ export function countOpenTasks(sections: SectionedTasks): number {
   return sections.pastDue.length + sections.dueToday.length + sections.noDate.length;
 }
 
-/** Toggling completion also stamps or clears when it happened. */
-export function toggleTaskCompletion(task: CalendarTask, now: Date = new Date()): CalendarTask {
-  if (task.completed) {
-    const { completedAt, ...rest } = task;
-    void completedAt;
-    return { ...rest, completed: false };
-  }
-  return { ...task, completed: true, completedAt: now };
-}
 
 /**
  * Converts a legacy task — a CalendarEvent carrying isTask or the "[TASK] "

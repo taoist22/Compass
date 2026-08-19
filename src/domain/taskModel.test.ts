@@ -8,6 +8,9 @@ import {
   statusLabel,
   taskStatus,
   withStatus,
+  TASK_STATUSES,
+  statusGlyph,
+  priorityMarker,
 } from './taskModel';
 import { CalendarTask } from './types';
 
@@ -164,5 +167,23 @@ describe('sorting', () => {
     const a = makeTask({ uid: 'a', priority: 4 });
     const b = makeTask({ uid: 'b', priority: 2 });
     expect(Math.sign(compareTasks(a, b))).toBe(-Math.sign(compareTasks(b, a)));
+  });
+});
+
+describe('row presentation', () => {
+  test('each status has its own glyph', () => {
+    const glyphs = TASK_STATUSES.map(statusGlyph);
+    expect(new Set(glyphs).size).toBe(3);
+    expect(statusGlyph('todo')).toBe('☐');
+    expect(statusGlyph('done')).toBe('☑');
+  });
+
+  test('only high and medium are marked', () => {
+    // A marker on every row carries no information and costs width.
+    expect(priorityMarker(4)).toBe('!!');
+    expect(priorityMarker(3)).toBe('!');
+    expect(priorityMarker(2)).toBe('');
+    expect(priorityMarker(1)).toBe('');
+    expect(priorityMarker(undefined)).toBe('');
   });
 });

@@ -5,6 +5,7 @@ import { CalendarEvent, CalendarTask, NoteKind } from '../domain/types';
 import { tasksForCalendarDay } from '../domain/taskFilters';
 import { dateKey } from '../domain/dailyNote';
 import { noteIdentity } from '../domain/meetingSnapshot';
+import { priorityMarker, statusGlyph, taskStatus } from '../domain/taskModel';
 
 interface MonthGridViewProps {
   currentDate: Date;
@@ -217,7 +218,9 @@ export function MonthGridView({
                             ]}
                             numberOfLines={1}
                           >
-                            {t.completed ? '☑' : '☐'} {t.title}
+                            {statusGlyph(taskStatus(t))}{' '}
+                            {priorityMarker(t.priority) ? `${priorityMarker(t.priority)} ` : ''}
+                            {t.title}
                           </Text>
                         ))}
                         {rows.moreTasksLine && (

@@ -8,7 +8,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { CalendarEvent, CalendarFeed } from '../domain/types';
+import { CalendarEvent, CalendarFeed, TaskPriority, TaskStatus } from '../domain/types';
+import {
+  TASK_PRIORITIES,
+  TASK_STATUSES,
+  priorityLabel,
+  statusGlyph,
+  statusLabel,
+} from '../domain/taskModel';
 import { DatePickerModal } from './DatePickerModal';
 
 interface ItemCreationModalProps {
@@ -42,7 +49,17 @@ interface ItemCreationModalProps {
   onClose: () => void;
   onCreateEvent: (event: CalendarEvent, targetFeedId: string) => void;
   /** dueDate omitted means a genuinely undated task, not one dated today. */
-  onCreateTask: (task: { uid?: string; title: string; dueDate?: Date; notes?: string }) => void;
+  onCreateTask: (task: {
+    uid?: string;
+    title: string;
+    dueDate?: Date;
+    notes?: string;
+    status?: TaskStatus;
+    priority?: TaskPriority;
+  }) => void;
+  /** Existing status and priority when editing, so the pickers open correct. */
+  editingTaskStatus?: TaskStatus;
+  editingTaskPriority?: TaskPriority;
   /** Only offered while editing an existing item, never while creating one. */
   onDeleteTask?: (uid: string) => void;
 }
@@ -68,6 +85,8 @@ export function ItemCreationModal({
   onCreateEvent,
   onCreateTask,
   onDeleteTask,
+  editingTaskStatus,
+  editingTaskPriority,
 }: ItemCreationModalProps): React.JSX.Element {
   const [title, setTitle] = useState<string>('');
 
@@ -90,6 +109,8 @@ export function ItemCreationModal({
   // Tasks may have no date at all; events always have one.
   const [noDueDate, setNoDueDate] = useState<boolean>(false);
   const [showDatePicker, setShowDatePicker] = useState<boolean>(false);
+  const [taskStatusValue, setTaskStatusValue] = useState<TaskStatus>('todo');
+  const [taskPriorityValue, setTaskPriorityValue] = useState<TaskPriority>(1);
 
   // Reseed every time the modal opens: with the edited item's values, or with
   // freshly captured lasso text, so a second open never shows stale state.
@@ -115,11 +136,15 @@ export function ItemCreationModal({
       const mins = Math.round((new Date(editingEvent.end).getTime() - start.getTime()) / 60000);
       setDurationMins(mins > 0 ? mins : 30);
       setNoDueDate(false);
+      setTaskStatusValue(editingTaskStatus || 'todo');
+      setTaskPriorityValue(editingTaskPriority || 1);
       return;
     }
 
     setTitle(initialTitle || '');
     setItemKind(type);
+    setTaskStatusValue('todo');
+    setTaskPriorityValue(1);
     setLocation('');
     setDescription('');
     setItemDate(targetDate);
@@ -138,7 +163,7 @@ export function ItemCreationModal({
     } else {
       setIsAllDay(initialParsed ? initialParsed.allDay : type === 'task');
     }
-  }, [visible, initialTitle, initialParsed, type, editingEvent, targetDate]);
+  }, [visible, initialTitle, initialParsed, type, editingEvent, targetDate, editingTaskStatus, editingTaskPriority]);
 
   const shiftDate = (days: number) => {
     setItemDate(prev => {
@@ -193,6 +218,8 @@ export function ItemCreationModal({
     } else {
       onCreateTask({
         uid: editingEvent?.uid,
+        status: taskStatusValue,
+        priority: taskPriorityValue,
         title: title.trim(),
         // Omitted entirely when the user has said it has no due date, so the
         // task lands in No Date rather than being silently dated today.
@@ -425,6 +452,50 @@ export function ItemCreationModal({
               multiline
               numberOfLines={3}
             />
+
+            {itemKind === 'task' && (
+              <>
+                <Text style={styles.label}>Status:</Text>
+                <View style={styles.chipRow}>
+                  {TASK_STATUSES.map(st => (
+                    <TouchableOpacity
+                      key={st}
+                      style={[styles.stateChip, taskStatusValue === st && styles.stateChipSelected]}
+                      onPress={() => setTaskStatusValue(st)}
+                    >
+                      <Text
+                        style={[
+                          styles.stateChipText,
+                          taskStatusValue === st && styles.stateChipTextSelected,
+                        ]}
+                      >
+                        {statusGlyph(st)} {statusLabel(st)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={styles.label}>Priority:</Text>
+                <View style={styles.chipRow}>
+                  {TASK_PRIORITIES.map(p => (
+                    <TouchableOpacity
+                      key={p}
+                      style={[styles.stateChip, taskPriorityValue === p && styles.stateChipSelected]}
+                      onPress={() => setTaskPriorityValue(p)}
+                    >
+                      <Text
+                        style={[
+                          styles.stateChipText,
+                          taskPriorityValue === p && styles.stateChipTextSelected,
+                        ]}
+                      >
+                        {priorityLabel(p)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
           </ScrollView>
 
           <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
@@ -745,6 +816,32 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
   durationChipTextSelected: {
+    color: '#ffffff',
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 6,
+  },
+  stateChip: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginRight: 6,
+    marginBottom: 6,
+    backgroundColor: '#ffffff',
+  },
+  stateChipSelected: {
+    backgroundColor: '#000000',
+  },
+  stateChipText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#000000',
+  },
+  stateChipTextSelected: {
     color: '#ffffff',
   },
   deleteTaskBtn: {

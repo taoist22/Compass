@@ -12,10 +12,25 @@ import {
   View,
 } from 'react-native';
 import { PluginManager, FileUtils, PluginCommAPI, RattaFileSelector } from 'sn-plugin-lib';
-import { CalendarEvent, CalendarTask, CalendarViewMode, ProfileThemeMode,
+import {
+  CalendarEvent,
+  CalendarTask,
+  CalendarViewMode,
   NoteKind,
+  ProfileThemeMode,
+  TaskPriority,
+  TaskStatus,
 } from '../domain/types';
-import { countOpenTasks, isSameDay as isSameCalendarDay, sectionTasksForDay, toggleTaskCompletion } from '../domain/taskFilters';
+import { countOpenTasks, isSameDay as isSameCalendarDay, sectionTasksForDay } from '../domain/taskFilters';
+import {
+  isDone,
+  nextStatus,
+  priorityMarker,
+  statusGlyph,
+  statusLabel,
+  taskStatus,
+  withStatus,
+} from '../domain/taskModel';
 import { DAILY_NOTE_PRESETS, dailyNotePath, dateKey, formatDailyNoteName, looksMangled } from '../domain/dailyNote';
 import {
   DEFAULT_SYSTEM_TEMPLATE,
@@ -1342,11 +1357,26 @@ export function AgendaScreen(): React.JSX.Element {
     );
   };
 
+  /**
+   * Tap always settles the common case in one press: anything not done becomes
+   * done, and a done task reopens. Reaching In Progress by tapping would cost
+   * two presses to finish a task, which is the action people take most.
+   */
   const handleToggleTask = async (task: CalendarTask) => {
-    const next = toggleTaskCompletion(task);
+    const next = withStatus(task, isDone(task) ? 'todo' : 'done');
     calendarStorage.upsertTask(next);
     setTasks([...calendarStorage.getTasks()]);
     setStatusMsg(next.completed ? `Done: "${next.title}"` : `Reopened: "${next.title}"`);
+    await pushTaskAsEvent(next);
+  };
+
+  /** Long-press cycles To Do → In Progress → Done, the same idiom the month
+   *  grid already uses for its day cells. */
+  const handleCycleTaskStatus = async (task: CalendarTask) => {
+    const next = withStatus(task, nextStatus(taskStatus(task)));
+    calendarStorage.upsertTask(next);
+    setTasks([...calendarStorage.getTasks()]);
+    setStatusMsg(`"${next.title}" is ${statusLabel(taskStatus(next))}`);
     await pushTaskAsEvent(next);
   };
 
@@ -1543,11 +1573,17 @@ export function AgendaScreen(): React.JSX.Element {
     }
   };
 
+  /** The stored task behind an item open in the edit modal, if it is a task. */
+  const editingTaskFor = (uid: string): CalendarTask | undefined =>
+    calendarStorage.getTasks().find(t => t.uid === uid);
+
   const handleCreateNewTask = (input: {
     uid?: string;
     title: string;
     dueDate?: Date;
     notes?: string;
+    status?: TaskStatus;
+    priority?: TaskPriority;
   }) => {
     const existing = input.uid ? calendarStorage.getTasks().find(t => t.uid === input.uid) : undefined;
 
@@ -1561,9 +1597,14 @@ export function AgendaScreen(): React.JSX.Element {
       parentId: existing?.parentId,
       createdAt: existing?.createdAt ?? new Date(),
       notes: input.notes,
+      priority: input.priority && input.priority > 1 ? input.priority : undefined,
     };
 
-    calendarStorage.upsertTask(task);
+    // withStatus rather than assigning the field: completed and completedAt
+    // have to move with it, and they are what the rest of the app reads.
+    const withState = withStatus(task, input.status || taskStatus(task));
+
+    calendarStorage.upsertTask(withState);
     setTasks([...calendarStorage.getTasks()]);
     setStatusMsg(`${existing ? 'Updated' : 'Added'} task "${task.title}".`);
     void pushTaskAsEvent(task);
@@ -2380,6 +2421,12 @@ export function AgendaScreen(): React.JSX.Element {
             }}
             onCreateEvent={handleCreateNewEvent}
             onCreateTask={handleCreateNewTask}
+            editingTaskStatus={
+              editingEvent ? editingTaskFor(editingEvent.uid)?.status : undefined
+            }
+            editingTaskPriority={
+              editingEvent ? editingTaskFor(editingEvent.uid)?.priority : undefined
+            }
             onDeleteTask={uid => {
               const task = calendarStorage.getTasks().find(t => t.uid === uid);
               if (task) handleDeleteTask(task);
@@ -2434,11 +2481,15 @@ export function AgendaScreen(): React.JSX.Element {
                     <>
                       {items.slice(0, STRIP_TASK_LIMIT).map(task => (
                         <View key={task.uid} style={styles.gridStripRow}>
-                          <TouchableOpacity onPress={() => handleToggleTask(task)}>
-                            <Text style={styles.gridStripCheck}>☐</Text>
+                          <TouchableOpacity
+                            onPress={() => handleToggleTask(task)}
+                            onLongPress={() => handleCycleTaskStatus(task)}
+                          >
+                            <Text style={styles.gridStripCheck}>{statusGlyph(taskStatus(task))}</Text>
                           </TouchableOpacity>
                           <TouchableOpacity style={styles.gridStripBody} onPress={() => handleEditTask(task)}>
                             <Text style={styles.gridStripText} numberOfLines={1}>
+                              {priorityMarker(task.priority) ? `${priorityMarker(task.priority)} ` : ''}
                               {task.title}
                             </Text>
                           </TouchableOpacity>
@@ -2640,14 +2691,20 @@ export function AgendaScreen(): React.JSX.Element {
                           {label ? <Text style={styles.taskGroupLabel}>{label}</Text> : null}
                           {items.map(task => (
                             <View key={task.uid} style={styles.focusTaskRow}>
-                              <TouchableOpacity onPress={() => handleToggleTask(task)}>
-                                <Text style={styles.focusCheck}>{task.completed ? '☑' : '☐'}</Text>
+                              <TouchableOpacity
+                                onPress={() => handleToggleTask(task)}
+                                onLongPress={() => handleCycleTaskStatus(task)}
+                              >
+                                <Text style={styles.focusCheck}>{statusGlyph(taskStatus(task))}</Text>
                               </TouchableOpacity>
                               <TouchableOpacity style={styles.focusTaskBody} onPress={() => handleEditTask(task)}>
                                 <Text
                                   style={[styles.focusTaskText, task.completed && styles.focusTaskDone]}
                                   numberOfLines={1}
                                 >
+                                  {priorityMarker(task.priority)
+                                    ? `${priorityMarker(task.priority)} `
+                                    : ''}
                                   {task.title}
                                   {showDate && task.dueDate
                                     ? ` (${task.dueDate.toLocaleDateString('en-US', {
