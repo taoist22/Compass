@@ -24,9 +24,7 @@ import {
 import { countOpenTasks, isSameDay as isSameCalendarDay, sectionTasksForDay } from '../domain/taskFilters';
 import {
   isDone,
-  nextStatus,
   statusGlyph,
-  statusLabel,
   taskRowLabel,
   taskStatus,
   withStatus,
@@ -142,6 +140,8 @@ export function AgendaScreen(): React.JSX.Element {
   const [dailyNoteDates, setDailyNoteDates] = useState<Set<string>>(new Set());
   /** The task open in the edit modal, so its pickers open on real values. */
   const [editingTask, setEditingTask] = useState<CalendarTask | null>(null);
+  /** Confirms whether an event's generated note goes with it. */
+  const [showDeleteNoteModal, setShowDeleteNoteModal] = useState<boolean>(false);
   /** Note kind per event uid, for the month grid's M/C badges. */
   const [noteKindByEvent, setNoteKindByEvent] = useState<Record<string, NoteKind | undefined>>({});
   // Note paths found on disk for the day's events, keyed by event uid. The
@@ -1372,16 +1372,6 @@ export function AgendaScreen(): React.JSX.Element {
     await pushTaskAsEvent(next);
   };
 
-  /** Long-press cycles To Do → In Progress → Done, the same idiom the month
-   *  grid already uses for its day cells. */
-  const handleCycleTaskStatus = async (task: CalendarTask) => {
-    const next = withStatus(task, nextStatus(taskStatus(task)));
-    calendarStorage.upsertTask(next);
-    setTasks([...calendarStorage.getTasks()]);
-    setStatusMsg(`"${next.title}" is ${statusLabel(taskStatus(next))}`);
-    await pushTaskAsEvent(next);
-  };
-
   /**
    * Opens a task in the creation modal. The modal still speaks CalendarEvent,
    * so the task is projected into that shape and diverted back on save by uid.
@@ -1429,7 +1419,77 @@ export function AgendaScreen(): React.JSX.Element {
     setShowItemCreationModal(true);
   };
 
+  /**
+   * Removes the note generated for an event, if there is one.
+   *
+   * Handwritten pages cannot be recovered and there is no undo, so this only
+   * ever runs against a path the mapping actually records — never a guessed
+   * filename — and the caller confirms first.
+   */
+  const deleteNoteForEvent = async (event: CalendarEvent): Promise<string | null> => {
+    const mapping = calendarStorage.getMapping(noteIdentity(event));
+    const path = mapping?.notePath;
+    if (!path) return null;
+
+    try {
+      if (FileUtils.deleteFile) await FileUtils.deleteFile(path);
+      calendarStorage.setMapping({ ...mapping, notePath: '' });
+      setEventNotePaths(prev => {
+        const next = { ...prev };
+        delete next[event.uid];
+        return next;
+      });
+      return path;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const removeEventEverywhere = (event: CalendarEvent) => {
+    setAllParsedEvents(prev => prev.filter(e => e.uid !== event.uid));
+    calendarStorage.removeUserEvent(event.uid);
+
+    if (caldavEnabled && caldavAppleId && caldavPassword) {
+      caldavService.deleteIcloudEvent(
+        event.uid,
+        {
+          provider: caldavProvider,
+          appleId: caldavAppleId,
+          appPassword: caldavPassword,
+          calendarUrl: caldavUrl,
+          taskListUrl: caldavTaskListUrl,
+        },
+        isTaskItem(event)
+      );
+    }
+  };
+
+  const handleConfirmDeleteWithNote = async (alsoDeleteNote: boolean) => {
+    const event = pendingDeleteEvent;
+    setShowDeleteNoteModal(false);
+    setPendingDeleteEvent(null);
+    if (!event) return;
+
+    const removedNote = alsoDeleteNote ? await deleteNoteForEvent(event) : null;
+    removeEventEverywhere(event);
+
+    setStatusMsg(
+      removedNote
+        ? `Deleted "${event.summary}" and its note.`
+        : `Deleted "${event.summary}". Its note was kept.`
+    );
+  };
+
   const handleDeleteItem = (event: CalendarEvent) => {
+    // A note is the one thing here that cannot be recreated, so its presence
+    // is checked rather than assumed and the user is asked by name.
+    const notePath = calendarStorage.getMapping(noteIdentity(event))?.notePath;
+    if (notePath && !event.recurringSeriesId && !event.rrule) {
+      setPendingDeleteEvent(event);
+      setShowDeleteNoteModal(true);
+      return;
+    }
+
     if (event.recurringSeriesId || event.rrule) {
       setPendingDeleteEvent(event);
       setShowDeleteModal(true);
@@ -1736,6 +1796,60 @@ export function AgendaScreen(): React.JSX.Element {
           <Text style={styles.statusText}>{statusMsg}</Text>
         </View>
       )}
+
+      {/* Deleting an event that generated a note. Handwritten pages cannot be
+          recovered and there is no undo, so the file is named and keeping it
+          is offered as a first-class choice rather than a cancel. */}
+      <Modal visible={showDeleteNoteModal} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setShowDeleteNoteModal(false);
+            setPendingDeleteEvent(null);
+          }}
+        >
+          <View style={styles.actionSheetContentCompact}>
+            <Text style={styles.actionSheetTitle}>Delete this event?</Text>
+            <Text style={styles.bodyTextCenter} numberOfLines={2}>
+              "{pendingDeleteEvent?.summary}"
+            </Text>
+            <Text style={styles.previewHint}>
+              It has a note:{' '}
+              {pendingDeleteEvent
+                ? calendarStorage
+                    .getMapping(noteIdentity(pendingDeleteEvent))
+                    ?.notePath?.split('/')
+                    .pop()
+                : ''}
+            </Text>
+
+            <TouchableOpacity
+              style={styles.deleteOptionBtn}
+              onPress={() => handleConfirmDeleteWithNote(false)}
+            >
+              <Text style={styles.deleteOptionBtnText}>🗑️ Delete event, keep the note</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.deleteOptionBtnDanger}
+              onPress={() => handleConfirmDeleteWithNote(true)}
+            >
+              <Text style={styles.deleteOptionBtnTextDanger}>🗑️ Delete both</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.cancelBtn}
+              onPress={() => {
+                setShowDeleteNoteModal(false);
+                setPendingDeleteEvent(null);
+              }}
+            >
+              <Text style={styles.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Asked once per event, then remembered. Replaces the global
           Business/Academic mode deciding this for every note at once. */}
@@ -2484,7 +2598,6 @@ export function AgendaScreen(): React.JSX.Element {
                         <View key={task.uid} style={styles.gridStripRow}>
                           <TouchableOpacity
                             onPress={() => handleToggleTask(task)}
-                            onLongPress={() => handleCycleTaskStatus(task)}
                           >
                             <Text style={styles.gridStripCheck}>{statusGlyph(taskStatus(task))}</Text>
                           </TouchableOpacity>
@@ -2701,7 +2814,6 @@ export function AgendaScreen(): React.JSX.Element {
                             <View key={task.uid} style={styles.focusTaskRow}>
                               <TouchableOpacity
                                 onPress={() => handleToggleTask(task)}
-                                onLongPress={() => handleCycleTaskStatus(task)}
                               >
                                 <Text style={styles.focusCheck}>{statusGlyph(taskStatus(task))}</Text>
                               </TouchableOpacity>
