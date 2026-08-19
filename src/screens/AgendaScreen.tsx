@@ -1387,6 +1387,8 @@ export function AgendaScreen(): React.JSX.Element {
    * so the task is projected into that shape and diverted back on save by uid.
    */
   const handleEditTask = (task: CalendarTask) => {
+    // Held so the form can show the task's real status and priority, and
+    // offer Delete. Without it editingTask stays null and both are missing.
     setEditingTask(task);
     const due = task.dueDate ? new Date(task.dueDate) : undefined;
     setEditingEvent({
@@ -1416,6 +1418,7 @@ export function AgendaScreen(): React.JSX.Element {
   };
 
   const handleEditItem = (event: CalendarEvent) => {
+    // Editing an event must not leave a task from a previous open behind.
     setEditingTask(null);
     // The event argument used to be dropped here, so "Edit" opened a blank
     // create form and saving minted a new uid — the original never changed.
@@ -2736,25 +2739,6 @@ export function AgendaScreen(): React.JSX.Element {
             </ScrollView>
           )}
 
-          {/* Item Creation Modal (Events & Tasks) */}
-          <ItemCreationModal
-            visible={showItemCreationModal}
-            type={creationType}
-            targetDate={lassoDraftDate ?? selectedDate}
-            initialTitle={lassoDraftTitle}
-            initialParsed={lassoDraftParsed}
-            editingEvent={editingEvent}
-            availableFeeds={calendarStorage.getSettings().feeds}
-            onClose={() => {
-              setShowItemCreationModal(false);
-              setLassoDraftTitle('');
-              setLassoDraftParsed(null);
-              setLassoDraftDate(null);
-              setEditingEvent(null);
-            }}
-            onCreateEvent={handleCreateNewEvent}
-            onCreateTask={handleCreateNewTask}
-          />
 
         </View>
       )}
