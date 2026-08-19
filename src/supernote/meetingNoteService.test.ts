@@ -32,16 +32,17 @@ jest.mock('sn-plugin-lib', () => ({
   },
 }));
 
+const sampleEvent: CalendarEvent = {
+  uid: 'evt-300',
+  summary: 'Design Review',
+  description: 'Review UI mockups',
+  start: new Date('2026-08-16T15:00:00Z'),
+  end: new Date('2026-08-16T16:00:00Z'),
+  allDay: false,
+  attendees: [{ name: 'Bob', email: 'bob@example.com' }],
+};
+
 describe('meetingNoteService', () => {
-  const sampleEvent: CalendarEvent = {
-    uid: 'evt-300',
-    summary: 'Design Review',
-    description: 'Review UI mockups',
-    start: new Date('2026-08-16T15:00:00Z'),
-    end: new Date('2026-08-16T16:00:00Z'),
-    allDay: false,
-    attendees: [{ name: 'Bob', email: 'bob@example.com' }],
-  };
 
   test('creates a meeting note with the configured system template', async () => {
     (PluginFileAPI.createNote as jest.Mock).mockClear();
@@ -102,5 +103,88 @@ describe('meetingNoteService', () => {
     expect(res.isNewFile).toBe(false);
     expect(res.pageNum).toBe(4);
     expect(PluginFileAPI.insertNotePage).toHaveBeenCalled();
+  });
+});
+
+describe('note kind routing', () => {
+  beforeEach(() => {
+    (PluginFileAPI.createNote as jest.Mock).mockClear().mockResolvedValue({ success: true });
+    calendarStorage.updateSettings({
+      notesDirectory: '/storage/emulated/0/Note/Meetings',
+      classNotesDirectory: '/storage/emulated/0/Note/Classes',
+      meetingTemplate: 'style_meeting_notes',
+      classTemplate: 'style_college_ruled',
+    });
+  });
+
+  test('a class note uses the class folder and class template', async () => {
+    const res = await meetingNoteService.createOrAppendMeetingNote(
+      { ...sampleEvent, uid: 'evt-class-1' },
+      false,
+      'class'
+    );
+
+    expect(res.notePath).toContain('/Note/Classes/');
+    const [args] = (PluginFileAPI.createNote as jest.Mock).mock.calls[0];
+    expect(args.template).toBe('style_college_ruled');
+  });
+
+  test('a meeting note uses the meeting folder and meeting template', async () => {
+    const res = await meetingNoteService.createOrAppendMeetingNote(
+      { ...sampleEvent, uid: 'evt-meet-1' },
+      false,
+      'meeting'
+    );
+
+    expect(res.notePath).toContain('/Note/Meetings/');
+    const [args] = (PluginFileAPI.createNote as jest.Mock).mock.calls[0];
+    expect(args.template).toBe('style_meeting_notes');
+  });
+
+  test('the kind is recorded on the mapping, not inferred later', async () => {
+    await meetingNoteService.createOrAppendMeetingNote(
+      { ...sampleEvent, uid: 'evt-class-2' },
+      false,
+      'class'
+    );
+    expect(calendarStorage.getMapping('evt-class-2')?.kind).toBe('class');
+  });
+
+  test('omitting the kind still produces a meeting note', async () => {
+    // Callers that predate per-note kinds must keep working unchanged.
+    const res = await meetingNoteService.createOrAppendMeetingNote({
+      ...sampleEvent,
+      uid: 'evt-default-1',
+    });
+    expect(res.notePath).toContain('/Note/Meetings/');
+  });
+});
+
+describe('event kind store', () => {
+  test('survives an event object being replaced by a sync', () => {
+    // The reason kinds are keyed by uid rather than held on CalendarEvent:
+    // parseIcsContent rebuilds events from ICS on every pull, carrying no
+    // custom fields, so anything stored on the object would be lost here.
+    calendarStorage.setEventKind('evt-sync-1', 'class');
+    const rebuiltBySync: CalendarEvent = { ...sampleEvent, uid: 'evt-sync-1' };
+
+    expect(rebuiltBySync).not.toHaveProperty('kind');
+    expect(calendarStorage.getEventKind('evt-sync-1')).toBe('class');
+  });
+
+  test('an unseen event has no kind, so the caller can ask', () => {
+    expect(calendarStorage.getEventKind('never-asked')).toBeUndefined();
+  });
+
+  test('an existing note outranks a later tag', async () => {
+    // What the note was actually created as is the stronger answer.
+    await meetingNoteService.createOrAppendMeetingNote(
+      { ...sampleEvent, uid: 'evt-precedence' },
+      false,
+      'class'
+    );
+    calendarStorage.setEventKind('evt-precedence', 'meeting');
+
+    expect(calendarStorage.getEventKind('evt-precedence')).toBe('class');
   });
 });

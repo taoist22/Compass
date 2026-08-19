@@ -111,11 +111,16 @@ export class MeetingNoteService {
     }
   }
 
-  async createOrAppendMeetingNote(event: CalendarEvent, forceNewFile = false): Promise<MeetingNoteResult> {
+  /**
+   * @param kind What this note is. Passed in rather than derived from a global
+   *   mode, so a class note stays a class note whatever the settings say later.
+   */
+  async createOrAppendMeetingNote(
+    event: CalendarEvent,
+    forceNewFile = false,
+    kind: NoteKind = 'meeting'
+  ): Promise<MeetingNoteResult> {
     const settings = calendarStorage.getSettings();
-
-    // Class notes file and style themselves separately from meetings.
-    const kind: NoteKind = settings.themeMode === 'academic' ? 'class' : 'meeting';
     const targetDir =
       (kind === 'class'
         ? settings.classNotesDirectory || settings.notesDirectory
@@ -127,10 +132,12 @@ export class MeetingNoteService {
       DEFAULT_SYSTEM_TEMPLATE;
 
     const isRecurringSeries = Boolean(event.recurringSeriesId && !forceNewFile);
-    const filename = generateNoteFilename(event, isRecurringSeries, settings.seriesNotebookPrefix);
+    const filename = generateNoteFilename(event, isRecurringSeries, settings.seriesNotebookPrefix, kind);
     const notePath = `${targetDir}/${filename}`;
 
-    const snapshot: MeetingSnapshot = createMeetingSnapshot(event);
+    // Both of these previously omitted the mode entirely and silently fell back
+    // to business wording, so a class note got meeting headings inside it.
+    const snapshot: MeetingSnapshot = createMeetingSnapshot(event, kind);
 
     try {
       let pageNum = 1;

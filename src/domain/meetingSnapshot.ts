@@ -1,4 +1,4 @@
-import { CalendarEvent, MeetingSnapshot, ProfileThemeMode } from './types';
+import { CalendarEvent, MeetingSnapshot, NoteKind } from './types';
 
 /**
  * Generates a clean, filesystem-safe filename for a meeting or class note.
@@ -7,7 +7,7 @@ export function generateNoteFilename(
   event: CalendarEvent,
   isSeries = false,
   seriesPrefix = 'Series - ',
-  themeMode: ProfileThemeMode = 'business'
+  kind: NoteKind = 'meeting'
 ): string {
   const sanitize = (s: string) =>
     s
@@ -15,7 +15,7 @@ export function generateNoteFilename(
       .replace(/\s+/g, ' ')
       .trim();
 
-  const prefix = themeMode === 'academic' && seriesPrefix === 'Series - ' ? 'Course - ' : seriesPrefix;
+  const prefix = kind === 'class' && seriesPrefix === 'Series - ' ? 'Course - ' : seriesPrefix;
 
   if (isSeries && event.recurringSeriesId) {
     const cleanTitle = sanitize(event.summary);
@@ -36,7 +36,7 @@ export function generateNoteFilename(
  */
 export function createMeetingSnapshot(
   event: CalendarEvent,
-  themeMode: ProfileThemeMode = 'business'
+  kind: NoteKind = 'meeting'
 ): MeetingSnapshot {
   const dateOptions: Intl.DateTimeFormatOptions = {
     weekday: 'short',
@@ -55,7 +55,7 @@ export function createMeetingSnapshot(
   const endTimeStr = event.end.toLocaleTimeString('en-US', timeOptions);
   const timeStr = event.allDay ? 'All Day' : `${startTimeStr} – ${endTimeStr}`;
 
-  const isAcademic = themeMode === 'academic';
+  const isAcademic = kind === 'class';
 
   const hostLabel = isAcademic ? 'Instructor / Professor' : 'Organizer';
   const attendeeLabel = isAcademic ? 'Class Roster / Students' : 'Attendees';

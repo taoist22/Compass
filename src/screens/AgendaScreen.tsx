@@ -336,6 +336,8 @@ export function AgendaScreen(): React.JSX.Element {
   const [templateProbe, setTemplateProbe] = useState<string[]>([]);
   /** Which note kind's template chooser is open, if any. */
   const [templatePickerKind, setTemplatePickerKind] = useState<NoteKind | null>(null);
+  /** Event awaiting a Meeting-or-Class answer before its note is created. */
+  const [kindPromptEvent, setKindPromptEvent] = useState<CalendarEvent | null>(null);
   /** In-progress folder edits, so typing is not fought by the stored value. */
   const [folderDrafts, setFolderDrafts] = useState<Partial<Record<NoteKind, string>>>({});
   const [systemTemplates, setSystemTemplates] = useState<SystemTemplate[]>([]);
@@ -1033,13 +1035,34 @@ export function AgendaScreen(): React.JSX.Element {
     }
   };
 
-  const handleExecuteNoteCreation = async (event: CalendarEvent, folderPath?: string) => {
+  /**
+   * Creates a note, asking what kind it is the first time and remembering the
+   * answer. A recurring class is answered once rather than every week.
+   */
+  const handleRequestNoteCreation = (event: CalendarEvent) => {
     setShowDateActionSheet(false);
-    const targetDir = folderPath || targetNotesDir;
-    const itemType = themeMode === 'academic' ? 'class note' : 'meeting note';
-    setStatusMsg(`Creating ${itemType} in ${targetDir.split('/').pop()}...`);
+    const known = calendarStorage.getEventKind(event.uid);
+    if (known) {
+      void handleExecuteNoteCreation(event, known);
+      return;
+    }
+    setKindPromptEvent(event);
+  };
 
-    const result = await meetingNoteService.createOrAppendMeetingNote(event);
+  const handleAnswerNoteKind = (kind: NoteKind) => {
+    const event = kindPromptEvent;
+    setKindPromptEvent(null);
+    if (!event) return;
+    calendarStorage.setEventKind(event.uid, kind);
+    setNoteKindByEvent(prev => ({ ...prev, [event.uid]: kind }));
+    void handleExecuteNoteCreation(event, kind);
+  };
+
+  const handleExecuteNoteCreation = async (event: CalendarEvent, kind: NoteKind = 'meeting') => {
+    setShowDateActionSheet(false);
+    setStatusMsg(`Creating ${kind} note...`);
+
+    const result = await meetingNoteService.createOrAppendMeetingNote(event, false, kind);
     if (result.success) {
       const actionText = result.isNewFile ? 'Created' : `Appended page ${result.pageNum} of`;
       setRefreshState(prev => prev + 1);
@@ -1064,12 +1087,25 @@ export function AgendaScreen(): React.JSX.Element {
     }
   };
 
+  /**
+   * What kind of note an event is. The recorded answer wins; until the
+   * Business/Academic toggle is removed it supplies the default for events
+   * that have never been asked, so nothing changes for existing content.
+   */
+  const defaultNoteKind = (): NoteKind => (themeMode === 'academic' ? 'class' : 'meeting');
+
+  const kindForEvent = (uid: string): NoteKind =>
+    calendarStorage.getEventKind(uid) || defaultNoteKind();
+
   const handleExportItemFormat = async (event: CalendarEvent, format: 'md' | 'txt') => {
-    const snapshot = createMeetingSnapshot(event, themeMode);
+    // Reads the note's own kind rather than whatever mode happens to be
+    // active, so exporting an old class note no longer relabels it a meeting.
+    const kind = kindForEvent(event.uid);
+    const snapshot = createMeetingSnapshot(event, kind);
     const content =
       format === 'md'
-        ? generateMarkdownSnapshot(snapshot, event, themeMode)
-        : generatePlainTextSnapshot(snapshot, event, themeMode);
+        ? generateMarkdownSnapshot(snapshot, event, kind)
+        : generatePlainTextSnapshot(snapshot, event, kind);
 
     const stamp = event.start.toISOString().slice(0, 10);
     setStatusMsg(`Exporting ${format.toUpperCase()}...`);
@@ -1198,7 +1234,11 @@ export function AgendaScreen(): React.JSX.Element {
           evt,
           Boolean(evt.recurringSeriesId),
           settings.seriesNotebookPrefix,
-          themeMode
+          // Inlined rather than calling kindForEvent: that helper is rebuilt
+          // every render, so listing it as a dependency would re-run this
+          // sweep continuously. themeMode, its only reactive input, is
+          // already in the dependency list below.
+          calendarStorage.getEventKind(evt.uid) || (themeMode === 'academic' ? 'class' : 'meeting')
         );
         const path = `${dir}/${name}`;
         try {
@@ -1644,6 +1684,40 @@ export function AgendaScreen(): React.JSX.Element {
           <Text style={styles.statusText}>{statusMsg}</Text>
         </View>
       )}
+
+      {/* Asked once per event, then remembered. Replaces the global
+          Business/Academic mode deciding this for every note at once. */}
+      <Modal visible={kindPromptEvent !== null} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setKindPromptEvent(null)}
+        >
+          <View style={styles.actionSheetContentCompact}>
+            <Text style={styles.actionSheetTitle}>What kind of note?</Text>
+            <Text style={styles.bodyTextCenter} numberOfLines={2}>
+              "{kindPromptEvent?.summary}"
+            </Text>
+
+            <TouchableOpacity style={styles.deleteOptionBtn} onPress={() => handleAnswerNoteKind('meeting')}>
+              <Text style={styles.deleteOptionBtnText}>🏢 Meeting Note</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.deleteOptionBtn} onPress={() => handleAnswerNoteKind('class')}>
+              <Text style={styles.deleteOptionBtnText}>🎓 Class Note</Text>
+            </TouchableOpacity>
+
+            <Text style={styles.previewHint}>
+              Remembered for this event — a recurring class is only asked once. Change it later
+              from the event's details.
+            </Text>
+
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setKindPromptEvent(null)}>
+              <Text style={styles.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Template chooser. Rendered outside the settings/calendar ternary: it is
           opened from Settings, and living in the calendar branch meant it was
@@ -2193,13 +2267,13 @@ export function AgendaScreen(): React.JSX.Element {
                     setShowDateActionSheet(false);
                     const blankEvt: CalendarEvent = {
                       uid: `blank-${Date.now()}`,
-                      summary: `${themeMode === 'academic' ? 'Class' : 'Meeting'} Notes`,
+                      summary: 'Notes',
                       start: selectedDate,
                       end: new Date(selectedDate.getTime() + 60 * 60 * 1000),
                       allDay: false,
                       attendees: [],
                     };
-                    handleExecuteNoteCreation(blankEvt);
+                    handleRequestNoteCreation(blankEvt);
                   }}
                 >
                   <Text style={styles.actionSheetBtnText}>📝 Create Blank Note</Text>
@@ -2247,7 +2321,7 @@ export function AgendaScreen(): React.JSX.Element {
           <EventDetailModal
             visible={showEventDetail}
             event={detailEvent}
-            themeMode={themeMode}
+            noteKind={detailEvent ? calendarStorage.getEventKind(detailEvent.uid) : undefined}
             existingNotePath={detailEvent ? eventNotePaths[detailEvent.uid] : undefined}
             onClose={() => {
               setShowEventDetail(false);
@@ -2255,7 +2329,12 @@ export function AgendaScreen(): React.JSX.Element {
             }}
             onCreateNote={evt => {
               setShowEventDetail(false);
-              handleExecuteNoteCreation(evt);
+              handleRequestNoteCreation(evt);
+            }}
+            onChangeKind={(evt, kind) => {
+              calendarStorage.setEventKind(evt.uid, kind);
+              setNoteKindByEvent(prev => ({ ...prev, [evt.uid]: kind }));
+              setStatusMsg(`"${evt.summary}" is now a ${kind} note.`);
             }}
             onOpenExistingNote={path => {
               setShowEventDetail(false);
@@ -2488,12 +2567,9 @@ export function AgendaScreen(): React.JSX.Element {
                                     if (existingNotePath) {
                                       handleOpenExistingNote(existingNotePath);
                                     } else {
-                                      // Creates straight into the folder configured for
-                                      // this note kind. It used to open the folder picker
-                                      // first and create only from that picker's success
-                                      // callback — which never fired, so pressing Create
-                                      // Note did nothing at all.
-                                      handleExecuteNoteCreation(evt);
+                                      // Asks Meeting or Class the first time,
+                                      // then remembers the answer for this event.
+                                      handleRequestNoteCreation(evt);
                                     }
                                   }}
                                 >

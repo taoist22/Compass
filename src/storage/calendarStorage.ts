@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { CalendarEvent, CalendarFeed, CalendarSettings, CalendarTask, MeetingNoteMapping } from '../domain/types';
+import { CalendarEvent, CalendarFeed, CalendarSettings, CalendarTask, MeetingNoteMapping, NoteKind } from '../domain/types';
 import { isLegacyTaskEvent, taskFromLegacyEvent } from '../domain/taskFilters';
 import { DEFAULT_SYSTEM_TEMPLATE } from '../domain/noteTemplates';
 import { CaldavPushState, emptyPushState, forgetPush, stateForTarget } from '../domain/pushState';
@@ -10,6 +10,7 @@ const USER_EVENTS_KEY = '@sn-calendar/userEvents';
 const TASKS_KEY = '@sn-calendar/tasks';
 const PUSH_STATE_KEY = '@sn-calendar/caldavPushState';
 const CALDAV_EVENTS_KEY = '@sn-calendar/caldavEvents';
+const EVENT_KINDS_KEY = '@sn-calendar/eventKinds';
 
 const DEFAULT_SETTINGS: CalendarSettings = {
   feeds: [
@@ -108,11 +109,21 @@ export class CalendarStorage {
   private pushState: CaldavPushState = emptyPushState();
   /** Last read from CalDAV, cached so the calendar is populated on open. */
   private caldavEvents: CalendarEvent[] = [];
+  /**
+   * Whether each event is a meeting or a class, keyed by uid.
+   *
+   * Deliberately NOT a field on CalendarEvent. Events from CalDAV and feeds
+   * are rebuilt from their ICS text on every sync — parseIcsContent carries no
+   * custom fields — so anything stored on the event object is lost the next
+   * time Sync Now runs. Keyed by uid it survives, exactly as note mappings and
+   * push state already do.
+   */
+  private eventKinds: Record<string, NoteKind> = {};
   private loaded = false;
 
   async load(): Promise<{ settings: CalendarSettings; mappings: Record<string, MeetingNoteMapping> }> {
     try {
-      const [rawSettings, rawMappings, rawEvents, rawTasks, rawPushState, rawCaldavEvents] =
+      const [rawSettings, rawMappings, rawEvents, rawTasks, rawPushState, rawCaldavEvents, rawEventKinds] =
         await Promise.all([
         AsyncStorage.getItem(SETTINGS_KEY),
         AsyncStorage.getItem(MAPPINGS_KEY),
@@ -120,6 +131,7 @@ export class CalendarStorage {
         AsyncStorage.getItem(TASKS_KEY),
         AsyncStorage.getItem(PUSH_STATE_KEY),
         AsyncStorage.getItem(CALDAV_EVENTS_KEY),
+        AsyncStorage.getItem(EVENT_KINDS_KEY),
       ]);
 
       if (rawSettings) {
@@ -132,6 +144,10 @@ export class CalendarStorage {
       }
       if (rawTasks) {
         this.tasks = (JSON.parse(rawTasks) as any[]).map(reviveTask);
+      }
+      if (rawEventKinds) {
+        const parsed = JSON.parse(rawEventKinds);
+        this.eventKinds = parsed && typeof parsed === 'object' ? parsed : {};
       }
       if (rawCaldavEvents) {
         this.caldavEvents = (JSON.parse(rawCaldavEvents) as any[]).map(reviveEvent);
@@ -170,6 +186,7 @@ export class CalendarStorage {
       this.tasks = [];
       this.pushState = emptyPushState();
       this.caldavEvents = [];
+      this.eventKinds = {};
     }
 
     // Never restored from disk — only ever from this session's memory.
@@ -198,6 +215,7 @@ export class CalendarStorage {
         AsyncStorage.setItem(TASKS_KEY, JSON.stringify(this.tasks)),
         AsyncStorage.setItem(PUSH_STATE_KEY, JSON.stringify(this.pushState)),
         AsyncStorage.setItem(CALDAV_EVENTS_KEY, JSON.stringify(this.caldavEvents)),
+        AsyncStorage.setItem(EVENT_KINDS_KEY, JSON.stringify(this.eventKinds)),
       ]);
     } catch (e) {
       // A failed write must not take down the UI; state stays correct in memory.
@@ -317,6 +335,24 @@ export class CalendarStorage {
    */
   getCaldavEvents(): CalendarEvent[] {
     return this.caldavEvents;
+  }
+
+  /**
+   * The kind recorded for an event, or undefined if it has never been asked.
+   * A note mapping is consulted first: if a note already exists, what it was
+   * created as is the stronger answer.
+   */
+  getEventKind(uid: string): NoteKind | undefined {
+    return this.mappings[uid]?.kind || this.eventKinds[uid];
+  }
+
+  setEventKind(uid: string, kind: NoteKind): void {
+    this.eventKinds[uid] = kind;
+    void this.save();
+  }
+
+  getAllEventKinds(): Record<string, NoteKind> {
+    return this.eventKinds;
   }
 
   /** Replaces the cache wholesale: a read is the full picture for its window. */

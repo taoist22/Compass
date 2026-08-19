@@ -1,4 +1,4 @@
-import { CalendarEvent, MeetingSnapshot, ProfileThemeMode } from './types';
+import { CalendarEvent, MeetingSnapshot, NoteKind } from './types';
 
 /**
  * Generates Obsidian-compatible Markdown content with frontmatter YAML metadata,
@@ -7,9 +7,9 @@ import { CalendarEvent, MeetingSnapshot, ProfileThemeMode } from './types';
 export function generateMarkdownSnapshot(
   snapshot: MeetingSnapshot,
   event: CalendarEvent,
-  themeMode: ProfileThemeMode = 'business'
+  kind: NoteKind = 'meeting'
 ): string {
-  const isAcademic = themeMode === 'academic';
+  const isAcademic = kind === 'class';
   const tag = isAcademic ? '#class-notes #academic' : '#meeting-notes #work';
 
   return `---
@@ -117,9 +117,9 @@ export function foldIcsLine(line: string): string {
 export function generatePlainTextSnapshot(
   snapshot: MeetingSnapshot,
   event: CalendarEvent,
-  themeMode: ProfileThemeMode = 'business'
+  kind: NoteKind = 'meeting'
 ): string {
-  const isAcademic = themeMode === 'academic';
+  const isAcademic = kind === 'class';
 
   return [
     snapshot.title,

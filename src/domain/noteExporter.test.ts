@@ -22,8 +22,8 @@ describe('noteExporter', () => {
   };
 
   test('generateMarkdownSnapshot generates valid Obsidian markdown with YAML frontmatter', () => {
-    const snapshot = createMeetingSnapshot(sampleEvent, 'academic');
-    const md = generateMarkdownSnapshot(snapshot, sampleEvent, 'academic');
+    const snapshot = createMeetingSnapshot(sampleEvent, 'class');
+    const md = generateMarkdownSnapshot(snapshot, sampleEvent, 'class');
 
     expect(md).toContain('---');
     expect(md).toContain('title: "Physics 301 Midterm Sync"');
@@ -86,8 +86,8 @@ describe('noteExporter', () => {
   });
 
   test('generatePlainTextSnapshot carries the content without Markdown syntax', () => {
-    const snapshot = createMeetingSnapshot(sampleEvent, 'business');
-    const txt = generatePlainTextSnapshot(snapshot, sampleEvent, 'business');
+    const snapshot = createMeetingSnapshot(sampleEvent, 'meeting');
+    const txt = generatePlainTextSnapshot(snapshot, sampleEvent, 'meeting');
 
     expect(txt).toContain('Physics 301 Midterm Sync');
     expect(txt).toContain('ATTENDEES');
@@ -98,8 +98,8 @@ describe('noteExporter', () => {
   });
 
   test('generatePlainTextSnapshot uses academic wording in academic mode', () => {
-    const snapshot = createMeetingSnapshot(sampleEvent, 'academic');
-    const txt = generatePlainTextSnapshot(snapshot, sampleEvent, 'academic');
+    const snapshot = createMeetingSnapshot(sampleEvent, 'class');
+    const txt = generatePlainTextSnapshot(snapshot, sampleEvent, 'class');
     expect(txt).toContain('Instructor:');
     expect(txt).toContain('ROSTER & ATTENDEES');
   });

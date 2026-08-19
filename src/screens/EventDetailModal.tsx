@@ -1,11 +1,12 @@
 import React from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { CalendarEvent, ProfileThemeMode } from '../domain/types';
+import { CalendarEvent, NoteKind } from '../domain/types';
 
 interface EventDetailModalProps {
   visible: boolean;
   event: CalendarEvent | null;
-  themeMode: ProfileThemeMode;
+  /** What this event's notes are, if it has been decided. */
+  noteKind?: NoteKind;
   /** Path of an existing note for this event, if one has been created. */
   existingNotePath?: string;
   onClose: () => void;
@@ -14,6 +15,8 @@ interface EventDetailModalProps {
   onExport: (event: CalendarEvent, format: 'md' | 'txt') => void;
   onEdit: (event: CalendarEvent) => void;
   onDelete: (event: CalendarEvent) => void;
+  /** Re-tags the event when the wrong kind was chosen. */
+  onChangeKind: (event: CalendarEvent, kind: NoteKind) => void;
 }
 
 /**
@@ -27,7 +30,7 @@ interface EventDetailModalProps {
 export function EventDetailModal({
   visible,
   event,
-  themeMode,
+  noteKind,
   existingNotePath,
   onClose,
   onCreateNote,
@@ -35,8 +38,9 @@ export function EventDetailModal({
   onExport,
   onEdit,
   onDelete,
+  onChangeKind,
 }: EventDetailModalProps): React.JSX.Element {
-  const isAcademic = themeMode === 'academic';
+  const isAcademic = noteKind === 'class';
 
   if (!event) {
     return <Modal visible={false} transparent />;
@@ -135,6 +139,17 @@ export function EventDetailModal({
               <TouchableOpacity style={styles.action} onPress={() => onExport(event, 'txt')}>
                 <Text style={styles.actionText}>📄 .txt</Text>
               </TouchableOpacity>
+              {/* Correcting a wrong answer lives here rather than on the
+                  schedule row, which has no space for another control. */}
+              <TouchableOpacity
+                style={styles.action}
+                onPress={() => onChangeKind(event, isAcademic ? 'meeting' : 'class')}
+              >
+                <Text style={styles.actionText}>
+                  {isAcademic ? '🏢 Treat as Meeting' : '🎓 Treat as Class'}
+                </Text>
+              </TouchableOpacity>
+
               <TouchableOpacity style={styles.action} onPress={() => onDelete(event)}>
                 <Text style={styles.actionText}>🗑️ Delete</Text>
               </TouchableOpacity>
