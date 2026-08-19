@@ -1,0 +1,11 @@
+{
+  "name": "Calendar",
+  "desc": "Calendar agenda view and meeting note snapshot creator.",
+  "author": "taoist22",
+  "iconPath": "assets/calendar.png",
+  "versionName": "0.1.0",
+  "versionCode": "7",
+  "pluginID": "7jne25p-gnhigcrr",
+  "pluginKey": "Calendar",
+  "jsMainPath": "index"
+}
