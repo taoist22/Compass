@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { CalendarEvent, CalendarFeed, CalendarSettings, CalendarTask, MeetingNoteMapping, NoteKind } from '../domain/types';
+import { CalendarEvent, CalendarFeed, CalendarSettings, CalendarTask, MeetingNoteMapping, NoteKind, Area, Project, ItemMembership } from '../domain/types';
 import { isLegacyTaskEvent, taskFromLegacyEvent } from '../domain/taskFilters';
+import { normaliseTask } from '../domain/taskModel';
 import { DEFAULT_SYSTEM_TEMPLATE } from '../domain/noteTemplates';
 import { CaldavPushState, emptyPushState, forgetPush, stateForTarget } from '../domain/pushState';
 
@@ -11,6 +12,9 @@ const TASKS_KEY = '@sn-calendar/tasks';
 const PUSH_STATE_KEY = '@sn-calendar/caldavPushState';
 const CALDAV_EVENTS_KEY = '@sn-calendar/caldavEvents';
 const EVENT_KINDS_KEY = '@sn-calendar/eventKinds';
+const AREAS_KEY = '@sn-calendar/areas';
+const PROJECTS_KEY = '@sn-calendar/projects';
+const MEMBERSHIP_KEY = '@sn-calendar/itemMembership';
 
 const DEFAULT_SETTINGS: CalendarSettings = {
   feeds: [
@@ -92,6 +96,20 @@ function reviveEvent(raw: any): CalendarEvent {
   };
 }
 
+function reviveArea(raw: any): Area {
+  return { ...raw, createdAt: raw.createdAt ? new Date(raw.createdAt) : new Date() };
+}
+
+function reviveProject(raw: any): Project {
+  return {
+    ...raw,
+    status: raw.status || 'active',
+    dueDate: raw.dueDate ? new Date(raw.dueDate) : undefined,
+    completedAt: raw.completedAt ? new Date(raw.completedAt) : undefined,
+    createdAt: raw.createdAt ? new Date(raw.createdAt) : new Date(),
+  };
+}
+
 function reviveTask(raw: any): CalendarTask {
   return {
     ...raw,
@@ -119,11 +137,19 @@ export class CalendarStorage {
    * push state already do.
    */
   private eventKinds: Record<string, NoteKind> = {};
+  private areas: Area[] = [];
+  private projects: Project[] = [];
+  /**
+   * Area and project membership keyed by noteIdentity, so one store serves
+   * events, tasks and notes alike — and so membership survives a sync
+   * rebuilding the event objects.
+   */
+  private membership: Record<string, ItemMembership> = {};
   private loaded = false;
 
   async load(): Promise<{ settings: CalendarSettings; mappings: Record<string, MeetingNoteMapping> }> {
     try {
-      const [rawSettings, rawMappings, rawEvents, rawTasks, rawPushState, rawCaldavEvents, rawEventKinds] =
+      const [rawSettings, rawMappings, rawEvents, rawTasks, rawPushState, rawCaldavEvents, rawEventKinds, rawAreas, rawProjects, rawMembership] =
         await Promise.all([
         AsyncStorage.getItem(SETTINGS_KEY),
         AsyncStorage.getItem(MAPPINGS_KEY),
@@ -132,6 +158,9 @@ export class CalendarStorage {
         AsyncStorage.getItem(PUSH_STATE_KEY),
         AsyncStorage.getItem(CALDAV_EVENTS_KEY),
         AsyncStorage.getItem(EVENT_KINDS_KEY),
+        AsyncStorage.getItem(AREAS_KEY),
+        AsyncStorage.getItem(PROJECTS_KEY),
+        AsyncStorage.getItem(MEMBERSHIP_KEY),
       ]);
 
       if (rawSettings) {
@@ -143,7 +172,19 @@ export class CalendarStorage {
         this.mappings = JSON.parse(rawMappings);
       }
       if (rawTasks) {
-        this.tasks = (JSON.parse(rawTasks) as any[]).map(reviveTask);
+        // normaliseTask fills in a status for anything stored before statuses
+        // existed, so nothing has to be migrated on disk.
+        this.tasks = (JSON.parse(rawTasks) as any[]).map(reviveTask).map(normaliseTask);
+      }
+      if (rawAreas) {
+        this.areas = (JSON.parse(rawAreas) as any[]).map(reviveArea);
+      }
+      if (rawProjects) {
+        this.projects = (JSON.parse(rawProjects) as any[]).map(reviveProject);
+      }
+      if (rawMembership) {
+        const parsed = JSON.parse(rawMembership);
+        this.membership = parsed && typeof parsed === 'object' ? parsed : {};
       }
       if (rawEventKinds) {
         const parsed = JSON.parse(rawEventKinds);
@@ -187,6 +228,9 @@ export class CalendarStorage {
       this.pushState = emptyPushState();
       this.caldavEvents = [];
       this.eventKinds = {};
+      this.areas = [];
+      this.projects = [];
+      this.membership = {};
     }
 
     // Never restored from disk — only ever from this session's memory.
@@ -216,6 +260,9 @@ export class CalendarStorage {
         AsyncStorage.setItem(PUSH_STATE_KEY, JSON.stringify(this.pushState)),
         AsyncStorage.setItem(CALDAV_EVENTS_KEY, JSON.stringify(this.caldavEvents)),
         AsyncStorage.setItem(EVENT_KINDS_KEY, JSON.stringify(this.eventKinds)),
+        AsyncStorage.setItem(AREAS_KEY, JSON.stringify(this.areas)),
+        AsyncStorage.setItem(PROJECTS_KEY, JSON.stringify(this.projects)),
+        AsyncStorage.setItem(MEMBERSHIP_KEY, JSON.stringify(this.membership)),
       ]);
     } catch (e) {
       // A failed write must not take down the UI; state stays correct in memory.
@@ -304,6 +351,79 @@ export class CalendarStorage {
     this.tasks = this.tasks.filter(t => t.uid !== uid && t.parentId !== uid);
     void this.save();
     return this.tasks;
+  }
+
+  // ── PARA: Areas, Projects, and membership ──────────────────────────────
+  // An Area never completes; a Project does. That is the whole distinction,
+  // and it is what keeps ongoing commitments out of an active project list.
+
+  getAreas(): Area[] {
+    return this.areas;
+  }
+
+  upsertArea(area: Area): Area[] {
+    const idx = this.areas.findIndex(a => a.id === area.id);
+    if (idx >= 0) this.areas[idx] = area;
+    else this.areas.push(area);
+    void this.save();
+    return this.areas;
+  }
+
+  /**
+   * Removes an Area and detaches anything filed under it. Projects survive as
+   * unfiled rather than being deleted with it — losing a project because its
+   * Area was tidied away would be a destructive surprise.
+   */
+  removeArea(areaId: string): Area[] {
+    this.areas = this.areas.filter(a => a.id !== areaId);
+    this.projects = this.projects.map(p => (p.areaId === areaId ? { ...p, areaId: undefined } : p));
+    for (const [identity, entry] of Object.entries(this.membership)) {
+      if (entry.areaId === areaId) this.membership[identity] = { ...entry, areaId: undefined };
+    }
+    void this.save();
+    return this.areas;
+  }
+
+  getProjects(): Project[] {
+    return this.projects;
+  }
+
+  upsertProject(project: Project): Project[] {
+    const idx = this.projects.findIndex(p => p.id === project.id);
+    if (idx >= 0) this.projects[idx] = project;
+    else this.projects.push(project);
+    void this.save();
+    return this.projects;
+  }
+
+  /** Removes a Project and detaches its items, which are not deleted with it. */
+  removeProject(projectId: string): Project[] {
+    this.projects = this.projects.filter(p => p.id !== projectId);
+    for (const [identity, entry] of Object.entries(this.membership)) {
+      if (entry.projectId === projectId) {
+        this.membership[identity] = { ...entry, projectId: undefined };
+      }
+    }
+    void this.save();
+    return this.projects;
+  }
+
+  /** Membership for an item, keyed by noteIdentity. Never empty-checked away. */
+  getMembership(identity: string): ItemMembership {
+    return this.membership[identity] || {};
+  }
+
+  setMembership(identity: string, entry: ItemMembership): void {
+    const merged = { ...this.getMembership(identity), ...entry };
+    // Dropping empty entries keeps the store from growing a row per item that
+    // was assigned and then cleared.
+    if (!merged.areaId && !merged.projectId) delete this.membership[identity];
+    else this.membership[identity] = merged;
+    void this.save();
+  }
+
+  getAllMemberships(): Record<string, ItemMembership> {
+    return this.membership;
   }
 
   removeUserEvent(eventUid: string): CalendarEvent[] {

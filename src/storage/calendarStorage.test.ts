@@ -303,3 +303,83 @@ describe('persistence round-trip', () => {
     expect(settings.feeds).toHaveLength(1);
   });
 });
+
+describe('PARA areas, projects and membership', () => {
+  const area = (over = {}) => ({
+    id: 'area-1',
+    name: 'ENG 102',
+    createdAt: new Date('2026-08-01T00:00:00Z'),
+    ...over,
+  });
+  const project = (over = {}) => ({
+    id: 'proj-1',
+    name: 'Draft term paper',
+    status: 'active' as const,
+    createdAt: new Date('2026-08-01T00:00:00Z'),
+    ...over,
+  });
+
+  test('an area is stored and read back', () => {
+    calendarStorage.upsertArea(area());
+    expect(calendarStorage.getAreas().map(a => a.name)).toContain('ENG 102');
+  });
+
+  test('upsert replaces rather than duplicating', () => {
+    calendarStorage.upsertArea(area());
+    calendarStorage.upsertArea(area({ name: 'ENG 102 renamed' }));
+    expect(calendarStorage.getAreas().filter(a => a.id === 'area-1')).toHaveLength(1);
+  });
+
+  test('membership is keyed by identity, so it serves events and tasks alike', () => {
+    calendarStorage.setMembership('phys301', { areaId: 'area-1', projectId: 'proj-1' });
+    expect(calendarStorage.getMembership('phys301')).toEqual({
+      areaId: 'area-1',
+      projectId: 'proj-1',
+    });
+  });
+
+  test('setting one field leaves the other intact', () => {
+    calendarStorage.setMembership('item-merge', { areaId: 'area-1' });
+    calendarStorage.setMembership('item-merge', { projectId: 'proj-1' });
+    expect(calendarStorage.getMembership('item-merge')).toEqual({
+      areaId: 'area-1',
+      projectId: 'proj-1',
+    });
+  });
+
+  test('an unassigned item reports empty rather than undefined', () => {
+    expect(calendarStorage.getMembership('never-assigned')).toEqual({});
+  });
+
+  test('clearing both fields drops the row entirely', () => {
+    calendarStorage.setMembership('item-clear', { areaId: 'area-1' });
+    calendarStorage.setMembership('item-clear', { areaId: undefined });
+    expect(calendarStorage.getAllMemberships()).not.toHaveProperty('item-clear');
+  });
+
+  test('deleting an area detaches its projects instead of deleting them', () => {
+    // Losing a project because its area was tidied away would be a
+    // destructive surprise.
+    calendarStorage.upsertArea(area({ id: 'area-doomed' }));
+    calendarStorage.upsertProject(project({ id: 'proj-orphan', areaId: 'area-doomed' }));
+    calendarStorage.setMembership('task-x', { areaId: 'area-doomed', projectId: 'proj-orphan' });
+
+    calendarStorage.removeArea('area-doomed');
+
+    expect(calendarStorage.getProjects().find(p => p.id === 'proj-orphan')).toBeDefined();
+    expect(calendarStorage.getProjects().find(p => p.id === 'proj-orphan')?.areaId).toBeUndefined();
+    expect(calendarStorage.getMembership('task-x').areaId).toBeUndefined();
+    // The project assignment is untouched.
+    expect(calendarStorage.getMembership('task-x').projectId).toBe('proj-orphan');
+  });
+
+  test('deleting a project detaches its items rather than deleting them', () => {
+    calendarStorage.upsertProject(project({ id: 'proj-doomed' }));
+    calendarStorage.setMembership('task-y', { projectId: 'proj-doomed' });
+
+    calendarStorage.removeProject('proj-doomed');
+
+    expect(calendarStorage.getProjects().find(p => p.id === 'proj-doomed')).toBeUndefined();
+    expect(calendarStorage.getMembership('task-y')).toEqual({});
+  });
+});

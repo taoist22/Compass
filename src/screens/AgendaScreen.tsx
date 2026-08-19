@@ -2380,6 +2380,10 @@ export function AgendaScreen(): React.JSX.Element {
             }}
             onCreateEvent={handleCreateNewEvent}
             onCreateTask={handleCreateNewTask}
+            onDeleteTask={uid => {
+              const task = calendarStorage.getTasks().find(t => t.uid === uid);
+              if (task) handleDeleteTask(task);
+            }}
           />
 
           {/* Month view scrolls as one page: grid plus the task strip below it.

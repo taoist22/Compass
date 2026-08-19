@@ -43,6 +43,8 @@ interface ItemCreationModalProps {
   onCreateEvent: (event: CalendarEvent, targetFeedId: string) => void;
   /** dueDate omitted means a genuinely undated task, not one dated today. */
   onCreateTask: (task: { uid?: string; title: string; dueDate?: Date; notes?: string }) => void;
+  /** Only offered while editing an existing item, never while creating one. */
+  onDeleteTask?: (uid: string) => void;
 }
 
 const HOURS = ['08', '09', '10', '11', '12', '01', '02', '03', '04', '05', '06', '07'];
@@ -65,6 +67,7 @@ export function ItemCreationModal({
   onClose,
   onCreateEvent,
   onCreateTask,
+  onDeleteTask,
 }: ItemCreationModalProps): React.JSX.Element {
   const [title, setTitle] = useState<string>('');
 
@@ -429,6 +432,20 @@ export function ItemCreationModal({
               💾 Save {itemKind === 'event' ? 'Event' : 'Task'}
             </Text>
           </TouchableOpacity>
+
+          {/* Editing only: deleting from a create form would have nothing to
+              delete, and the Day View's row control is easy to miss. */}
+          {editingEvent && itemKind === 'task' && onDeleteTask && (
+            <TouchableOpacity
+              style={styles.deleteTaskBtn}
+              onPress={() => {
+                onDeleteTask(editingEvent.uid);
+                onClose();
+              }}
+            >
+              <Text style={styles.deleteTaskBtnText}>🗑️ Delete Task</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </TouchableOpacity>
     </Modal>
@@ -729,6 +746,20 @@ const styles = StyleSheet.create({
   },
   durationChipTextSelected: {
     color: '#ffffff',
+  },
+  deleteTaskBtn: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 8,
+    backgroundColor: '#ffffff',
+  },
+  deleteTaskBtnText: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#000000',
   },
   saveBtn: {
     backgroundColor: '#000000',

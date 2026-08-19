@@ -13,12 +13,84 @@ export interface Attendee {
  * whereas an event's start and end are mandatory. Forcing tasks through the
  * event type meant inventing a start time for undated items.
  */
+/**
+ * PARA vocabulary, since that is the model users arrive with from Obsidian.
+ *
+ * The distinction that matters: an Area never completes, a Project does. That
+ * single rule is what stops an active list filling up with ongoing commitments
+ * that have no checkmark ending.
+ */
+export interface Area {
+  id: string;
+  name: string;
+  createdAt: Date;
+  /** PARA's Archive: kept for reference, hidden from active pickers. */
+  archived?: boolean;
+}
+
+export type ProjectStatus = 'active' | 'done' | 'archived';
+
+export interface Project {
+  id: string;
+  name: string;
+  /** The Area this project serves, if any. */
+  areaId?: string;
+  dueDate?: Date;
+  status: ProjectStatus;
+  /**
+   * Where this project's notes are filed, overriding the per-kind folder, and
+   * which background they use. Both optional: unset means fall back to the
+   * note kind's own setting.
+   */
+  folder?: string;
+  template?: string;
+  createdAt: Date;
+  completedAt?: Date;
+}
+
+/**
+ * Which Area and Project an item belongs to, keyed by noteIdentity.
+ *
+ * Kept out of CalendarEvent for the same reason note kinds are: events from
+ * CalDAV and feeds are rebuilt from their ICS text on every sync, so anything
+ * held on the event object is lost. One store serves events, tasks and notes
+ * alike rather than each carrying its own fields.
+ */
+export interface ItemMembership {
+  areaId?: string;
+  projectId?: string;
+}
+
+/** Where a task is, not merely whether it is finished. */
+export type TaskStatus = 'todo' | 'in-progress' | 'done';
+
+/**
+ * Todoist's scale, so a future sync adapter is a straight mapping rather than
+ * a translation: 1 normal, 2 low, 3 medium, 4 high. Undefined means unset.
+ */
+export type TaskPriority = 1 | 2 | 3 | 4;
+
 export interface CalendarTask {
   uid: string;
   title: string;
   /** Undefined means no date — the task sits in the "No date" section. */
   dueDate?: Date;
+  /**
+   * Denormalised mirror of `status === 'done'`.
+   *
+   * Read in a couple of dozen places and written into the outbound VTODO, so
+   * it stays the stored source of done-ness. Never set it directly — use the
+   * helpers in taskModel, which keep the two in step.
+   */
   completed: boolean;
+  /**
+   * Absent on tasks stored before statuses existed; reviveTask derives it from
+   * `completed` on load, so nothing needs migrating on disk.
+   */
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  /** Recurrence rule. Reserved: no expander or generator exists yet. */
+  rrule?: string;
   /**
    * When it was ticked off. Drives which day the completed task is shown on,
    * so finished work appears on the day you did it rather than lingering in
