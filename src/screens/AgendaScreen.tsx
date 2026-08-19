@@ -1173,16 +1173,15 @@ export function AgendaScreen(): React.JSX.Element {
   // check this costs nothing, since they are already in memory. Rebuilt when
   // the notes directory or theme changes, both of which follow note creation.
   useEffect(() => {
+    // Mappings only — a badge means a note exists on that day. An event that
+    // merely has a kind recorded has no note behind it, so badging it would
+    // make the flag say something it does not mean.
     const mappings = calendarStorage.getAllMappings();
     const byEvent: Record<string, NoteKind | undefined> = {};
     for (const mapping of Object.values(mappings)) {
       if (!mapping?.eventUid) continue;
       const identity = mapping.seriesId || mapping.eventUid;
       byEvent[identity] = mapping.kind;
-    }
-    // Tags set without a note yet still badge the grid.
-    for (const [identity, kind] of Object.entries(calendarStorage.getAllEventKinds())) {
-      if (!byEvent[identity]) byEvent[identity] = kind;
     }
     setNoteKindByEvent(byEvent);
   }, [events, themeMode, targetNotesDir, eventNotePaths, refreshState]);
