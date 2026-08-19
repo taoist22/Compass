@@ -307,14 +307,18 @@ const styles = StyleSheet.create({
     borderColor: '#000000',
     backgroundColor: '#f8f8f8',
   },
-  // selectedCell paints a solid black fill, which swallows the black today
-  // border. Flip the ring to white so today stays legible while selected.
+  // Today's heavier ring wins when it is also the selected day.
   todaySelectedCell: {
-    borderColor: '#ffffff',
-  },
-  selectedCell: {
-    backgroundColor: '#000000',
+    borderWidth: 4,
     borderColor: '#000000',
+  },
+  // A solid fill made the cell's own events and tasks unreadable. Today keeps
+  // its heavy border; the selected day gets a lighter one and a faint wash, so
+  // both are identifiable without either swallowing its contents.
+  selectedCell: {
+    backgroundColor: '#f0f0f0',
+    borderColor: '#000000',
+    borderWidth: 3,
   },
   cellTopBar: {
     flexDirection: 'row',
@@ -331,7 +335,7 @@ const styles = StyleSheet.create({
     color: '#909090',
   },
   selectedText: {
-    color: '#ffffff',
+    color: '#000000',
   },
   cellCountBadge: {
     fontSize: 11,
@@ -364,7 +368,7 @@ const styles = StyleSheet.create({
     color: '#606060',
   },
   selectedEventSnippetText: {
-    color: '#ffffff',
+    color: '#000000',
   },
   moreEventsText: {
     fontSize: 9,
@@ -372,7 +376,7 @@ const styles = StyleSheet.create({
     color: '#505050',
   },
   selectedMoreEventsText: {
-    color: '#d0d0d0',
+    color: '#505050',
   },
   // A row along the bottom rather than a corner cluster: a Nomad cell is only
   // ~107dp wide, and three stacked glyphs in one corner crowded it.
@@ -399,8 +403,8 @@ const styles = StyleSheet.create({
   },
   // Selected cells fill solid black, so the badge inverts to stay readable.
   noteBadgeSelected: {
-    color: '#ffffff',
-    backgroundColor: '#000000',
-    borderColor: '#ffffff',
+    color: '#000000',
+    backgroundColor: '#ffffff',
+    borderColor: '#000000',
   },
 });

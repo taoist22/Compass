@@ -140,6 +140,8 @@ export function AgendaScreen(): React.JSX.Element {
   const [dailyNoteExists, setDailyNoteExists] = useState<boolean | null>(null);
   /** Local date keys in the visible month that have a daily note on disk. */
   const [dailyNoteDates, setDailyNoteDates] = useState<Set<string>>(new Set());
+  /** The task open in the edit modal, so its pickers open on real values. */
+  const [editingTask, setEditingTask] = useState<CalendarTask | null>(null);
   /** Note kind per event uid, for the month grid's M/C badges. */
   const [noteKindByEvent, setNoteKindByEvent] = useState<Record<string, NoteKind | undefined>>({});
   // Note paths found on disk for the day's events, keyed by event uid. The
@@ -1385,6 +1387,7 @@ export function AgendaScreen(): React.JSX.Element {
    * so the task is projected into that shape and diverted back on save by uid.
    */
   const handleEditTask = (task: CalendarTask) => {
+    setEditingTask(task);
     const due = task.dueDate ? new Date(task.dueDate) : undefined;
     setEditingEvent({
       uid: task.uid,
@@ -1413,6 +1416,7 @@ export function AgendaScreen(): React.JSX.Element {
   };
 
   const handleEditItem = (event: CalendarEvent) => {
+    setEditingTask(null);
     // The event argument used to be dropped here, so "Edit" opened a blank
     // create form and saving minted a new uid — the original never changed.
     setEditingEvent(event);
@@ -1572,10 +1576,6 @@ export function AgendaScreen(): React.JSX.Element {
       } catch (e) {}
     }
   };
-
-  /** The stored task behind an item open in the edit modal, if it is a task. */
-  const editingTaskFor = (uid: string): CalendarTask | undefined =>
-    calendarStorage.getTasks().find(t => t.uid === uid);
 
   const handleCreateNewTask = (input: {
     uid?: string;
@@ -2418,15 +2418,11 @@ export function AgendaScreen(): React.JSX.Element {
               setLassoDraftParsed(null);
               setLassoDraftDate(null);
               setEditingEvent(null);
+              setEditingTask(null);
             }}
             onCreateEvent={handleCreateNewEvent}
             onCreateTask={handleCreateNewTask}
-            editingTaskStatus={
-              editingEvent ? editingTaskFor(editingEvent.uid)?.status : undefined
-            }
-            editingTaskPriority={
-              editingEvent ? editingTaskFor(editingEvent.uid)?.priority : undefined
-            }
+            editingTask={editingTask}
             onDeleteTask={uid => {
               const task = calendarStorage.getTasks().find(t => t.uid === uid);
               if (task) handleDeleteTask(task);
@@ -2467,6 +2463,8 @@ export function AgendaScreen(): React.JSX.Element {
                 unless you happen to be on today's Day View. */}
             <View style={styles.gridStrip}>
               {([
+                ['Today', todayTaskSections.dueToday, false],
+                ['Upcoming', todayTaskSections.upcoming, true],
                 ['No Date', todayTaskSections.noDate, false],
                 ['Past Due', todayTaskSections.pastDue, true],
               ] as Array<[string, CalendarTask[], boolean]>).map(([label, items, showDate]) => (
@@ -2677,13 +2675,20 @@ export function AgendaScreen(): React.JSX.Element {
                     </TouchableOpacity>
                   </View>
 
-                  {countOpenTasks(daySections) === 0 && daySections.completed.length === 0 ? (
+                  {/* Upcoming is counted here but deliberately not in
+                      countOpenTasks: the header badge means "needs attention
+                      now", while the empty state must not claim there is
+                      nothing when a section below it has rows. */}
+                  {countOpenTasks(daySections) === 0 &&
+                  daySections.completed.length === 0 &&
+                  daySections.upcoming.length === 0 ? (
                     <Text style={styles.panelEmpty}>Nothing to do.</Text>
                   ) : (
                     ([
                       ['', daySections.dueToday, false],
                       ['NO DATE', daySections.noDate, false],
                       ['⚠️ Past Due:', daySections.pastDue, true],
+                      ['UPCOMING', daySections.upcoming, true],
                       ['COMPLETED', daySections.completed, false],
                     ] as Array<[string, CalendarTask[], boolean]>).map(([label, items, showDate]) =>
                       items.length === 0 ? null : (

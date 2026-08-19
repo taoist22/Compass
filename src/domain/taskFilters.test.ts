@@ -152,3 +152,64 @@ describe('legacy task migration', () => {
     expect(sectionTasksForDay([t], TODAY, TODAY).pastDue.map(x => x.uid)).toEqual(['task-user-1']);
   });
 });
+
+describe('upcoming tasks', () => {
+  const day = (iso: string) => new Date(`${iso}T09:00:00`);
+  const task = (uid: string, due?: Date, over = {}): CalendarTask => ({
+    uid,
+    title: uid,
+    completed: false,
+    createdAt: new Date('2026-08-01T00:00:00'),
+    dueDate: due,
+    ...over,
+  });
+
+  const TODAY = day('2026-08-19');
+
+  test('tasks dated after the viewed day are upcoming', () => {
+    const sections = sectionTasksForDay(
+      [task('later', day('2026-08-25')), task('today', TODAY)],
+      TODAY,
+      TODAY
+    );
+
+    expect(sections.upcoming.map(t => t.uid)).toEqual(['later']);
+    expect(sections.dueToday.map(t => t.uid)).toEqual(['today']);
+  });
+
+  test('upcoming is populated even when not viewing today', () => {
+    // The month strip has no single "viewed day" the user is thinking about,
+    // and its other two pools are empty for a tidy calendar.
+    const viewed = day('2026-08-22');
+    const sections = sectionTasksForDay([task('later', day('2026-08-25'))], viewed, TODAY);
+
+    expect(sections.upcoming.map(t => t.uid)).toEqual(['later']);
+  });
+
+  test('past tasks are never upcoming', () => {
+    const sections = sectionTasksForDay([task('old', day('2026-08-01'))], TODAY, TODAY);
+    expect(sections.upcoming).toEqual([]);
+    expect(sections.pastDue.map(t => t.uid)).toEqual(['old']);
+  });
+
+  test('completed tasks are not upcoming however they are dated', () => {
+    const done = task('done', day('2026-08-25'), { completed: true, completedAt: TODAY });
+    const sections = sectionTasksForDay([done], TODAY, TODAY);
+    expect(sections.upcoming).toEqual([]);
+  });
+
+  test('undated tasks stay in No Date rather than leaking into upcoming', () => {
+    const sections = sectionTasksForDay([task('someday')], TODAY, TODAY);
+    expect(sections.upcoming).toEqual([]);
+    expect(sections.noDate.map(t => t.uid)).toEqual(['someday']);
+  });
+
+  test('upcoming is ordered soonest first', () => {
+    const sections = sectionTasksForDay(
+      [task('c', day('2026-09-10')), task('a', day('2026-08-21')), task('b', day('2026-08-30'))],
+      TODAY,
+      TODAY
+    );
+    expect(sections.upcoming.map(t => t.uid)).toEqual(['a', 'b', 'c']);
+  });
+});

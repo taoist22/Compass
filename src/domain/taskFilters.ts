@@ -12,6 +12,13 @@ import { CalendarEvent, CalendarTask } from './types';
 export interface SectionedTasks {
   pastDue: CalendarTask[];
   dueToday: CalendarTask[];
+  /**
+   * Dated after the viewed day. Populated regardless of which day is being
+   * viewed, so a month-grid strip has something to show — its two existing
+   * pools, No Date and Past Due, are both empty for a tidy calendar, which
+   * made the strip look broken rather than empty.
+   */
+  upcoming: CalendarTask[];
   noDate: CalendarTask[];
   completed: CalendarTask[];
 }
@@ -47,7 +54,7 @@ export function sectionTasksForDay(
   const today = startOfDay(now);
   const viewingToday = viewed.getTime() === today.getTime();
 
-  const result: SectionedTasks = { pastDue: [], dueToday: [], noDate: [], completed: [] };
+  const result: SectionedTasks = { pastDue: [], dueToday: [], upcoming: [], noDate: [], completed: [] };
 
   for (const task of tasks) {
     if (task.completed) {
@@ -70,11 +77,14 @@ export function sectionTasksForDay(
       result.dueToday.push(task);
     } else if (viewingToday && startOfDay(task.dueDate).getTime() < today.getTime()) {
       result.pastDue.push(task);
+    } else if (startOfDay(task.dueDate).getTime() > viewed.getTime()) {
+      result.upcoming.push(task);
     }
   }
 
   result.pastDue.sort(byDueThenCreated);
   result.dueToday.sort(byDueThenCreated);
+  result.upcoming.sort(byDueThenCreated);
   result.noDate.sort(byDueThenCreated);
   result.completed.sort(byDueThenCreated);
 

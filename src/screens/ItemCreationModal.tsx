@@ -8,13 +8,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { CalendarEvent, CalendarFeed, TaskPriority, TaskStatus } from '../domain/types';
+import { CalendarEvent, CalendarFeed, CalendarTask, TaskPriority, TaskStatus } from '../domain/types';
 import {
   TASK_PRIORITIES,
   TASK_STATUSES,
   priorityLabel,
   statusGlyph,
   statusLabel,
+  taskStatus,
 } from '../domain/taskModel';
 import { DatePickerModal } from './DatePickerModal';
 
@@ -57,9 +58,12 @@ interface ItemCreationModalProps {
     status?: TaskStatus;
     priority?: TaskPriority;
   }) => void;
-  /** Existing status and priority when editing, so the pickers open correct. */
-  editingTaskStatus?: TaskStatus;
-  editingTaskPriority?: TaskPriority;
+  /**
+   * The task being edited, when one is. Passed whole rather than as separate
+   * status/priority props so the pickers cannot open showing stale defaults
+   * while the real values sit elsewhere.
+   */
+  editingTask?: CalendarTask | null;
   /** Only offered while editing an existing item, never while creating one. */
   onDeleteTask?: (uid: string) => void;
 }
@@ -85,8 +89,7 @@ export function ItemCreationModal({
   onCreateEvent,
   onCreateTask,
   onDeleteTask,
-  editingTaskStatus,
-  editingTaskPriority,
+  editingTask,
 }: ItemCreationModalProps): React.JSX.Element {
   const [title, setTitle] = useState<string>('');
 
@@ -136,8 +139,8 @@ export function ItemCreationModal({
       const mins = Math.round((new Date(editingEvent.end).getTime() - start.getTime()) / 60000);
       setDurationMins(mins > 0 ? mins : 30);
       setNoDueDate(false);
-      setTaskStatusValue(editingTaskStatus || 'todo');
-      setTaskPriorityValue(editingTaskPriority || 1);
+      setTaskStatusValue(editingTask ? taskStatus(editingTask) : 'todo');
+      setTaskPriorityValue(editingTask?.priority || 1);
       return;
     }
 
@@ -163,7 +166,7 @@ export function ItemCreationModal({
     } else {
       setIsAllDay(initialParsed ? initialParsed.allDay : type === 'task');
     }
-  }, [visible, initialTitle, initialParsed, type, editingEvent, targetDate, editingTaskStatus, editingTaskPriority]);
+  }, [visible, initialTitle, initialParsed, type, editingEvent, targetDate, editingTask]);
 
   const shiftDate = (days: number) => {
     setItemDate(prev => {
@@ -498,25 +501,28 @@ export function ItemCreationModal({
             )}
           </ScrollView>
 
-          <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
-            <Text style={styles.saveBtnText}>
-              💾 Save {itemKind === 'event' ? 'Event' : 'Task'}
-            </Text>
-          </TouchableOpacity>
-
-          {/* Editing only: deleting from a create form would have nothing to
-              delete, and the Day View's row control is easy to miss. */}
-          {editingEvent && itemKind === 'task' && onDeleteTask && (
-            <TouchableOpacity
-              style={styles.deleteTaskBtn}
-              onPress={() => {
-                onDeleteTask(editingEvent.uid);
-                onClose();
-              }}
-            >
-              <Text style={styles.deleteTaskBtnText}>🗑️ Delete Task</Text>
+          {/* One row: stacked, Delete fell past the sheet's 85% max height and
+              was clipped off screen entirely. */}
+          <View style={styles.footerRow}>
+            <TouchableOpacity style={[styles.saveBtn, styles.footerGrow]} onPress={handleSave}>
+              <Text style={styles.saveBtnText}>
+                💾 Save {itemKind === 'event' ? 'Event' : 'Task'}
+              </Text>
             </TouchableOpacity>
-          )}
+
+            {/* Editing only: there is nothing to delete from a create form. */}
+            {editingEvent && itemKind === 'task' && onDeleteTask && (
+              <TouchableOpacity
+                style={styles.deleteTaskBtn}
+                onPress={() => {
+                  onDeleteTask(editingEvent.uid);
+                  onClose();
+                }}
+              >
+                <Text style={styles.deleteTaskBtnText}>🗑️</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       </TouchableOpacity>
     </Modal>
@@ -844,17 +850,25 @@ const styles = StyleSheet.create({
   stateChipTextSelected: {
     color: '#ffffff',
   },
+  footerRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
+  footerGrow: {
+    flex: 1,
+  },
   deleteTaskBtn: {
     borderWidth: 2,
     borderColor: '#000000',
     borderRadius: 8,
     paddingVertical: 12,
-    alignItems: 'center',
-    marginTop: 8,
+    paddingHorizontal: 16,
+    justifyContent: 'center',
+    marginLeft: 8,
     backgroundColor: '#ffffff',
   },
   deleteTaskBtnText: {
-    fontSize: 15,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#000000',
   },
