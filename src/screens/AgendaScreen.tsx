@@ -59,6 +59,15 @@ import { captureLassoText } from '../supernote/lassoCapture';
 import { MonthGridView } from './MonthGridView';
 import { TaskListModal } from './TaskListModal';
 import { ParaView } from './ParaView';
+import { activeProjects, projectProgress } from '../domain/taskListView';
+
+/** Progress as solid blocks; a drawn bar smears at these widths on e-ink. */
+function blockBar(percent: number): string {
+  const filled = Math.round((percent / 100) * 5);
+  return '█'.repeat(filled) + '░'.repeat(5 - filled);
+}
+
+import { DayScheduleGrid } from './DayScheduleGrid';
 import { AreaManagerModal } from './AreaManagerModal';
 import { ItemCreationModal } from './ItemCreationModal';
 import { DatePickerModal } from './DatePickerModal';
@@ -1825,6 +1834,48 @@ export function AgendaScreen(): React.JSX.Element {
     setMembershipRevision(n => n + 1);
   };
 
+  /** Area label for a task row, e.g. "[Home]". Empty when unfiled. */
+  const areaTagFor = (uid: string): string => {
+    void membershipRevision;
+    const areaId = calendarStorage.getMembership(uid).areaId;
+    if (!areaId) return '';
+    const area = areas.find(x => x.id === areaId);
+    return area ? `[${area.name}]` : '';
+  };
+
+  /**
+   * Tomorrow in one line: its first event and how much is due.
+   *
+   * Deliberately a summary rather than a second schedule — the point is to
+   * know whether tomorrow needs thinking about tonight, not to plan it here.
+   */
+  const lookaheadSummary = (() => {
+    const tomorrow = new Date(selectedDate);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const evts = expandEventsForDate(
+      filterEvents(allParsedEvents, {
+        ...calendarStorage.getSettings(),
+        hideAllDayEvents: hideAllDay,
+        hideSoloEvents: hideSolo,
+      }),
+      tomorrow
+    );
+    const due = tasks.filter(t => !isDone(t) && t.dueDate && isSameCalendarDay(t.dueDate, tomorrow));
+
+    if (evts.length === 0 && due.length === 0) return 'Nothing scheduled.';
+
+    const first = evts[0];
+    const eventPart = first
+      ? `${formatTimeOfDay(minutesFromDate(first.start))} ${first.summary}${
+          evts.length > 1 ? ` (+${evts.length - 1})` : ''
+        }`
+      : '';
+    const taskPart = due.length > 0 ? `${due.length} Task${due.length === 1 ? '' : 's'}` : '';
+
+    return [eventPart, taskPart].filter(Boolean).join(' · ');
+  })();
+
   const projectOfTask = (uid: string): string | undefined => {
     void membershipRevision;
     return calendarStorage.getMembership(uid).projectId;
@@ -2963,7 +3014,9 @@ export function AgendaScreen(): React.JSX.Element {
                 {/* ── SCHEDULE ─────────────────────────────────────────── */}
                 <View style={[styles.panel, isWideScreen && styles.panelHalf]}>
                   <View style={styles.panelHeader}>
-                    <Text style={styles.panelHeaderText}>SCHEDULE ({events.length} Events)</Text>
+                    <Text style={styles.panelHeaderText}>
+                      📅 TODAY'S SCHEDULE ({events.length})
+                    </Text>
                     <TouchableOpacity
                       onPress={() => {
                         setEditingEvent(null);
@@ -2978,111 +3031,47 @@ export function AgendaScreen(): React.JSX.Element {
                     </TouchableOpacity>
                   </View>
 
-                  {events.length === 0 ? (
-                    <Text style={styles.panelEmpty}>Nothing scheduled.</Text>
-                  ) : (
-                    <>
-                      {/* All-day items pinned above the timed schedule. */}
-                      {events.filter(e => e.allDay).map((evt, idx) => (
-                        <TouchableOpacity
-                          key={`allday-${evt.uid}-${idx}`}
-                          style={styles.allDayRow}
-                          onPress={() => handleEditItem(evt)}
-                        >
-                          <Text style={styles.allDayTag}>[ALL DAY]</Text>
-                          <Text style={styles.allDayTitle} numberOfLines={1}>
-                            📌 {evt.summary}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-
-                      {events
-                        .filter(e => !e.allDay)
-                        .map((evt, idx) => {
-                          const existingNotePath = eventNotePaths[evt.uid];
-
-                          return (
-                            <View key={`${evt.uid}-${idx}`} style={styles.scheduleRow}>
-                              {/* Start above end, as on a paper planner. */}
-                              <View style={styles.scheduleGutter}>
-                                {/* One line each. The gutter was too narrow
-                                    for "9:00 AM", so the meridiem wrapped onto
-                                    a line of its own and the column read as
-                                    three unrelated values. */}
-                                <Text style={styles.scheduleTime} numberOfLines={1}>
-                                  {formatTimeOfDay(minutesFromDate(evt.start))}
-                                </Text>
-                                <Text style={styles.scheduleEndTime} numberOfLines={1}>
-                                  {formatTimeOfDay(minutesFromDate(evt.end))}
-                                </Text>
-                              </View>
-
-                              <TouchableOpacity
-                                style={styles.scheduleBody}
-                                onPress={() => handleEditItem(evt)}
-                              >
-                                <Text style={styles.scheduleTitle} numberOfLines={1}>
-                                  {evt.summary}
-                                </Text>
-                                <Text style={styles.scheduleMeta} numberOfLines={1}>
-                                  {[
-                                    evt.location || null,
-                                    evt.attendees.length > 0 ? `${evt.attendees.length} Attendees` : null,
-                                    evt.organizer?.name ? `Host: ${evt.organizer.name}` : null,
-                                  ]
-                                    .filter(Boolean)
-                                    .join(' · ') || 'tap to edit'}
-                                </Text>
-
-                                <TouchableOpacity
-                                  style={styles.scheduleInlineAction}
-                                  onPress={() => {
-                                    if (existingNotePath) {
-                                      handleOpenExistingNote(existingNotePath);
-                                    } else {
-                                      // Asks Meeting or Class the first time,
-                                      // then remembers the answer for this event.
-                                      handleRequestNoteCreation(evt);
-                                    }
-                                  }}
-                                >
-                                  <Text style={styles.scheduleInlineActionText}>
-                                    └ {existingNotePath ? '📂 Open Note' : '📝 Create Note'}
-                                  </Text>
-                                </TouchableOpacity>
-                              </TouchableOpacity>
-
-                              {/* Inline, as task rows already have. The detail
-                                  sheet that used to hold this is gone: it cost
-                                  a second tap to reach actions that fit on the
-                                  row itself. */}
-                              <TouchableOpacity
-                                style={styles.focusTaskDelete}
-                                onPress={() => handleDeleteItem(evt)}
-                              >
-                                <Text style={styles.focusTaskDeleteText}>✕</Text>
-                              </TouchableOpacity>
-                            </View>
-                          );
-                        })}
-                    </>
-                  )}
+                  <DayScheduleGrid
+                    events={events}
+                    notePaths={eventNotePaths}
+                    onEditEvent={handleEditItem}
+                    onNoteAction={(evt, existingPath) => {
+                      if (existingPath) handleOpenExistingNote(existingPath);
+                      else handleRequestNoteCreation(evt);
+                    }}
+                    onDeleteEvent={handleDeleteItem}
+                  />
                 </View>
 
                 {/* ── DAY FOCUS & TASKS ────────────────────────────────── */}
                 <View style={[styles.panel, isWideScreen && styles.panelHalf]}>
                   <View style={styles.panelHeader}>
-                    <Text style={styles.panelHeaderText}>DAY FOCUS &amp; TASKS</Text>
+                    <Text style={styles.panelHeaderText}>❤️ FOCUS &amp; DAILY JOURNAL</Text>
                   </View>
 
-                  <Text style={styles.focusSummary}>
-                    📊 {events.length} {events.length === 1 ? 'Event' : 'Events'} ·{' '}
-                    {countOpenTasks(daySections)} Tasks Open
-                  </Text>
+                  {/* The journal is a card rather than a button: it is the
+                      first thing on this side of the page, so it should read
+                      as a place rather than an action. */}
+                  <View style={styles.journalCard}>
+                    <Text style={styles.journalTitle}>
+                      📝 Daily Journal:{' '}
+                      {selectedDate.toLocaleDateString('en-US', {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })}
+                    </Text>
+                    <TouchableOpacity style={styles.journalBtn} onPress={handleOpenDailyNote}>
+                      <Text style={styles.journalBtnText}>
+                        {dailyNoteExists === false ? '📂 Create' : '📂 Open'} Today's Journal Note
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
 
                   <View style={styles.subHeader}>
                     <Text style={styles.subHeaderText}>
-                      TASKS ({countOpenTasks(daySections)})
+                      ☑ TASKS &amp; DELIVERABLES ({countOpenTasks(daySections)})
                     </Text>
                     <TouchableOpacity
                       onPress={() => {
@@ -3135,6 +3124,15 @@ export function AgendaScreen(): React.JSX.Element {
                                 </Text>
                               </TouchableOpacity>
 
+                              {/* The area shown where the work is, so filing
+                                  a task has a visible consequence rather than
+                                  only mattering inside the PARA view. */}
+                              {areaTagFor(task.uid) ? (
+                                <Text style={styles.areaTag} numberOfLines={1}>
+                                  {areaTagFor(task.uid)}
+                                </Text>
+                              ) : null}
+
                               <TouchableOpacity
                                 style={styles.focusTaskDelete}
                                 onPress={() => handleDeleteTask(task)}
@@ -3149,8 +3147,40 @@ export function AgendaScreen(): React.JSX.Element {
                   )}
 
                   <View style={styles.subHeader}>
-                    <Text style={styles.subHeaderText}>DAILY NOTE</Text>
+                    <Text style={styles.subHeaderText}>🚀 ACTIVE PROJECTS (PARA)</Text>
                   </View>
+
+                  {activeProjects(projects).length === 0 ? (
+                    <Text style={styles.panelEmpty}>No active projects.</Text>
+                  ) : (
+                    activeProjects(projects).map(project => {
+                      const progress = projectProgress(tasks, project.id, {
+                        projectOf: projectOfTask,
+                        nameOf: () => project.name,
+                      });
+                      return (
+                        <TouchableOpacity
+                          key={project.id}
+                          style={styles.dayProjectRow}
+                          onPress={() => setViewMode('para')}
+                        >
+                          <Text style={styles.dayProjectName} numberOfLines={1}>
+                            {project.name}
+                          </Text>
+                          <Text style={styles.dayProjectMeta}>
+                            {blockBar(progress.percent)} {progress.done}/{progress.total} tasks
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })
+                  )}
+
+                  {/* Tomorrow at a glance. Without it the planner stops dead at
+                      midnight, which is not how anyone plans an evening. */}
+                  <View style={styles.subHeader}>
+                    <Text style={styles.subHeaderText}>🔮 LOOKAHEAD (TOMORROW)</Text>
+                  </View>
+                  <Text style={styles.lookaheadText}>{lookaheadSummary}</Text>
                   <TouchableOpacity style={styles.dailyNoteBtn} onPress={handleOpenDailyNote}>
                     <Text style={styles.dailyNoteBtnText}>
                       📝 {dailyNoteExists === false ? 'Create' : 'Open'}{' '}
@@ -3715,6 +3745,46 @@ const styles = StyleSheet.create({
   scheduleInlineAction: { marginTop: 4 },
   scheduleInlineActionText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
   scheduleEndTime: { fontSize: 13, color: '#404040' },
+  journalCard: {
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 6,
+    padding: 8,
+    margin: 8,
+    backgroundColor: '#ffffff',
+  },
+  journalTitle: { fontSize: 12, fontWeight: 'bold', color: '#000000', marginBottom: 6 },
+  journalBtn: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    paddingVertical: 7,
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+  },
+  journalBtnText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
+  areaTag: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#303030',
+    backgroundColor: '#ececec',
+    borderRadius: 3,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    marginLeft: 6,
+    maxWidth: 96,
+    overflow: 'hidden',
+  },
+  dayProjectRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  dayProjectName: { flex: 1, fontSize: 12, fontWeight: 'bold', color: '#000000' },
+  dayProjectMeta: { fontSize: 11, color: '#303030', marginLeft: 8 },
+  lookaheadText: { fontSize: 12, color: '#000000', paddingHorizontal: 10, paddingVertical: 6 },
   focusSummary: { fontSize: 13, fontWeight: 'bold', color: '#000000', padding: 10 },
   subHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#000000', paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#f2f2f2' },
   subHeaderText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
