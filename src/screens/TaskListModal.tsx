@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Area, CalendarTask } from '../domain/types';
+import { Area, CalendarTask, Project } from '../domain/types';
 import { statusGlyph, taskRowLabel, taskStatus } from '../domain/taskModel';
 import {
   TASK_GROUPINGS,
@@ -9,9 +9,11 @@ import {
   TaskScope,
   countGrouped,
   filterByArea,
+  filterByProject,
   filterByScope,
   groupTasks,
   groupingLabel,
+  projectProgress,
   scopeLabel,
 } from '../domain/taskListView';
 
@@ -21,6 +23,8 @@ interface TaskListModalProps {
   areas: Area[];
   /** Area membership by task uid; it lives outside the task itself. */
   areaOf: (uid: string) => string | undefined;
+  projects: Project[];
+  projectOf: (uid: string) => string | undefined;
   onClose: () => void;
   onManageAreas: () => void;
   onToggle: (task: CalendarTask) => void;
@@ -41,6 +45,8 @@ export function TaskListModal({
   tasks,
   areas,
   areaOf,
+  projects,
+  projectOf,
   onClose,
   onManageAreas,
   onToggle,
@@ -49,18 +55,24 @@ export function TaskListModal({
   const [scope, setScope] = useState<TaskScope>('open');
   const [grouping, setGrouping] = useState<TaskGrouping>('due');
   const [areaId, setAreaId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
 
   const lookup = {
     areaOf,
     nameOf: (id: string) => areas.find(a => a.id === id)?.name || 'Area',
   };
+  const projectLookup = {
+    projectOf,
+    nameOf: (id: string) => projects.find(p => p.id === id)?.name || 'Project',
+  };
 
-  const groups = groupTasks(
+  const scoped = filterByProject(
     filterByArea(filterByScope(tasks, scope), areaId, lookup),
-    grouping,
-    new Date(),
-    lookup
+    projectId,
+    projectLookup
   );
+
+  const groups = groupTasks(scoped, grouping, new Date(), lookup, projectLookup);
   const total = countGrouped(groups);
 
   /**
@@ -71,6 +83,13 @@ export function TaskListModal({
     setAreaId(next);
     if (next && grouping === 'area') setGrouping('due');
   };
+
+  const chooseProject = (next: string | null) => {
+    setProjectId(next);
+    if (next && grouping === 'project') setGrouping('due');
+  };
+
+  const activeProjects = projects.filter(p => p.status === 'active');
 
   return (
     <Modal visible={visible} transparent animationType="fade">
@@ -168,6 +187,45 @@ export function TaskListModal({
                       </Text>
                     </TouchableOpacity>
                   ))}
+              </View>
+            </>
+          )}
+
+          {activeProjects.length > 0 && (
+            <>
+              <Text allowFontScaling={false} style={styles.filterLabel}>
+                Project
+              </Text>
+              <View style={styles.chipRow}>
+                <TouchableOpacity
+                  style={[styles.chip, projectId === null && styles.chipActive]}
+                  onPress={() => chooseProject(null)}
+                >
+                  <Text
+                    allowFontScaling={false}
+                    style={[styles.chipText, projectId === null && styles.chipTextActive]}
+                  >
+                    All
+                  </Text>
+                </TouchableOpacity>
+
+                {activeProjects.map(p => {
+                  const progress = projectProgress(tasks, p.id, projectLookup);
+                  return (
+                    <TouchableOpacity
+                      key={p.id}
+                      style={[styles.chip, projectId === p.id && styles.chipActive]}
+                      onPress={() => chooseProject(p.id)}
+                    >
+                      <Text
+                        allowFontScaling={false}
+                        style={[styles.chipText, projectId === p.id && styles.chipTextActive]}
+                      >
+                        {p.name} {progress.done}/{progress.total}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             </>
           )}

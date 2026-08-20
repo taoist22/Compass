@@ -1,9 +1,11 @@
 import {
   countGrouped,
   filterByArea,
+  filterByProject,
   filterByScope,
   groupTasks,
   groupingLabel,
+  projectProgress,
   scopeLabel,
 } from './taskListView';
 import { withStatus } from './taskModel';
@@ -241,5 +243,68 @@ describe('areas', () => {
     const partial = { areaOf: (uid: string) => membership[uid], nameOf: () => '' };
     const groups = groupTasks([makeTask('a')], 'area', NOW, partial);
     expect(groups).toHaveLength(1);
+  });
+});
+
+describe('projects', () => {
+  const assigned: Record<string, string> = { a: 'p-paper', b: 'p-paper', c: 'p-solar' };
+  const names: Record<string, string> = { 'p-paper': 'Term Paper', 'p-solar': 'Solar Monitor' };
+  const projects = {
+    projectOf: (uid: string) => assigned[uid],
+    nameOf: (id: string) => names[id],
+  };
+
+  const tasks = [
+    withStatus(makeTask('a'), 'done'),
+    makeTask('b'),
+    makeTask('c'),
+    makeTask('d'),
+  ];
+
+  test('filtering narrows to one project', () => {
+    expect(filterByProject(tasks, 'p-paper', projects).map(t => t.uid)).toEqual(['a', 'b']);
+  });
+
+  test('no project selected leaves the list untouched', () => {
+    expect(filterByProject(tasks, null, projects)).toHaveLength(4);
+  });
+
+  test('grouping names each project and puts unassigned last', () => {
+    const groups = groupTasks(tasks, 'project', NOW, undefined, projects);
+    expect(groups.map(g => g.label)).toEqual(['Solar Monitor', 'Term Paper', 'No Project']);
+  });
+
+  test('grouping by project loses nobody', () => {
+    expect(countGrouped(groupTasks(tasks, 'project', NOW, undefined, projects))).toBe(4);
+  });
+
+  test('progress counts done against total', () => {
+    // The reason a Project is not an Area: it can be finished.
+    expect(projectProgress(tasks, 'p-paper', projects)).toEqual({
+      done: 1,
+      total: 2,
+      percent: 50,
+    });
+  });
+
+  test('an empty project reads as 0%, not 100%', () => {
+    // Nothing done is not everything done.
+    expect(projectProgress(tasks, 'p-empty', projects)).toEqual({ done: 0, total: 0, percent: 0 });
+  });
+
+  test('a fully finished project reads as 100%', () => {
+    const finished = [withStatus(makeTask('c'), 'done')];
+    expect(projectProgress(finished, 'p-solar', projects).percent).toBe(100);
+  });
+
+  test('in-progress work does not count as done', () => {
+    const partial = [withStatus(makeTask('a'), 'in-progress'), makeTask('b')];
+    expect(projectProgress(partial, 'p-paper', projects).done).toBe(0);
+  });
+
+  test('grouping by project without a lookup files everything as No Project', () => {
+    const groups = groupTasks(tasks, 'project', NOW);
+    expect(groups.map(g => g.label)).toEqual(['No Project']);
+    expect(countGrouped(groups)).toBe(4);
   });
 });

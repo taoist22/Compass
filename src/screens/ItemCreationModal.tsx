@@ -9,7 +9,15 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Area, CalendarEvent, CalendarFeed, CalendarTask, TaskPriority, TaskStatus } from '../domain/types';
+import {
+  Area,
+  CalendarEvent,
+  CalendarFeed,
+  CalendarTask,
+  Project,
+  TaskPriority,
+  TaskStatus,
+} from '../domain/types';
 import {
   TASK_PRIORITIES,
   TASK_STATUSES,
@@ -73,6 +81,7 @@ interface ItemCreationModalProps {
     status?: TaskStatus;
     priority?: TaskPriority;
     areaId?: string;
+    projectId?: string;
   }) => void;
   /**
    * The task being edited, when one is. Passed whole rather than as separate
@@ -86,6 +95,10 @@ interface ItemCreationModalProps {
   areas?: Area[];
   taskAreaId?: string;
   onCreateArea?: (name: string) => string;
+  /** Active projects to file this task under, and its current one. */
+  projects?: Project[];
+  taskProjectId?: string;
+  onCreateProject?: (name: string) => string;
 }
 
 
@@ -105,6 +118,9 @@ export function ItemCreationModal({
   areas = [],
   taskAreaId,
   onCreateArea,
+  projects = [],
+  taskProjectId,
+  onCreateProject,
 }: ItemCreationModalProps): React.JSX.Element {
   const [title, setTitle] = useState<string>('');
 
@@ -180,6 +196,9 @@ export function ItemCreationModal({
   const [areaValue, setAreaValue] = useState<string | undefined>(undefined);
   const [newAreaName, setNewAreaName] = useState<string>('');
   const [addingArea, setAddingArea] = useState<boolean>(false);
+  const [projectValue, setProjectValue] = useState<string | undefined>(undefined);
+  const [newProjectName, setNewProjectName] = useState<string>('');
+  const [addingProject, setAddingProject] = useState<boolean>(false);
 
   // Reseed every time the modal opens: with the edited item's values, or with
   // freshly captured lasso text, so a second open never shows stale state.
@@ -209,6 +228,9 @@ export function ItemCreationModal({
       setAreaValue(taskAreaId);
       setAddingArea(false);
       setNewAreaName('');
+      setProjectValue(taskProjectId);
+      setAddingProject(false);
+      setNewProjectName('');
       return;
     }
 
@@ -219,6 +241,9 @@ export function ItemCreationModal({
     setAreaValue(undefined);
     setAddingArea(false);
     setNewAreaName('');
+    setProjectValue(undefined);
+    setAddingProject(false);
+    setNewProjectName('');
     setTimeRange({ start: 9 * 60, end: 10 * 60 });
     setStartText(formatClock(9 * 60));
     setEndText(formatClock(10 * 60));
@@ -240,7 +265,7 @@ export function ItemCreationModal({
     } else {
       setIsAllDay(initialParsed ? initialParsed.allDay : type === 'task');
     }
-  }, [visible, initialTitle, initialParsed, type, editingEvent, targetDate, editingTask, taskAreaId]);
+  }, [visible, initialTitle, initialParsed, type, editingEvent, targetDate, editingTask, taskAreaId, taskProjectId]);
 
   const shiftDate = (days: number) => {
     setItemDate(prev => {
@@ -298,6 +323,7 @@ export function ItemCreationModal({
         status: taskStatusValue,
         priority: taskPriorityValue,
         areaId: areaValue,
+        projectId: projectValue,
         title: title.trim(),
         // Omitted entirely when the user has said it has no due date, so the
         // task lands in No Date rather than being silently dated today.
@@ -600,6 +626,75 @@ export function ItemCreationModal({
                         setAreaValue(onCreateArea(name));
                         setNewAreaName('');
                         setAddingArea(false);
+                      }}
+                    >
+                      <Text style={styles.meridiemText}>Add</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                <Text style={styles.label}>Project:</Text>
+                <View style={styles.chipRow}>
+                  <TouchableOpacity
+                    style={[styles.stateChip, !projectValue && styles.stateChipSelected]}
+                    onPress={() => setProjectValue(undefined)}
+                  >
+                    <Text
+                      style={[styles.stateChipText, !projectValue && styles.stateChipTextSelected]}
+                    >
+                      None
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Finished and archived projects are not offered: filing new
+                      work into something you have closed is almost never meant. */}
+                  {projects
+                    .filter(pr => pr.status === 'active')
+                    .map(pr => (
+                      <TouchableOpacity
+                        key={pr.id}
+                        style={[styles.stateChip, projectValue === pr.id && styles.stateChipSelected]}
+                        onPress={() => setProjectValue(pr.id)}
+                      >
+                        <Text
+                          style={[
+                            styles.stateChipText,
+                            projectValue === pr.id && styles.stateChipTextSelected,
+                          ]}
+                        >
+                          {pr.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+
+                  {onCreateProject && !addingProject && (
+                    <TouchableOpacity style={styles.stateChip} onPress={() => setAddingProject(true)}>
+                      <Text style={styles.stateChipText}>+ New</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {addingProject && onCreateProject && (
+                  <View style={styles.timeEntryRow}>
+                    <TextInput
+                      style={[styles.textInput, styles.timeInput]}
+                      value={newProjectName}
+                      onChangeText={setNewProjectName}
+                      placeholder="Project name"
+                      placeholderTextColor="#707070"
+                      autoCorrect={false}
+                    />
+                    <TouchableOpacity
+                      style={styles.meridiemBtn}
+                      onPress={() => {
+                        const name = newProjectName.trim();
+                        if (!name) {
+                          setAddingProject(false);
+                          return;
+                        }
+                        setProjectValue(onCreateProject(name));
+                        setNewProjectName('');
+                        setAddingProject(false);
                       }}
                     >
                       <Text style={styles.meridiemText}>Add</Text>

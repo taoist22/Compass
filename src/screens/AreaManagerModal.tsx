@@ -1,10 +1,17 @@
 import React, { useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { Area } from '../domain/types';
+import { Area, Project, ProjectStatus } from '../domain/types';
 
 interface AreaManagerModalProps {
   visible: boolean;
   areas: Area[];
+  projects: Project[];
+  /** Done and total for a project, so progress is visible where it matters. */
+  progressFor: (projectId: string) => { done: number; total: number };
+  onRenameProject: (projectId: string, name: string) => void;
+  onSetProjectStatus: (projectId: string, status: ProjectStatus) => void;
+  onDeleteProject: (projectId: string) => void;
+  onCreateProject: (name: string) => void;
   /** How many tasks each area holds, so deleting can say what it affects. */
   countFor: (areaId: string) => number;
   onRename: (areaId: string, name: string) => void;
@@ -23,7 +30,13 @@ interface AreaManagerModalProps {
 export function AreaManagerModal({
   visible,
   areas,
+  projects,
+  progressFor,
   countFor,
+  onRenameProject,
+  onSetProjectStatus,
+  onDeleteProject,
+  onCreateProject,
   onRename,
   onDelete,
   onCreate,
@@ -32,6 +45,7 @@ export function AreaManagerModal({
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [newName, setNewName] = useState<string>('');
+  const [newProjectName, setNewProjectName] = useState<string>('');
 
   const nameFor = (area: Area) => drafts[area.id] ?? area.name;
 
@@ -51,7 +65,7 @@ export function AreaManagerModal({
         <View style={styles.sheet}>
           <View style={styles.header}>
             <Text allowFontScaling={false} style={styles.headerTitle}>
-              Manage Areas
+              Areas &amp; Projects
             </Text>
             <TouchableOpacity onPress={onClose}>
               <Text allowFontScaling={false} style={styles.close}>
@@ -119,6 +133,125 @@ export function AreaManagerModal({
               </View>
             ))}
           </ScrollView>
+
+          {/* Projects sit below Areas rather than in their own sheet: the
+              distinction between them is the point, and seeing both together
+              is what teaches it. */}
+          <Text allowFontScaling={false} style={styles.sectionHeading}>
+            Projects
+          </Text>
+          <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
+            {projects.length === 0 && (
+              <Text allowFontScaling={false} style={styles.empty}>
+                No projects. An area never finishes; a project does.
+              </Text>
+            )}
+
+            {projects.map(project => {
+              const progress = progressFor(project.id);
+              return (
+                <View key={project.id} style={styles.row}>
+                  {confirmingId === project.id ? (
+                    <>
+                      <Text allowFontScaling={false} style={styles.confirmText}>
+                        Delete "{project.name}"? Its {progress.total} task
+                        {progress.total === 1 ? '' : 's'} stay, unassigned.
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.confirmBtn}
+                        onPress={() => {
+                          onDeleteProject(project.id);
+                          setConfirmingId(null);
+                        }}
+                      >
+                        <Text allowFontScaling={false} style={styles.confirmBtnText}>
+                          Delete
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.confirmBtn}
+                        onPress={() => setConfirmingId(null)}
+                      >
+                        <Text allowFontScaling={false} style={styles.confirmBtnText}>
+                          Cancel
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    <>
+                      <TextInput
+                        style={styles.nameInput}
+                        value={drafts[project.id] ?? project.name}
+                        onChangeText={text => setDrafts(d => ({ ...d, [project.id]: text }))}
+                        onEndEditing={() => {
+                          const next = (drafts[project.id] ?? '').trim();
+                          if (!next || next === project.name) {
+                            setDrafts(d => ({ ...d, [project.id]: project.name }));
+                            return;
+                          }
+                          onRenameProject(project.id, next);
+                        }}
+                        autoCorrect={false}
+                      />
+                      <Text allowFontScaling={false} style={styles.count}>
+                        {progress.done}/{progress.total}
+                      </Text>
+                      {/* Finishing is what a project can do that an area cannot. */}
+                      <TouchableOpacity
+                        style={styles.confirmBtn}
+                        onPress={() =>
+                          onSetProjectStatus(
+                            project.id,
+                            project.status === 'active' ? 'done' : 'active'
+                          )
+                        }
+                      >
+                        <Text allowFontScaling={false} style={styles.confirmBtnText}>
+                          {project.status === 'active' ? 'Done' : 'Reopen'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.deleteBtn}
+                        onPress={() => setConfirmingId(project.id)}
+                      >
+                        <Text allowFontScaling={false} style={styles.deleteText}>
+                          ✕
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+                </View>
+              );
+            })}
+          </ScrollView>
+
+          <View style={styles.addRow}>
+            <TextInput
+              style={styles.nameInput}
+              value={newProjectName}
+              onChangeText={setNewProjectName}
+              placeholder="New project name"
+              placeholderTextColor="#707070"
+              autoCorrect={false}
+            />
+            <TouchableOpacity
+              style={styles.addBtn}
+              onPress={() => {
+                const name = newProjectName.trim();
+                if (!name) return;
+                onCreateProject(name);
+                setNewProjectName('');
+              }}
+            >
+              <Text allowFontScaling={false} style={styles.addBtnText}>
+                Add
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text allowFontScaling={false} style={styles.sectionHeading}>
+            Areas
+          </Text>
 
           <View style={styles.addRow}>
             <TextInput
@@ -219,4 +352,13 @@ const styles = StyleSheet.create({
   },
   addBtnText: { fontSize: 13, fontWeight: 'bold', color: '#000000' },
   empty: { fontSize: 13, color: '#505050', textAlign: 'center', paddingVertical: 16 },
+  sectionHeading: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#000000',
+    backgroundColor: '#e8e8e8',
+    paddingVertical: 3,
+    paddingHorizontal: 6,
+    marginTop: 6,
+  },
 });

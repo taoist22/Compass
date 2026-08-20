@@ -18,6 +18,8 @@ import {
   CalendarTask,
   CalendarViewMode,
   NoteKind,
+  Project,
+  ProjectStatus,
   ProfileThemeMode,
   TaskPriority,
   TaskStatus,
@@ -155,6 +157,7 @@ export function AgendaScreen(): React.JSX.Element {
   const [showDeleteNoteModal, setShowDeleteNoteModal] = useState<boolean>(false);
   const [showTaskList, setShowTaskList] = useState<boolean>(false);
   const [areas, setAreas] = useState<Area[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [showAreaManager, setShowAreaManager] = useState<boolean>(false);
   /** Bumped when membership changes, so the list and pickers re-read. */
   const [membershipRevision, setMembershipRevision] = useState<number>(0);
@@ -205,6 +208,7 @@ export function AgendaScreen(): React.JSX.Element {
     // Load persisted user events
     setTasks([...calendarStorage.getTasks()]);
     setAreas([...calendarStorage.getAreas()]);
+    setProjects([...calendarStorage.getProjects()]);
 
     const savedUserEvts = calendarStorage.getUserEvents();
     // The cached CalDAV read goes on screen immediately. Without it the
@@ -1739,11 +1743,61 @@ export function AgendaScreen(): React.JSX.Element {
     setAreas([...calendarStorage.getAreas()]);
   };
 
+  const projectProgressFor = (projectId: string) => {
+    void membershipRevision;
+    const mine = calendarStorage.getTasks().filter(t => projectOfTask(t.uid) === projectId);
+    return { done: mine.filter(t => t.completed).length, total: mine.length };
+  };
+
+  const handleRenameProject = (projectId: string, name: string) => {
+    const existing = calendarStorage.getProjects().find(p => p.id === projectId);
+    if (!existing) return;
+    calendarStorage.upsertProject({ ...existing, name });
+    setProjects([...calendarStorage.getProjects()]);
+  };
+
+  const handleSetProjectStatus = (projectId: string, status: ProjectStatus) => {
+    const existing = calendarStorage.getProjects().find(p => p.id === projectId);
+    if (!existing) return;
+    calendarStorage.upsertProject({
+      ...existing,
+      status,
+      // Stamped on finishing and cleared on reopening, so a project that comes
+      // back does not keep claiming it was completed.
+      completedAt: status === 'done' ? existing.completedAt || new Date() : undefined,
+    });
+    setProjects([...calendarStorage.getProjects()]);
+  };
+
+  const handleDeleteProject = (projectId: string) => {
+    // Storage detaches its tasks rather than deleting them with it.
+    calendarStorage.removeProject(projectId);
+    setProjects([...calendarStorage.getProjects()]);
+    setMembershipRevision(n => n + 1);
+  };
+
   const handleDeleteArea = (areaId: string) => {
     // Storage detaches its items rather than deleting them with it.
     calendarStorage.removeArea(areaId);
     setAreas([...calendarStorage.getAreas()]);
     setMembershipRevision(n => n + 1);
+  };
+
+  const projectOfTask = (uid: string): string | undefined => {
+    void membershipRevision;
+    return calendarStorage.getMembership(uid).projectId;
+  };
+
+  const handleCreateProject = (name: string): string => {
+    const project: Project = {
+      id: `proj-${Date.now()}`,
+      name,
+      status: 'active',
+      createdAt: new Date(),
+    };
+    calendarStorage.upsertProject(project);
+    setProjects([...calendarStorage.getProjects()]);
+    return project.id;
   };
 
   const handleCreateArea = (name: string): string => {
@@ -1761,6 +1815,7 @@ export function AgendaScreen(): React.JSX.Element {
     status?: TaskStatus;
     priority?: TaskPriority;
     areaId?: string;
+    projectId?: string;
   }) => {
     const existing = input.uid ? calendarStorage.getTasks().find(t => t.uid === input.uid) : undefined;
 
@@ -1784,7 +1839,10 @@ export function AgendaScreen(): React.JSX.Element {
     calendarStorage.upsertTask(withState);
     // Membership is stored beside the task, not on it, so that one mechanism
     // serves events and notes too and survives a sync rebuilding them.
-    calendarStorage.setMembership(withState.uid, { areaId: input.areaId });
+    calendarStorage.setMembership(withState.uid, {
+      areaId: input.areaId,
+      projectId: input.projectId,
+    });
     setMembershipRevision(n => n + 1);
     setTasks([...calendarStorage.getTasks()]);
     setStatusMsg(`${existing ? 'Updated' : 'Added'} task "${task.title}".`);
@@ -2000,6 +2058,12 @@ export function AgendaScreen(): React.JSX.Element {
         visible={showAreaManager}
         areas={areas}
         countFor={countTasksInArea}
+        projects={projects}
+        progressFor={projectProgressFor}
+        onRenameProject={handleRenameProject}
+        onSetProjectStatus={handleSetProjectStatus}
+        onDeleteProject={handleDeleteProject}
+        onCreateProject={name => handleCreateProject(name)}
         onRename={handleRenameArea}
         onDelete={handleDeleteArea}
         onCreate={name => handleCreateArea(name)}
@@ -2014,6 +2078,8 @@ export function AgendaScreen(): React.JSX.Element {
         tasks={tasks}
         areas={areas}
         areaOf={areaOfTask}
+        projects={projects}
+        projectOf={projectOfTask}
         onClose={() => setShowTaskList(false)}
         onManageAreas={() => {
           // Swapped rather than stacked: two modals at once is unreliable here.
@@ -2684,6 +2750,9 @@ export function AgendaScreen(): React.JSX.Element {
             areas={areas}
             taskAreaId={editingTask ? areaOfTask(editingTask.uid) : undefined}
             onCreateArea={handleCreateArea}
+            projects={projects}
+            taskProjectId={editingTask ? projectOfTask(editingTask.uid) : undefined}
+            onCreateProject={handleCreateProject}
             onDeleteTask={uid => {
               const task = calendarStorage.getTasks().find(t => t.uid === uid);
               if (task) handleDeleteTask(task);

@@ -10,7 +10,7 @@ import { CalendarTask, TaskStatus } from './types';
  */
 
 export type TaskScope = 'open' | 'today' | 'upcoming' | 'done' | 'all';
-export type TaskGrouping = 'none' | 'status' | 'priority' | 'due' | 'area';
+export type TaskGrouping = 'none' | 'status' | 'priority' | 'due' | 'area' | 'project';
 
 export const TASK_SCOPES: TaskScope[] = ['open', 'today', 'upcoming', 'done', 'all'];
 
@@ -26,7 +26,7 @@ export function scopeLabel(scope: TaskScope): string {
   return SCOPE_LABELS[scope];
 }
 
-export const TASK_GROUPINGS: TaskGrouping[] = ['none', 'status', 'priority', 'due', 'area'];
+export const TASK_GROUPINGS: TaskGrouping[] = ['none', 'status', 'priority', 'due', 'area', 'project'];
 
 const GROUPING_LABELS: Record<TaskGrouping, string> = {
   none: 'Flat',
@@ -34,6 +34,7 @@ const GROUPING_LABELS: Record<TaskGrouping, string> = {
   priority: 'Priority',
   due: 'Due',
   area: 'Area',
+  project: 'Project',
 };
 
 export function groupingLabel(grouping: TaskGrouping): string {
@@ -129,7 +130,8 @@ export function groupTasks(
   tasks: CalendarTask[],
   grouping: TaskGrouping,
   now: Date = new Date(),
-  lookup?: AreaLookup
+  lookup?: AreaLookup,
+  projects?: ProjectLookup
 ): TaskGroup[] {
   const sorted = [...tasks].sort(compareTasks);
 
@@ -175,6 +177,23 @@ export function groupTasks(
     });
   }
 
+  if (grouping === 'project') {
+    const byProject = new Map<string, TaskGroup>();
+    for (const task of sorted) {
+      const projectId = projects?.projectOf(task.uid);
+      const key = projectId || '__none';
+      const label = projectId ? projects?.nameOf(projectId) || 'Project' : 'No Project';
+      const existing = byProject.get(key);
+      if (existing) existing.tasks.push(task);
+      else byProject.set(key, { key, label, tasks: [task] });
+    }
+    return [...byProject.values()].sort((a, b) => {
+      if (a.key === '__none') return 1;
+      if (b.key === '__none') return -1;
+      return a.label.localeCompare(b.label);
+    });
+  }
+
   const byBucket = new Map<string, TaskGroup & { rank: number }>();
   for (const task of sorted) {
     const bucket = dueBucket(task, now);
@@ -191,4 +210,48 @@ export function groupTasks(
 /** Total across groups, for the list header. */
 export function countGrouped(groups: TaskGroup[]): number {
   return groups.reduce((n, g) => n + g.tasks.length, 0);
+}
+
+export interface ProjectLookup {
+  /** Project id for a task, by its uid. Absent means unassigned. */
+  projectOf: (uid: string) => string | undefined;
+  nameOf: (projectId: string) => string;
+}
+
+/** Narrows to one project. Membership lives outside the task, keyed by uid. */
+export function filterByProject(
+  tasks: CalendarTask[],
+  projectId: string | null,
+  lookup: ProjectLookup
+): CalendarTask[] {
+  if (!projectId) return tasks;
+  return tasks.filter(t => lookup.projectOf(t.uid) === projectId);
+}
+
+export interface ProjectProgress {
+  done: number;
+  total: number;
+  /** 0–100, rounded. A project with no tasks reads as 0, not 100. */
+  percent: number;
+}
+
+/**
+ * How far along a project is.
+ *
+ * This is the whole reason a Project is not an Area: it can be finished, and
+ * finishing is worth showing. An empty project reads as 0% rather than 100% —
+ * nothing done is not everything done.
+ */
+export function projectProgress(
+  tasks: CalendarTask[],
+  projectId: string,
+  lookup: ProjectLookup
+): ProjectProgress {
+  const mine = tasks.filter(t => lookup.projectOf(t.uid) === projectId);
+  const done = mine.filter(isDone).length;
+  return {
+    done,
+    total: mine.length,
+    percent: mine.length === 0 ? 0 : Math.round((done / mine.length) * 100),
+  };
 }
