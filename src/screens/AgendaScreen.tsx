@@ -1865,6 +1865,10 @@ export function AgendaScreen(): React.JSX.Element {
               "{pendingDeleteEvent?.summary}"
             </Text>
             <Text style={styles.previewHint}>
+              Deleting a note leaves the plugin and shows its folder — that is the device's
+              own behaviour, and the deletion still happens.
+            </Text>
+            <Text style={styles.previewHint}>
               It has a note:{' '}
               {pendingDeleteEvent
                 ? calendarStorage
