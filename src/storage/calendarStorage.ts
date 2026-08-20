@@ -15,6 +15,7 @@ const EVENT_KINDS_KEY = '@sn-calendar/eventKinds';
 const AREAS_KEY = '@sn-calendar/areas';
 const PROJECTS_KEY = '@sn-calendar/projects';
 const MEMBERSHIP_KEY = '@sn-calendar/itemMembership';
+const PENDING_DELETES_KEY = '@sn-calendar/pendingNoteDeletes';
 
 const DEFAULT_SETTINGS: CalendarSettings = {
   feeds: [
@@ -145,11 +146,20 @@ export class CalendarStorage {
    * rebuilding the event objects.
    */
   private membership: Record<string, ItemMembership> = {};
+  /**
+   * Note files unlinked from their event but not yet removed from disk.
+   *
+   * deleteFile navigates to the containing folder, so deleting at the moment
+   * the user asks would throw them out of the plugin. Deferring it until the
+   * replacement note is opened hides that navigation behind one they wanted.
+   * Persisted so an abandoned replacement still gets cleaned up later.
+   */
+  private pendingDeletes: string[] = [];
   private loaded = false;
 
   async load(): Promise<{ settings: CalendarSettings; mappings: Record<string, MeetingNoteMapping> }> {
     try {
-      const [rawSettings, rawMappings, rawEvents, rawTasks, rawPushState, rawCaldavEvents, rawEventKinds, rawAreas, rawProjects, rawMembership] =
+      const [rawSettings, rawMappings, rawEvents, rawTasks, rawPushState, rawCaldavEvents, rawEventKinds, rawAreas, rawProjects, rawMembership, rawPendingDeletes] =
         await Promise.all([
         AsyncStorage.getItem(SETTINGS_KEY),
         AsyncStorage.getItem(MAPPINGS_KEY),
@@ -161,6 +171,7 @@ export class CalendarStorage {
         AsyncStorage.getItem(AREAS_KEY),
         AsyncStorage.getItem(PROJECTS_KEY),
         AsyncStorage.getItem(MEMBERSHIP_KEY),
+        AsyncStorage.getItem(PENDING_DELETES_KEY),
       ]);
 
       if (rawSettings) {
@@ -185,6 +196,10 @@ export class CalendarStorage {
       if (rawMembership) {
         const parsed = JSON.parse(rawMembership);
         this.membership = parsed && typeof parsed === 'object' ? parsed : {};
+      }
+      if (rawPendingDeletes) {
+        const parsed = JSON.parse(rawPendingDeletes);
+        this.pendingDeletes = Array.isArray(parsed) ? parsed.filter(v => typeof v === 'string') : [];
       }
       if (rawEventKinds) {
         const parsed = JSON.parse(rawEventKinds);
@@ -231,6 +246,7 @@ export class CalendarStorage {
       this.areas = [];
       this.projects = [];
       this.membership = {};
+      this.pendingDeletes = [];
     }
 
     // Never restored from disk — only ever from this session's memory.
@@ -263,6 +279,7 @@ export class CalendarStorage {
         AsyncStorage.setItem(AREAS_KEY, JSON.stringify(this.areas)),
         AsyncStorage.setItem(PROJECTS_KEY, JSON.stringify(this.projects)),
         AsyncStorage.setItem(MEMBERSHIP_KEY, JSON.stringify(this.membership)),
+        AsyncStorage.setItem(PENDING_DELETES_KEY, JSON.stringify(this.pendingDeletes)),
       ]);
     } catch (e) {
       // A failed write must not take down the UI; state stays correct in memory.
@@ -419,6 +436,22 @@ export class CalendarStorage {
     // was assigned and then cleared.
     if (!merged.areaId && !merged.projectId) delete this.membership[identity];
     else this.membership[identity] = merged;
+    void this.save();
+  }
+
+  /** Queues a note file for removal once the user is next navigating anyway. */
+  queueNoteDeletion(path: string): void {
+    if (!path || this.pendingDeletes.includes(path)) return;
+    this.pendingDeletes.push(path);
+    void this.save();
+  }
+
+  getPendingNoteDeletions(): string[] {
+    return this.pendingDeletes;
+  }
+
+  clearPendingNoteDeletion(path: string): void {
+    this.pendingDeletes = this.pendingDeletes.filter(p => p !== path);
     void this.save();
   }
 

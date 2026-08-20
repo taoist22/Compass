@@ -81,6 +81,15 @@ const STRIP_TASK_LIMIT = 4;
  */
 const SHOW_DEV_PROBE = true;
 
+/**
+ * Beat between deleting a file and opening a note.
+ *
+ * deleteFile navigates to the containing folder, so the open intent has to
+ * land after that navigation to win. sn-shelf uses 180ms for the same class of
+ * ordering problem; this is the number to tune if the folder ends up on top.
+ */
+const DELETE_BEFORE_OPEN_DELAY_MS = 200;
+
 const CALDAV_WINDOW_PAST_DAYS = 30;
 const CALDAV_WINDOW_FUTURE_DAYS = 365;
 
@@ -1096,6 +1105,13 @@ export function AgendaScreen(): React.JSX.Element {
       // waiting for the next existence sweep.
       setEventNotePaths(prev => ({ ...prev, [event.uid]: result.notePath }));
 
+      // The replacement exists, so the old file can go now. Its folder
+      // navigation is about to be overwritten by opening this note.
+      const removed = await flushPendingNoteDeletions();
+      if (removed > 0) {
+        await new Promise<void>(resolve => setTimeout(() => resolve(), DELETE_BEFORE_OPEN_DELAY_MS));
+      }
+
       // Open it the way daily notes do — through the native intent. The service
       // used to call openFilePath, which drops you in the file manager.
       const opened = await openNoteInEditor(result.notePath);
@@ -1398,6 +1414,63 @@ export function AgendaScreen(): React.JSX.Element {
    * ever runs against a path the mapping actually records — never a guessed
    * filename — and the caller confirms first.
    */
+  /**
+   * Unlinks a note from its event and queues the file for removal.
+   *
+   * Nothing is destroyed yet: the file goes once the replacement note is
+   * opened, so the folder navigation deleteFile performs is hidden behind a
+   * navigation the user asked for. If no replacement is ever made, the queue
+   * survives a restart and is flushed the next time any note opens.
+   */
+  const unlinkNoteForEvent = (event: CalendarEvent): string | null => {
+    const identity = noteIdentity(event);
+    const mapping = calendarStorage.getMapping(identity);
+    const path = mapping?.notePath;
+    if (!path) return null;
+
+    calendarStorage.queueNoteDeletion(path);
+    calendarStorage.setMapping({ ...mapping, notePath: '' });
+    calendarStorage.clearEventKind(identity);
+
+    setNoteKindByEvent(prev => {
+      const next = { ...prev };
+      delete next[identity];
+      return next;
+    });
+    setEventNotePaths(prev => {
+      const next = { ...prev };
+      delete next[event.uid];
+      return next;
+    });
+    return path;
+  };
+
+  /**
+   * Removes anything queued. Called immediately before opening a note, so the
+   * folder deleteFile navigates to is replaced by the note a moment later.
+   */
+  const flushPendingNoteDeletions = async (): Promise<number> => {
+    const queued = [...calendarStorage.getPendingNoteDeletions()];
+    if (queued.length === 0) return 0;
+
+    let removed = 0;
+    for (const path of queued) {
+      try {
+        if (!FileUtils.deleteFile) break;
+        const gone = await FileUtils.deleteFile(path);
+        // A file already absent counts as done; leaving it queued forever
+        // would delay every note open from here on.
+        if (gone !== false) {
+          calendarStorage.clearPendingNoteDeletion(path);
+          removed++;
+        }
+      } catch (e) {
+        // Left queued: the Note app may have it open. Next time, then.
+      }
+    }
+    return removed;
+  };
+
   const deleteNoteForEvent = async (event: CalendarEvent): Promise<string | null> => {
     const mapping = calendarStorage.getMapping(noteIdentity(event));
     const path = mapping?.notePath;
@@ -1464,19 +1537,20 @@ export function AgendaScreen(): React.JSX.Element {
       return;
     }
 
-    const removedNote = await deleteNoteForEvent(event);
-
     if (choice === 'note') {
-      // The event survives, and the recorded kind went with the note, so
-      // Create Note will ask Meeting or Class again. That is the whole point:
-      // fixing a wrong answer should not cost you the appointment.
+      // Unlinked rather than deleted on the spot: the file goes when the
+      // replacement note opens, so deleteFile's jump to the folder is hidden
+      // behind a navigation the user actually wanted.
+      const unlinked = unlinkNoteForEvent(event);
       setStatusMsg(
-        removedNote
-          ? `Deleted the note. "${event.summary}" kept — Create Note will ask again.`
-          : `Could not delete the note. Close it in the Note app first.`
+        unlinked
+          ? `Note unlinked. Create Note will ask again — the old file is removed when the new note opens.`
+          : `No note to remove for "${event.summary}".`
       );
       return;
     }
+
+    const removedNote = await deleteNoteForEvent(event);
 
     removeEventEverywhere(event);
     // A failed delete used to report identically to a chosen keep, so a locked
@@ -1739,6 +1813,12 @@ export function AgendaScreen(): React.JSX.Element {
 
   const handleOpenExistingNote = async (notePath: string) => {
     setShowDateActionSheet(false);
+    // Catches anything unlinked and then abandoned: the user is navigating
+    // away regardless, so this is the free moment to remove it.
+    const removed = await flushPendingNoteDeletions();
+    if (removed > 0) {
+      await new Promise<void>(resolve => setTimeout(() => resolve(), DELETE_BEFORE_OPEN_DELAY_MS));
+    }
     const res = await openNoteInEditor(notePath);
     setStatusMsg(res.message);
     if (res.success) closePanel();
@@ -1865,7 +1945,8 @@ export function AgendaScreen(): React.JSX.Element {
               "{pendingDeleteEvent?.summary}"
             </Text>
             <Text style={styles.previewHint}>
-              Deleting a note leaves the plugin and shows its folder — that is the device's
+              Replacing unlinks the note now and removes the file when its replacement opens.
+              Deleting outright leaves the plugin and shows the folder — that is the device's
               own behaviour, and the deletion still happens.
             </Text>
             <Text style={styles.previewHint}>
@@ -1885,7 +1966,7 @@ export function AgendaScreen(): React.JSX.Element {
               style={styles.deleteOptionBtn}
               onPress={() => handleConfirmDeleteWithNote('note')}
             >
-              <Text style={styles.deleteOptionBtnText}>📝 Delete the note, keep the event</Text>
+              <Text style={styles.deleteOptionBtnText}>📝 Replace the note, keep the event</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
