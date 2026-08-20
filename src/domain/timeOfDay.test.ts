@@ -2,13 +2,16 @@ import {
   MINUTES_IN_DAY,
   TIME_STEP,
   clampToDay,
+  formatClock,
   formatDuration,
   formatTimeOfDay,
+  isPm,
   minutesFromDate,
   moveEnd,
   moveStart,
   normaliseRange,
   parseTimeOfDay,
+  withMeridiem,
   withTimeOfDay,
 } from './timeOfDay';
 
@@ -203,5 +206,40 @@ describe('parseTimeOfDay', () => {
       expect(parsed).not.toBeNull();
       expect(formatTimeOfDay(parsed as number)).toMatch(/^\d{1,2}:\d{2} [AP]M$/);
     }
+  });
+});
+
+describe('meridiem as a separate control', () => {
+  test('formatClock omits the meridiem', () => {
+    expect(formatClock(9 * 60 + 30)).toBe('9:30');
+    expect(formatClock(21 * 60 + 30)).toBe('9:30');
+  });
+
+  test('noon and midnight read as 12, not 0', () => {
+    expect(formatClock(0)).toBe('12:00');
+    expect(formatClock(12 * 60)).toBe('12:00');
+  });
+
+  test('isPm splits the day at noon', () => {
+    expect(isPm(11 * 60 + 59)).toBe(false);
+    expect(isPm(12 * 60)).toBe(true);
+  });
+
+  test('switching meridiem keeps the clock reading', () => {
+    expect(formatClock(withMeridiem(9 * 60 + 30, true))).toBe('9:30');
+    expect(withMeridiem(9 * 60 + 30, true)).toBe(21 * 60 + 30);
+    expect(withMeridiem(21 * 60 + 30, false)).toBe(9 * 60 + 30);
+  });
+
+  test('repeated toggling cannot drift', () => {
+    // Written as a swap rather than ±12h for exactly this reason.
+    let t = 9 * 60 + 30;
+    for (let i = 0; i < 6; i++) t = withMeridiem(t, !isPm(t));
+    expect(t).toBe(9 * 60 + 30);
+  });
+
+  test('midnight and noon survive the swap', () => {
+    expect(withMeridiem(0, true)).toBe(12 * 60);
+    expect(withMeridiem(12 * 60, false)).toBe(0);
   });
 });

@@ -147,3 +147,28 @@ export function parseTimeOfDay(input: string, after?: number): number | null {
 
   return total > MINUTES_IN_DAY - 1 ? null : total;
 }
+
+/** The clock part alone, for a field whose meridiem is a separate control. */
+export function formatClock(minutes: number): string {
+  const clamped = clampToDay(minutes);
+  const hour24 = Math.floor(clamped / 60);
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  return `${hour12}:${String(clamped % 60).padStart(2, '0')}`;
+}
+
+export function isPm(minutes: number): boolean {
+  return clampToDay(minutes) >= 12 * 60;
+}
+
+/**
+ * Moves a time to the other half of the day, keeping the clock reading.
+ *
+ * 9:30 AM becomes 9:30 PM and back. Written as a swap rather than adding or
+ * subtracting twelve hours so that repeated taps cannot drift.
+ */
+export function withMeridiem(minutes: number, pm: boolean): number {
+  const clamped = clampToDay(minutes);
+  const hour24 = Math.floor(clamped / 60);
+  const hour12 = hour24 % 12;
+  return clampToDay((pm ? hour12 + 12 : hour12) * 60 + (clamped % 60));
+}

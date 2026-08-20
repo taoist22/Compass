@@ -21,13 +21,16 @@ import {
 import { DatePickerModal } from './DatePickerModal';
 import {
   TimeRange,
+  formatClock,
   formatDuration,
   formatTimeOfDay,
+  isPm,
   minutesFromDate,
   moveEnd,
   moveStart,
   normaliseRange,
   parseTimeOfDay,
+  withMeridiem,
   withTimeOfDay,
 } from '../domain/timeOfDay';
 
@@ -107,8 +110,8 @@ export function ItemCreationModal({
   const [timeRange, setTimeRange] = useState<TimeRange>({ start: 9 * 60, end: 10 * 60 });
   // What the user is typing, kept apart from the parsed value so a half-typed
   // "9:" is not rewritten under them mid-entry.
-  const [startText, setStartText] = useState<string>(formatTimeOfDay(9 * 60));
-  const [endText, setEndText] = useState<string>(formatTimeOfDay(10 * 60));
+  const [startText, setStartText] = useState<string>(formatClock(9 * 60));
+  const [endText, setEndText] = useState<string>(formatClock(10 * 60));
 
   const startInvalid = parseTimeOfDay(startText) === null;
   const endInvalid = parseTimeOfDay(endText, timeRange.start) === null;
@@ -116,8 +119,8 @@ export function ItemCreationModal({
   const applyRange = (range: TimeRange) => {
     const fixed = normaliseRange(range);
     setTimeRange(fixed);
-    setStartText(formatTimeOfDay(fixed.start));
-    setEndText(formatTimeOfDay(fixed.end));
+    setStartText(formatClock(fixed.start));
+    setEndText(formatClock(fixed.end));
   };
 
   /**
@@ -127,15 +130,29 @@ export function ItemCreationModal({
   const commitStart = () => {
     const parsed = parseTimeOfDay(startText);
     if (parsed === null) return;
+    // The toggle owns the meridiem unless the text spelled one out, so typing
+    // "9" keeps whichever half of the day is already selected.
+    const withHalf = /[ap]/i.test(startText) || parsed >= 12 * 60
+      ? parsed
+      : withMeridiem(parsed, isPm(timeRange.start));
     // Moving the start carries the end, so a meeting keeps its length.
-    applyRange(moveStart(timeRange, parsed - timeRange.start));
+    applyRange(moveStart(timeRange, withHalf - timeRange.start));
   };
 
   const commitEnd = () => {
-    const parsed = parseTimeOfDay(endText, timeRange.start);
+    const parsed = parseTimeOfDay(endText);
     if (parsed === null) return;
-    applyRange(moveEnd(timeRange, parsed - timeRange.end));
+    const withHalf = /[ap]/i.test(endText) || parsed >= 12 * 60
+      ? parsed
+      : withMeridiem(parsed, isPm(timeRange.end));
+    applyRange(moveEnd(timeRange, withHalf - timeRange.end));
   };
+
+  const toggleStartMeridiem = () =>
+    applyRange(moveStart(timeRange, withMeridiem(timeRange.start, !isPm(timeRange.start)) - timeRange.start));
+
+  const toggleEndMeridiem = () =>
+    applyRange(moveEnd(timeRange, withMeridiem(timeRange.end, !isPm(timeRange.end)) - timeRange.end));
 
   // The date is editable here rather than inherited from the calendar
   // selection — a lasso can happen on any page with no idea what day the grid
@@ -173,8 +190,8 @@ export function ItemCreationModal({
         end: minutesFromDate(new Date(editingEvent.end)),
       });
       setTimeRange(seeded);
-      setStartText(formatTimeOfDay(seeded.start));
-      setEndText(formatTimeOfDay(seeded.end));
+      setStartText(formatClock(seeded.start));
+      setEndText(formatClock(seeded.end));
       setNoDueDate(false);
       setTaskStatusValue(editingTask ? taskStatus(editingTask) : 'todo');
       setTaskPriorityValue(editingTask?.priority || 1);
@@ -186,8 +203,8 @@ export function ItemCreationModal({
     setTaskStatusValue('todo');
     setTaskPriorityValue(1);
     setTimeRange({ start: 9 * 60, end: 10 * 60 });
-    setStartText(formatTimeOfDay(9 * 60));
-    setEndText(formatTimeOfDay(10 * 60));
+    setStartText(formatClock(9 * 60));
+    setEndText(formatClock(10 * 60));
     setLocation('');
     setDescription('');
     setItemDate(targetDate);
@@ -200,8 +217,8 @@ export function ItemCreationModal({
       const captured = initialParsed.hours * 60 + (initialParsed.minutes ?? 0);
       const range = normaliseRange({ start: captured, end: captured + 60 });
       setTimeRange(range);
-      setStartText(formatTimeOfDay(range.start));
-      setEndText(formatTimeOfDay(range.end));
+      setStartText(formatClock(range.start));
+      setEndText(formatClock(range.end));
       setIsAllDay(false);
     } else {
       setIsAllDay(initialParsed ? initialParsed.allDay : type === 'task');
@@ -410,38 +427,57 @@ export function ItemCreationModal({
                 <View style={styles.timeFieldRow}>
                   <View style={styles.timeField}>
                     <Text style={styles.label}>{itemKind === 'event' ? 'Start' : 'Due time'}</Text>
-                    <TextInput
-                      style={[styles.textInput, startText !== '' && startInvalid && styles.inputInvalid]}
-                      value={startText}
-                      onChangeText={setStartText}
-                      onEndEditing={commitStart}
-                      placeholder="9:00 AM"
-                      placeholderTextColor="#707070"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                    />
+                    <View style={styles.timeEntryRow}>
+                      <TextInput
+                        style={[
+                          styles.textInput,
+                          styles.timeInput,
+                          startText !== '' && startInvalid && styles.inputInvalid,
+                        ]}
+                        value={startText}
+                        onChangeText={setStartText}
+                        onEndEditing={commitStart}
+                        placeholder="9:00"
+                        placeholderTextColor="#707070"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                      {/* The meridiem is a tap, not something to write. */}
+                      <TouchableOpacity style={styles.meridiemBtn} onPress={toggleStartMeridiem}>
+                        <Text style={styles.meridiemText}>{isPm(timeRange.start) ? 'PM' : 'AM'}</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
 
                   {itemKind === 'event' && (
                     <View style={styles.timeField}>
                       <Text style={styles.label}>End</Text>
-                      <TextInput
-                        style={[styles.textInput, endText !== '' && endInvalid && styles.inputInvalid]}
-                        value={endText}
-                        onChangeText={setEndText}
-                        onEndEditing={commitEnd}
-                        placeholder="10:00 AM"
-                        placeholderTextColor="#707070"
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                      />
+                      <View style={styles.timeEntryRow}>
+                        <TextInput
+                          style={[
+                            styles.textInput,
+                            styles.timeInput,
+                            endText !== '' && endInvalid && styles.inputInvalid,
+                          ]}
+                          value={endText}
+                          onChangeText={setEndText}
+                          onEndEditing={commitEnd}
+                          placeholder="10:00"
+                          placeholderTextColor="#707070"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                        />
+                        <TouchableOpacity style={styles.meridiemBtn} onPress={toggleEndMeridiem}>
+                          <Text style={styles.meridiemText}>{isPm(timeRange.end) ? 'PM' : 'AM'}</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   )}
                 </View>
 
                 <Text style={styles.durationHint}>
                   {startInvalid || endInvalid
-                    ? 'Try 9, 9:30, 930, 2pm or 14:00.'
+                    ? 'Try 9, 9:30, 930 or 14:00 — AM/PM is the button.'
                     : itemKind === 'event'
                     ? `${formatTimeOfDay(timeRange.start)} – ${formatTimeOfDay(
                         timeRange.end
@@ -818,6 +854,24 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 8,
   },
+  timeEntryRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  timeInput: {
+    flex: 1,
+    marginRight: 4,
+  },
+  meridiemBtn: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  meridiemText: { fontSize: 13, fontWeight: 'bold', color: '#000000' },
   inputInvalid: {
     borderColor: '#909090',
     borderStyle: 'dashed',
