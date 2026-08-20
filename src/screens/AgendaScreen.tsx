@@ -1774,14 +1774,16 @@ export function AgendaScreen(): React.JSX.Element {
                 📋 Day View
               </Text>
             </TouchableOpacity>
+
+            {/* Beside the view switcher rather than with the header actions:
+                it opens a view of your work, not a setting or a sync. */}
+            <TouchableOpacity style={styles.switcherBtn} onPress={() => setShowTaskList(true)}>
+              <Text style={styles.switcherBtnText}>☑ Tasks</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
         <View style={styles.headerBtnGroup}>
-          <TouchableOpacity style={styles.settingsBtn} onPress={() => setShowTaskList(true)}>
-            <Text style={styles.settingsBtnText}>☑ Tasks</Text>
-          </TouchableOpacity>
-
           {(caldavEnabled || hasSubscribedFeeds) && (
             <TouchableOpacity style={styles.syncNowBtn} onPress={handleSyncNow}>
               <Text style={styles.syncNowBtnText}>🔄 Sync Now</Text>
