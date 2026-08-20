@@ -44,8 +44,15 @@ export function gridHours(options: DayGridOptions = DEFAULT_DAY_GRID): number[] 
   return hours;
 }
 
+/**
+ * Total height, including a trailing hour past the last label.
+ *
+ * Without it the final label sits exactly on the bottom edge and renders below
+ * it, and an event ending at the last hour has nowhere to draw — both were
+ * visible as the last slot spilling out of the panel.
+ */
 export function gridHeight(options: DayGridOptions = DEFAULT_DAY_GRID): number {
-  return (options.endHour - options.startHour) * options.hourHeight;
+  return (options.endHour - options.startHour + 1) * options.hourHeight;
 }
 
 /**

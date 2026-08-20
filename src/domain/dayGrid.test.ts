@@ -23,9 +23,16 @@ describe('the grid itself', () => {
     expect(gridHours(OPTS)[12]).toBe(20);
   });
 
-  test('height covers the span, not the number of labels', () => {
-    // Twelve gaps between thirteen lines.
-    expect(gridHeight(OPTS)).toBe(12 * 44);
+  test('height leaves room below the last label', () => {
+    // Twelve gaps between thirteen lines, plus a trailing hour: without it the
+    // final label renders below the bottom edge and an event ending at the
+    // last hour has nowhere to draw.
+    expect(gridHeight(OPTS)).toBe(13 * 44);
+  });
+
+  test('an event ending at the last hour fits inside the grid', () => {
+    const [placed] = placeEvents([event('late', 19, 20)], OPTS);
+    expect(placed.top + placed.height).toBeLessThanOrEqual(gridHeight(OPTS));
   });
 
   test('hour labels read as a clock, not as 0-23', () => {
