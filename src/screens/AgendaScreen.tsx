@@ -40,8 +40,7 @@ import { expandEventsForDate, parseIcsContent } from '../domain/icsParser';
 import { filterEvents } from '../domain/eventFilters';
 import { meetingNoteService } from '../supernote/meetingNoteService';
 import { calendarStorage } from '../storage/calendarStorage';
-import { createMeetingSnapshot, generateNoteFilename, noteIdentity } from '../domain/meetingSnapshot';
-import { generateMarkdownSnapshot, generatePlainTextSnapshot } from '../domain/noteExporter';
+import { generateNoteFilename, noteIdentity } from '../domain/meetingSnapshot';
 import { caldavService, CaldavProviderType, isTaskItem } from '../domain/caldavService';
 import {
   prunePushState,
@@ -57,8 +56,7 @@ import { MonthGridView } from './MonthGridView';
 import { TaskListModal } from './TaskListModal';
 import { ItemCreationModal } from './ItemCreationModal';
 import { DatePickerModal } from './DatePickerModal';
-import { EventDetailModal } from './EventDetailModal';
-import { openNoteInEditor, writeExport } from '../supernote/exportService';
+import { openNoteInEditor } from '../supernote/exportService';
 
 type SettingsTab = 'sync' | 'notes' | 'app' | 'help';
 
@@ -152,8 +150,6 @@ export function AgendaScreen(): React.JSX.Element {
   // "Create" and produce a duplicate beside the existing note.
   const [eventNotePaths, setEventNotePaths] = useState<Record<string, string>>({});
   // Event opened in the detail modal, where the low-frequency actions live.
-  const [detailEvent, setDetailEvent] = useState<CalendarEvent | null>(null);
-  const [showEventDetail, setShowEventDetail] = useState<boolean>(false);
   // Non-null while the modal is editing an existing item rather than creating.
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [caldavCustomUrl, setCaldavCustomUrl] = useState<string>('');
@@ -1108,40 +1104,6 @@ export function AgendaScreen(): React.JSX.Element {
     }
   };
 
-  /**
-   * What kind of note an event is. The recorded answer wins; until the
-   * Business/Academic toggle is removed it supplies the default for events
-   * that have never been asked, so nothing changes for existing content.
-   */
-  const defaultNoteKind = (): NoteKind => (themeMode === 'academic' ? 'class' : 'meeting');
-
-  const kindForEvent = (event: CalendarEvent): NoteKind =>
-    calendarStorage.getEventKind(noteIdentity(event)) || defaultNoteKind();
-
-  const handleExportItemFormat = async (event: CalendarEvent, format: 'md' | 'txt') => {
-    // Reads the note's own kind rather than whatever mode happens to be
-    // active, so exporting an old class note no longer relabels it a meeting.
-    const kind = kindForEvent(event);
-    const snapshot = createMeetingSnapshot(event, kind);
-    const content =
-      format === 'md'
-        ? generateMarkdownSnapshot(snapshot, event, kind)
-        : generatePlainTextSnapshot(snapshot, event, kind);
-
-    const stamp = event.start.toISOString().slice(0, 10);
-    setStatusMsg(`Exporting ${format.toUpperCase()}...`);
-
-    // Report the path the writer actually used, not one we assumed. The old
-    // version built a content string, discarded it, and announced success for
-    // a file that was never created.
-    const res = await writeExport(`${stamp} ${snapshot.title}.${format}`, content);
-    setStatusMsg(res.message);
-  };
-
-
-  // Dimensions reports dp, not physical pixels — a Manta's 1920px is about
-  // 960dp. Comparing against a pixel figure meant this was never true and the
-  // layout always stacked at full width.
   const isWideScreen = Dimensions.get('window').width >= 800;
 
   // Fifteen days forward from whichever day is selected, so the one- and
@@ -1436,6 +1398,15 @@ export function AgendaScreen(): React.JSX.Element {
     try {
       if (FileUtils.deleteFile) await FileUtils.deleteFile(path);
       calendarStorage.setMapping({ ...mapping, notePath: '' });
+      // The recorded kind goes with the note. Without this a wrong answer to
+      // the Meeting-or-Class prompt could never be corrected: the prompt only
+      // fires when nothing is recorded.
+      calendarStorage.clearEventKind(noteIdentity(event));
+      setNoteKindByEvent(prev => {
+        const next = { ...prev };
+        delete next[noteIdentity(event)];
+        return next;
+      });
       setEventNotePaths(prev => {
         const next = { ...prev };
         delete next[event.uid];
@@ -2503,41 +2474,6 @@ export function AgendaScreen(): React.JSX.Element {
             onClose={() => setShowDatePickerModal(false)}
           />
 
-          <EventDetailModal
-            visible={showEventDetail}
-            event={detailEvent}
-            noteKind={detailEvent ? calendarStorage.getEventKind(noteIdentity(detailEvent)) : undefined}
-            existingNotePath={detailEvent ? eventNotePaths[detailEvent.uid] : undefined}
-            onClose={() => {
-              setShowEventDetail(false);
-              setDetailEvent(null);
-            }}
-            onCreateNote={evt => {
-              setShowEventDetail(false);
-              handleRequestNoteCreation(evt);
-            }}
-            onChangeKind={(evt, kind) => {
-              calendarStorage.setEventKind(noteIdentity(evt), kind);
-              setNoteKindByEvent(prev => ({ ...prev, [noteIdentity(evt)]: kind }));
-              setStatusMsg(`"${evt.summary}" is now a ${kind} note.`);
-            }}
-            onOpenExistingNote={path => {
-              setShowEventDetail(false);
-              handleOpenExistingNote(path);
-            }}
-            onExport={(evt, format) => {
-              setShowEventDetail(false);
-              handleExportItemFormat(evt, format);
-            }}
-            onEdit={evt => {
-              setShowEventDetail(false);
-              handleEditItem(evt);
-            }}
-            onDelete={evt => {
-              setShowEventDetail(false);
-              handleDeleteItem(evt);
-            }}
-          />
 
           {/* Item Creation Modal (Events & Tasks) */}
           <ItemCreationModal
@@ -2706,10 +2642,7 @@ export function AgendaScreen(): React.JSX.Element {
                         <TouchableOpacity
                           key={`allday-${evt.uid}-${idx}`}
                           style={styles.allDayRow}
-                          onPress={() => {
-                            setDetailEvent(evt);
-                            setShowEventDetail(true);
-                          }}
+                          onPress={() => handleEditItem(evt)}
                         >
                           <Text style={styles.allDayTag}>[ALL DAY]</Text>
                           <Text style={styles.allDayTitle} numberOfLines={1}>
@@ -2737,10 +2670,7 @@ export function AgendaScreen(): React.JSX.Element {
 
                               <TouchableOpacity
                                 style={styles.scheduleBody}
-                                onPress={() => {
-                                  setDetailEvent(evt);
-                                  setShowEventDetail(true);
-                                }}
+                                onPress={() => handleEditItem(evt)}
                               >
                                 <Text style={styles.scheduleTitle} numberOfLines={1}>
                                   {evt.summary}
@@ -2752,7 +2682,7 @@ export function AgendaScreen(): React.JSX.Element {
                                     evt.organizer?.name ? `Host: ${evt.organizer.name}` : null,
                                   ]
                                     .filter(Boolean)
-                                    .join(' · ') || 'tap for details'}
+                                    .join(' · ') || 'tap to edit'}
                                 </Text>
 
                                 <TouchableOpacity
@@ -2771,6 +2701,17 @@ export function AgendaScreen(): React.JSX.Element {
                                     └ {existingNotePath ? '📂 Open Note' : '📝 Create Note'}
                                   </Text>
                                 </TouchableOpacity>
+                              </TouchableOpacity>
+
+                              {/* Inline, as task rows already have. The detail
+                                  sheet that used to hold this is gone: it cost
+                                  a second tap to reach actions that fit on the
+                                  row itself. */}
+                              <TouchableOpacity
+                                style={styles.focusTaskDelete}
+                                onPress={() => handleDeleteItem(evt)}
+                              >
+                                <Text style={styles.focusTaskDeleteText}>✕</Text>
                               </TouchableOpacity>
                             </View>
                           );

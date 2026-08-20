@@ -1,53 +1,5 @@
-import { CalendarEvent, MeetingSnapshot, NoteKind } from './types';
+import { CalendarEvent } from './types';
 
-/**
- * Generates Obsidian-compatible Markdown content with frontmatter YAML metadata,
- * header details, and formatted action checklists.
- */
-export function generateMarkdownSnapshot(
-  snapshot: MeetingSnapshot,
-  event: CalendarEvent,
-  kind: NoteKind = 'meeting'
-): string {
-  const isAcademic = kind === 'class';
-  const tag = isAcademic ? '#class-notes #academic' : '#meeting-notes #work';
-
-  return `---
-title: "${snapshot.title}"
-date: ${event.start.toISOString().slice(0, 10)}
-time: "${snapshot.timeStr}"
-type: ${isAcademic ? 'class' : 'meeting'}
-calendar: "${event.calendarName || 'Default'}"
-tags:
-  - ${isAcademic ? 'academic' : 'business'}
-  - meeting-notes
----
-
-# ${snapshot.title}
-
-- **Date & Time:** ${snapshot.dateStr} | ${snapshot.timeStr}
-- **${isAcademic ? 'Instructor / Professor' : 'Organizer'}:** ${snapshot.organizerStr}
-- **Location:** ${snapshot.locationStr}
-- **Tags:** ${tag}
-
-## ${isAcademic ? 'Class Roster & Attendees' : 'Attendees'}
-${snapshot.attendeesStr}
-
----
-
-## ${isAcademic ? 'Syllabus & Lecture Details' : 'Agenda & Description'}
-${snapshot.descriptionStr}
-
----
-
-## ✍️ Tasks & Action Items
-${snapshot.actionItemsStr}
-
----
-
-*Exported from Supernote Calendar Plugin on ${new Date().toISOString()}*
-`;
-}
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -110,38 +62,6 @@ export function foldIcsLine(line: string): string {
   return parts.join('\r\n ');
 }
 
-/**
- * Plain-text form of a meeting snapshot, for users who want the content
- * without Markdown syntax.
- */
-export function generatePlainTextSnapshot(
-  snapshot: MeetingSnapshot,
-  event: CalendarEvent,
-  kind: NoteKind = 'meeting'
-): string {
-  const isAcademic = kind === 'class';
-
-  return [
-    snapshot.title,
-    '='.repeat(Math.max(snapshot.title.length, 3)),
-    '',
-    `Date & Time: ${snapshot.dateStr} | ${snapshot.timeStr}`,
-    `${isAcademic ? 'Instructor' : 'Organizer'}: ${snapshot.organizerStr}`,
-    `Location: ${snapshot.locationStr}`,
-    `Calendar: ${event.calendarName || 'Default'}`,
-    '',
-    isAcademic ? 'ROSTER & ATTENDEES' : 'ATTENDEES',
-    snapshot.attendeesStr,
-    '',
-    isAcademic ? 'SYLLABUS & LECTURE DETAILS' : 'AGENDA & DESCRIPTION',
-    snapshot.descriptionStr,
-    '',
-    'TASKS & ACTION ITEMS',
-    snapshot.actionItemsStr,
-    '',
-    `Exported from Supernote Calendar Plugin on ${new Date().toISOString()}`,
-  ].join('\n');
-}
 
 /**
  * Generates an RFC 5545 VCALENDAR / VEVENT ICS string for outbound CalDAV export.

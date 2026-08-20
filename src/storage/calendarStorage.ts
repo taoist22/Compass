@@ -471,6 +471,23 @@ export class CalendarStorage {
     void this.save();
   }
 
+  /**
+   * Forgets what kind an item was, so the next Create Note asks again.
+   *
+   * Called when a note is deleted. Changing a kind after the fact cannot move
+   * the note already written or restyle its background, so the real correction
+   * for a wrong answer is to delete the note and make it again — which only
+   * works if the recorded answer goes with it.
+   */
+  clearEventKind(identity: string): void {
+    delete this.eventKinds[identity];
+    const mapping = this.mappings[identity];
+    if (mapping?.kind) {
+      this.mappings[identity] = { ...mapping, kind: undefined };
+    }
+    void this.save();
+  }
+
   getAllEventKinds(): Record<string, NoteKind> {
     return this.eventKinds;
   }

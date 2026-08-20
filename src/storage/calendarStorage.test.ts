@@ -383,3 +383,36 @@ describe('PARA areas, projects and membership', () => {
     expect(calendarStorage.getMembership('task-y')).toEqual({});
   });
 });
+
+describe('clearing a note kind', () => {
+  test('a deleted note lets the prompt ask again', () => {
+    // The only correction for a wrong Meeting-or-Class answer: changing it
+    // after the fact cannot move the note already written.
+    calendarStorage.setEventKind('evt-kind-1', 'class');
+    expect(calendarStorage.getEventKind('evt-kind-1')).toBe('class');
+
+    calendarStorage.clearEventKind('evt-kind-1');
+    expect(calendarStorage.getEventKind('evt-kind-1')).toBeUndefined();
+  });
+
+  test('a kind recorded on the mapping is cleared too', () => {
+    // getEventKind consults the mapping first, so clearing only the side
+    // store would leave the prompt still suppressed.
+    calendarStorage.setMapping({
+      eventUid: 'evt-kind-2',
+      seriesId: 'evt-kind-2',
+      kind: 'class',
+      notePath: '/storage/emulated/0/Note/Classes/x.note',
+      lastPageNum: 1,
+      lastCreatedIso: new Date().toISOString(),
+    });
+    expect(calendarStorage.getEventKind('evt-kind-2')).toBe('class');
+
+    calendarStorage.clearEventKind('evt-kind-2');
+    expect(calendarStorage.getEventKind('evt-kind-2')).toBeUndefined();
+  });
+
+  test('clearing an unknown item is harmless', () => {
+    expect(() => calendarStorage.clearEventKind('never-seen')).not.toThrow();
+  });
+});

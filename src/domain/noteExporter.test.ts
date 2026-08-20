@@ -1,10 +1,4 @@
-import {
-  generateMarkdownSnapshot,
-  generateOutboundIcsEvent,
-  generateOutboundIcsTodo,
-  generatePlainTextSnapshot,
-} from './noteExporter';
-import { createMeetingSnapshot } from './meetingSnapshot';
+import { generateOutboundIcsEvent, generateOutboundIcsTodo } from './noteExporter';
 import { CalendarEvent } from './types';
 
 describe('noteExporter', () => {
@@ -21,16 +15,6 @@ describe('noteExporter', () => {
     actionItems: ['Review Mechanics', 'Submit Lab report'],
   };
 
-  test('generateMarkdownSnapshot generates valid Obsidian markdown with YAML frontmatter', () => {
-    const snapshot = createMeetingSnapshot(sampleEvent, 'class');
-    const md = generateMarkdownSnapshot(snapshot, sampleEvent, 'class');
-
-    expect(md).toContain('---');
-    expect(md).toContain('title: "Physics 301 Midterm Sync"');
-    expect(md).toContain('Instructor / Professor');
-    expect(md).toContain('#class-notes');
-    expect(md).toContain('Review Mechanics');
-  });
 
   test('generateOutboundIcsEvent formats valid RFC 5545 VEVENT string', () => {
     const ics = generateOutboundIcsEvent(sampleEvent);
@@ -85,24 +69,7 @@ describe('noteExporter', () => {
     expect(ics.replace(/\r\n /g, '')).toContain(`DESCRIPTION:${'x'.repeat(400)}`);
   });
 
-  test('generatePlainTextSnapshot carries the content without Markdown syntax', () => {
-    const snapshot = createMeetingSnapshot(sampleEvent, 'meeting');
-    const txt = generatePlainTextSnapshot(snapshot, sampleEvent, 'meeting');
 
-    expect(txt).toContain('Physics 301 Midterm Sync');
-    expect(txt).toContain('ATTENDEES');
-    expect(txt).toContain('TASKS & ACTION ITEMS');
-    // No Markdown headings, bullets or frontmatter.
-    expect(txt).not.toContain('##');
-    expect(txt).not.toContain('---\ntitle:');
-  });
-
-  test('generatePlainTextSnapshot uses academic wording in academic mode', () => {
-    const snapshot = createMeetingSnapshot(sampleEvent, 'class');
-    const txt = generatePlainTextSnapshot(snapshot, sampleEvent, 'class');
-    expect(txt).toContain('Instructor:');
-    expect(txt).toContain('ROSTER & ATTENDEES');
-  });
 
   test('generateOutboundIcsTodo emits a VTODO with DUE, not a VEVENT', () => {
     const ics = generateOutboundIcsTodo({
