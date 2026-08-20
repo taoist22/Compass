@@ -41,6 +41,7 @@ import { filterEvents } from '../domain/eventFilters';
 import { meetingNoteService } from '../supernote/meetingNoteService';
 import { calendarStorage } from '../storage/calendarStorage';
 import { generateNoteFilename, noteIdentity } from '../domain/meetingSnapshot';
+import { formatTimeOfDay, minutesFromDate } from '../domain/timeOfDay';
 import { caldavService, CaldavProviderType, isTaskItem } from '../domain/caldavService';
 import {
   prunePushState,
@@ -2660,11 +2661,15 @@ export function AgendaScreen(): React.JSX.Element {
                             <View key={`${evt.uid}-${idx}`} style={styles.scheduleRow}>
                               {/* Start above end, as on a paper planner. */}
                               <View style={styles.scheduleGutter}>
-                                <Text style={styles.scheduleTime}>
-                                  {evt.start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                                {/* One line each. The gutter was too narrow
+                                    for "9:00 AM", so the meridiem wrapped onto
+                                    a line of its own and the column read as
+                                    three unrelated values. */}
+                                <Text style={styles.scheduleTime} numberOfLines={1}>
+                                  {formatTimeOfDay(minutesFromDate(evt.start))}
                                 </Text>
-                                <Text style={styles.scheduleEndTime}>
-                                  {evt.end.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                                <Text style={styles.scheduleEndTime} numberOfLines={1}>
+                                  {formatTimeOfDay(minutesFromDate(evt.end))}
                                 </Text>
                               </View>
 
@@ -3390,7 +3395,8 @@ const styles = StyleSheet.create({
   },
   // A fixed-width time gutter is what makes a list read as a schedule.
   scheduleGutter: {
-    width: 62,
+    // Wide enough for "12:00 AM" on one line at the sizes below.
+    width: 96,
     borderRightWidth: 1,
     borderRightColor: '#303030',
     alignItems: 'center',
@@ -3399,13 +3405,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#f2f2f2',
   },
   scheduleTime: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: 'bold',
     color: '#000000',
-  },
-  scheduleMeridiem: {
-    fontSize: 10,
-    color: '#404040',
   },
   scheduleBody: {
     flex: 1,
