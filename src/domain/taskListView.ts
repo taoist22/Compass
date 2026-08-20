@@ -1,5 +1,5 @@
 import { compareTasks, isDone, taskStatus } from './taskModel';
-import { CalendarTask, TaskStatus } from './types';
+import { Area, CalendarTask, Project, TaskStatus } from './types';
 
 /**
  * Filtering and grouping for the task list.
@@ -254,4 +254,57 @@ export function projectProgress(
     total: mine.length,
     percent: mine.length === 0 ? 0 : Math.round((done / mine.length) * 100),
   };
+}
+
+/**
+ * Projects belonging to an area.
+ *
+ * This is what separates a Project from an Area rather than duplicating it:
+ * areas contain projects, projects finish. Narrowing the project choices to
+ * the area you are working in is the visible consequence.
+ */
+export function projectsInArea(projects: Project[], areaId: string | null): Project[] {
+  if (!areaId) return projects;
+  return projects.filter(p => p.areaId === areaId);
+}
+
+/** Active projects only — a short list is the entire point of the split. */
+export function activeProjects(projects: Project[]): Project[] {
+  return projects.filter(p => p.status === 'active');
+}
+
+/**
+ * Projects grouped under the area that holds them, unfiled last.
+ *
+ * Areas are passed in rather than derived so the ordering follows the areas
+ * themselves, and an area with no projects still reads as empty rather than
+ * silently vanishing.
+ */
+export function projectsByArea(
+  projects: Project[],
+  areas: Area[]
+): Array<{ areaId: string | null; label: string; projects: Project[] }> {
+  const groups = areas.map(area => ({
+    areaId: area.id as string | null,
+    label: area.name,
+    projects: projects.filter(p => p.areaId === area.id),
+  }));
+
+  const loose = projects.filter(p => !p.areaId || !areas.some(a => a.id === p.areaId));
+  if (loose.length > 0) {
+    groups.push({ areaId: null, label: 'No Area', projects: loose });
+  }
+  return groups.filter(g => g.projects.length > 0);
+}
+
+/** True when a project's due date has passed and it is not finished. */
+export function projectOverdue(project: Project, now: Date = new Date()): boolean {
+  if (!project.dueDate || project.status !== 'active') return false;
+  const due = new Date(
+    project.dueDate.getFullYear(),
+    project.dueDate.getMonth(),
+    project.dueDate.getDate()
+  );
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return due.getTime() < today.getTime();
 }

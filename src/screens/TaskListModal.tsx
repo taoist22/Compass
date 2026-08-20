@@ -9,11 +9,13 @@ import {
   TaskScope,
   countGrouped,
   filterByArea,
+  activeProjects,
   filterByProject,
   filterByScope,
   groupTasks,
   groupingLabel,
   projectProgress,
+  projectsInArea,
   scopeLabel,
 } from '../domain/taskListView';
 
@@ -82,6 +84,10 @@ export function TaskListModal({
   const chooseArea = (next: string | null) => {
     setAreaId(next);
     if (next && grouping === 'area') setGrouping('due');
+    // A project filter from another area would silently show nothing.
+    if (projectId && next && !projects.some(p => p.id === projectId && p.areaId === next)) {
+      setProjectId(null);
+    }
   };
 
   const chooseProject = (next: string | null) => {
@@ -89,7 +95,14 @@ export function TaskListModal({
     if (next && grouping === 'project') setGrouping('due');
   };
 
-  const activeProjects = projects.filter(p => p.status === 'active');
+  /**
+   * Only the projects belonging to the selected area.
+   *
+   * This is the hierarchy made visible: pick ENG 102 and you are offered its
+   * projects, not every project you have. Without it, Areas and Projects are
+   * two parallel lists and choosing between them is arbitrary.
+   */
+  const offeredProjects = projectsInArea(activeProjects(projects), areaId);
 
   return (
     <Modal visible={visible} transparent animationType="fade">
@@ -191,7 +204,7 @@ export function TaskListModal({
             </>
           )}
 
-          {activeProjects.length > 0 && (
+          {offeredProjects.length > 0 && (
             <>
               <Text allowFontScaling={false} style={styles.filterLabel}>
                 Project
@@ -209,7 +222,7 @@ export function TaskListModal({
                   </Text>
                 </TouchableOpacity>
 
-                {activeProjects.map(p => {
+                {offeredProjects.map(p => {
                   const progress = projectProgress(tasks, p.id, projectLookup);
                   return (
                     <TouchableOpacity

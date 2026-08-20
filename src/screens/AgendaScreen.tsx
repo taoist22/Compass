@@ -1769,6 +1769,43 @@ export function AgendaScreen(): React.JSX.Element {
     setProjects([...calendarStorage.getProjects()]);
   };
 
+  const handleSetProjectDue = (projectId: string, text: string) => {
+    const existing = calendarStorage.getProjects().find(p => p.id === projectId);
+    if (!existing) return;
+
+    const trimmed = text.trim();
+    // Reuses the capture parser rather than adding a third date reader; it
+    // already handles ISO, numeric and month-name forms with the user's
+    // configured day/month order.
+    const parsed = trimmed
+      ? parseCapturedText(trimmed, { dateOrder: resolveDateOrder(calendarStorage.getSettings().dateOrder) }).date
+      : undefined;
+
+    if (trimmed && !parsed) {
+      setStatusMsg(`Could not read "${trimmed}" as a date. Try 2026-09-15 or Sep 15.`);
+      return;
+    }
+
+    calendarStorage.upsertProject({ ...existing, dueDate: parsed });
+    setProjects([...calendarStorage.getProjects()]);
+  };
+
+  /**
+   * Moves a project to the next area, wrapping through "no area".
+   *
+   * A tap rather than another picker: areas are few, and the row is already
+   * carrying a name, a due date, progress and two buttons.
+   */
+  const handleCycleProjectArea = (projectId: string) => {
+    const existing = calendarStorage.getProjects().find(p => p.id === projectId);
+    if (!existing) return;
+
+    const ids: Array<string | undefined> = [...calendarStorage.getAreas().map(a => a.id), undefined];
+    const at = ids.indexOf(existing.areaId);
+    calendarStorage.upsertProject({ ...existing, areaId: ids[(at + 1) % ids.length] });
+    setProjects([...calendarStorage.getProjects()]);
+  };
+
   const handleDeleteProject = (projectId: string) => {
     // Storage detaches its tasks rather than deleting them with it.
     calendarStorage.removeProject(projectId);
@@ -2064,6 +2101,8 @@ export function AgendaScreen(): React.JSX.Element {
         onSetProjectStatus={handleSetProjectStatus}
         onDeleteProject={handleDeleteProject}
         onCreateProject={name => handleCreateProject(name)}
+        onSetProjectDue={handleSetProjectDue}
+        onCycleProjectArea={handleCycleProjectArea}
         onRename={handleRenameArea}
         onDelete={handleDeleteArea}
         onCreate={name => handleCreateArea(name)}

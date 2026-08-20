@@ -5,11 +5,15 @@ import {
   filterByScope,
   groupTasks,
   groupingLabel,
+  activeProjects,
+  projectOverdue,
   projectProgress,
+  projectsByArea,
+  projectsInArea,
   scopeLabel,
 } from './taskListView';
 import { withStatus } from './taskModel';
-import { CalendarTask } from './types';
+import { Area, CalendarTask, Project } from './types';
 
 const NOW = new Date(2026, 7, 19, 10, 0);
 const day = (offset: number) => new Date(2026, 7, 19 + offset);
@@ -306,5 +310,94 @@ describe('projects', () => {
     const groups = groupTasks(tasks, 'project', NOW);
     expect(groups.map(g => g.label)).toEqual(['No Project']);
     expect(countGrouped(groups)).toBe(4);
+  });
+});
+
+describe('areas contain projects', () => {
+  const area = (id: string, name: string): Area => ({ id, name, createdAt: new Date(2026, 0, 1) });
+  const project = (id: string, name: string, over: Partial<Project> = {}): Project => ({
+    id,
+    name,
+    status: 'active',
+    createdAt: new Date(2026, 0, 1),
+    ...over,
+  });
+
+  const areas = [area('a-eng', 'ENG 102'), area('a-farm', 'Farm')];
+  const projects = [
+    project('p-paper', 'Term Paper', { areaId: 'a-eng' }),
+    project('p-exam', 'Final Exam', { areaId: 'a-eng' }),
+    project('p-solar', 'Solar Monitor', { areaId: 'a-farm' }),
+    project('p-loose', 'Unfiled Thing'),
+  ];
+
+  test('projects narrow to the area you are working in', () => {
+    // The visible consequence of areas containing projects, rather than the
+    // two being parallel lists.
+    expect(projectsInArea(projects, 'a-eng').map(p => p.name)).toEqual([
+      'Term Paper',
+      'Final Exam',
+    ]);
+  });
+
+  test('no area selected shows every project', () => {
+    expect(projectsInArea(projects, null)).toHaveLength(4);
+  });
+
+  test('an area with no projects yields nothing rather than an empty heading', () => {
+    expect(projectsInArea(projects, 'a-none')).toEqual([]);
+  });
+
+  test('grouping follows the order of the areas themselves', () => {
+    const groups = projectsByArea(projects, areas);
+    expect(groups.map(g => g.label)).toEqual(['ENG 102', 'Farm', 'No Area']);
+  });
+
+  test('a project whose area was deleted falls into No Area', () => {
+    const orphan = [project('p-x', 'Orphan', { areaId: 'a-gone' })];
+    expect(projectsByArea(orphan, areas).map(g => g.label)).toEqual(['No Area']);
+  });
+
+  test('empty area groups are omitted', () => {
+    const onlyEng = projects.filter(p => p.areaId === 'a-eng');
+    expect(projectsByArea(onlyEng, areas).map(g => g.label)).toEqual(['ENG 102']);
+  });
+
+  test('active filters out finished and archived work', () => {
+    const mixed = [
+      project('p1', 'Live'),
+      project('p2', 'Finished', { status: 'done' }),
+      project('p3', 'Filed away', { status: 'archived' }),
+    ];
+    expect(activeProjects(mixed).map(p => p.name)).toEqual(['Live']);
+  });
+});
+
+describe('project due dates', () => {
+  const NOW_DAY = new Date(2026, 7, 19, 10, 0);
+  const project = (over: Partial<Project> = {}): Project => ({
+    id: 'p',
+    name: 'Term Paper',
+    status: 'active',
+    createdAt: new Date(2026, 0, 1),
+    ...over,
+  });
+
+  test('a past due date on live work is overdue', () => {
+    expect(projectOverdue(project({ dueDate: new Date(2026, 7, 18) }), NOW_DAY)).toBe(true);
+  });
+
+  test('due today is not overdue', () => {
+    expect(projectOverdue(project({ dueDate: new Date(2026, 7, 19) }), NOW_DAY)).toBe(false);
+  });
+
+  test('a finished project is never overdue, however late', () => {
+    // Nagging about something already done is noise.
+    const done = project({ dueDate: new Date(2026, 1, 1), status: 'done' });
+    expect(projectOverdue(done, NOW_DAY)).toBe(false);
+  });
+
+  test('no due date is never overdue', () => {
+    expect(projectOverdue(project(), NOW_DAY)).toBe(false);
   });
 });

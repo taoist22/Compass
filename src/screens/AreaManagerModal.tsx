@@ -1,6 +1,15 @@
 import React, { useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Area, Project, ProjectStatus } from '../domain/types';
+import { projectOverdue, projectsByArea } from '../domain/taskListView';
+
+/** Short, unambiguous, and what the field accepts back. */
+function formatProjectDue(due?: Date): string {
+  if (!due) return '';
+  return `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, '0')}-${String(
+    due.getDate()
+  ).padStart(2, '0')}`;
+}
 
 interface AreaManagerModalProps {
   visible: boolean;
@@ -12,6 +21,9 @@ interface AreaManagerModalProps {
   onSetProjectStatus: (projectId: string, status: ProjectStatus) => void;
   onDeleteProject: (projectId: string) => void;
   onCreateProject: (name: string) => void;
+  onSetProjectDue: (projectId: string, text: string) => void;
+  /** Moves a project to the next area; areas are few, so a tap beats a picker. */
+  onCycleProjectArea: (projectId: string) => void;
   /** How many tasks each area holds, so deleting can say what it affects. */
   countFor: (areaId: string) => number;
   onRename: (areaId: string, name: string) => void;
@@ -37,6 +49,8 @@ export function AreaManagerModal({
   onSetProjectStatus,
   onDeleteProject,
   onCreateProject,
+  onSetProjectDue,
+  onCycleProjectArea,
   onRename,
   onDelete,
   onCreate,
@@ -46,6 +60,7 @@ export function AreaManagerModal({
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [newName, setNewName] = useState<string>('');
   const [newProjectName, setNewProjectName] = useState<string>('');
+  const [dueDrafts, setDueDrafts] = useState<Record<string, string>>({});
 
   const nameFor = (area: Area) => drafts[area.id] ?? area.name;
 
@@ -147,7 +162,15 @@ export function AreaManagerModal({
               </Text>
             )}
 
-            {projects.map(project => {
+            {projectsByArea(projects, areas).map(group => (
+              <View key={group.areaId || '__none'}>
+                {/* Nested under the area that holds them: an area contains
+                    projects, a project finishes. Two flat lists would make
+                    choosing between them arbitrary. */}
+                <Text allowFontScaling={false} style={styles.areaHeading}>
+                  {group.label}
+                </Text>
+                {group.projects.map(project => {
               const progress = progressFor(project.id);
               return (
                 <View key={project.id} style={styles.row}>
@@ -193,9 +216,33 @@ export function AreaManagerModal({
                         }}
                         autoCorrect={false}
                       />
-                      <Text allowFontScaling={false} style={styles.count}>
+                      <TextInput
+                        style={styles.dueInput}
+                        value={dueDrafts[project.id] ?? formatProjectDue(project.dueDate)}
+                        onChangeText={text => setDueDrafts(d => ({ ...d, [project.id]: text }))}
+                        onEndEditing={() => onSetProjectDue(project.id, dueDrafts[project.id] ?? '')}
+                        placeholder="due"
+                        placeholderTextColor="#909090"
+                        autoCorrect={false}
+                      />
+                      <Text
+                        allowFontScaling={false}
+                        style={[styles.count, projectOverdue(project) && styles.countOverdue]}
+                      >
                         {progress.done}/{progress.total}
+                        {projectOverdue(project) ? ' !' : ''}
                       </Text>
+                      {/* Cycles through the areas. Projects belong to one, and
+                          with a handful of areas a tap is cheaper than another
+                          picker on a crowded row. */}
+                      <TouchableOpacity
+                        style={styles.confirmBtn}
+                        onPress={() => onCycleProjectArea(project.id)}
+                      >
+                        <Text allowFontScaling={false} style={styles.confirmBtnText}>
+                          ↔
+                        </Text>
+                      </TouchableOpacity>
                       {/* Finishing is what a project can do that an area cannot. */}
                       <TouchableOpacity
                         style={styles.confirmBtn}
@@ -223,6 +270,8 @@ export function AreaManagerModal({
                 </View>
               );
             })}
+              </View>
+            ))}
           </ScrollView>
 
           <View style={styles.addRow}>
@@ -352,6 +401,25 @@ const styles = StyleSheet.create({
   },
   addBtnText: { fontSize: 13, fontWeight: 'bold', color: '#000000' },
   empty: { fontSize: 13, color: '#505050', textAlign: 'center', paddingVertical: 16 },
+  areaHeading: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#303030',
+    paddingTop: 6,
+    paddingHorizontal: 4,
+  },
+  dueInput: {
+    width: 74,
+    borderWidth: 1,
+    borderColor: '#909090',
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    marginLeft: 4,
+    fontSize: 11,
+    color: '#000000',
+  },
+  countOverdue: { fontWeight: 'bold', color: '#000000' },
   sectionHeading: {
     fontSize: 12,
     fontWeight: 'bold',
