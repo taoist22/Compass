@@ -22,6 +22,7 @@ interface TaskListModalProps {
   /** Area membership by task uid; it lives outside the task itself. */
   areaOf: (uid: string) => string | undefined;
   onClose: () => void;
+  onManageAreas: () => void;
   onToggle: (task: CalendarTask) => void;
   onEdit: (task: CalendarTask) => void;
 }
@@ -41,6 +42,7 @@ export function TaskListModal({
   areas,
   areaOf,
   onClose,
+  onManageAreas,
   onToggle,
   onEdit,
 }: TaskListModalProps): React.JSX.Element {
@@ -78,11 +80,18 @@ export function TaskListModal({
             <Text allowFontScaling={false} style={styles.headerTitle}>
               ☑ All Tasks ({total})
             </Text>
-            <TouchableOpacity onPress={onClose}>
-              <Text allowFontScaling={false} style={styles.close}>
-                ✕ Close
-              </Text>
-            </TouchableOpacity>
+            <View style={styles.headerActions}>
+              <TouchableOpacity onPress={onManageAreas}>
+                <Text allowFontScaling={false} style={styles.close}>
+                  Areas
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={onClose}>
+                <Text allowFontScaling={false} style={styles.close}>
+                  ✕ Close
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           <Text allowFontScaling={false} style={styles.filterLabel}>
@@ -232,7 +241,8 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   headerTitle: { fontSize: 16, fontWeight: 'bold', color: '#000000' },
-  close: { fontSize: 14, fontWeight: 'bold', color: '#000000' },
+  headerActions: { flexDirection: 'row' },
+  close: { fontSize: 14, fontWeight: 'bold', color: '#000000', marginLeft: 14 },
   filterLabel: { fontSize: 11, fontWeight: 'bold', color: '#505050', marginTop: 2 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 4 },
   chip: {

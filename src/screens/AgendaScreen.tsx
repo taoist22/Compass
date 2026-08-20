@@ -56,6 +56,7 @@ import { parseCapturedText, resolveDateOrder, ParsedCapture } from '../domain/ca
 import { captureLassoText } from '../supernote/lassoCapture';
 import { MonthGridView } from './MonthGridView';
 import { TaskListModal } from './TaskListModal';
+import { AreaManagerModal } from './AreaManagerModal';
 import { ItemCreationModal } from './ItemCreationModal';
 import { DatePickerModal } from './DatePickerModal';
 import { openNoteInEditor } from '../supernote/exportService';
@@ -145,6 +146,7 @@ export function AgendaScreen(): React.JSX.Element {
   const [showDeleteNoteModal, setShowDeleteNoteModal] = useState<boolean>(false);
   const [showTaskList, setShowTaskList] = useState<boolean>(false);
   const [areas, setAreas] = useState<Area[]>([]);
+  const [showAreaManager, setShowAreaManager] = useState<boolean>(false);
   /** Bumped when membership changes, so the list and pickers re-read. */
   const [membershipRevision, setMembershipRevision] = useState<number>(0);
   /** Note kind per event uid, for the month grid's M/C badges. */
@@ -1624,6 +1626,25 @@ export function AgendaScreen(): React.JSX.Element {
     return calendarStorage.getMembership(uid).areaId;
   };
 
+  const countTasksInArea = (areaId: string): number => {
+    void membershipRevision;
+    return calendarStorage.getTasks().filter(t => areaOfTask(t.uid) === areaId).length;
+  };
+
+  const handleRenameArea = (areaId: string, name: string) => {
+    const existing = calendarStorage.getAreas().find(a => a.id === areaId);
+    if (!existing) return;
+    calendarStorage.upsertArea({ ...existing, name });
+    setAreas([...calendarStorage.getAreas()]);
+  };
+
+  const handleDeleteArea = (areaId: string) => {
+    // Storage detaches its items rather than deleting them with it.
+    calendarStorage.removeArea(areaId);
+    setAreas([...calendarStorage.getAreas()]);
+    setMembershipRevision(n => n + 1);
+  };
+
   const handleCreateArea = (name: string): string => {
     const area: Area = { id: `area-${Date.now()}`, name, createdAt: new Date() };
     calendarStorage.upsertArea(area);
@@ -1853,12 +1874,30 @@ export function AgendaScreen(): React.JSX.Element {
         </TouchableOpacity>
       </Modal>
 
+      <AreaManagerModal
+        visible={showAreaManager}
+        areas={areas}
+        countFor={countTasksInArea}
+        onRename={handleRenameArea}
+        onDelete={handleDeleteArea}
+        onCreate={name => handleCreateArea(name)}
+        onClose={() => {
+          setShowAreaManager(false);
+          setShowTaskList(true);
+        }}
+      />
+
       <TaskListModal
         visible={showTaskList}
         tasks={tasks}
         areas={areas}
         areaOf={areaOfTask}
         onClose={() => setShowTaskList(false)}
+        onManageAreas={() => {
+          // Swapped rather than stacked: two modals at once is unreliable here.
+          setShowTaskList(false);
+          setShowAreaManager(true);
+        }}
         onToggle={handleToggleTask}
         onEdit={task => {
           setShowTaskList(false);
