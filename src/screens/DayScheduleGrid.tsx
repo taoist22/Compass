@@ -98,13 +98,17 @@ export function DayScheduleGrid({
                 <Text allowFontScaling={false} style={styles.blockTitle} numberOfLines={1}>
                   {event.summary}
                 </Text>
-                {blockHeight >= 44 && (
+                {/* Each line only appears if it fits. Rendering all three in a
+                    short block overflowed the box, and with the box clipped
+                    the lines collided — which read as text behind the icon. */}
+                {blockHeight >= META_MIN_HEIGHT && (
                   <Text allowFontScaling={false} style={styles.blockMeta} numberOfLines={1}>
                     {[typeLabel(event), event.location].filter(Boolean).join(' · ')}
                   </Text>
                 )}
               </TouchableOpacity>
 
+              {blockHeight >= ACTIONS_MIN_HEIGHT && (
               <View style={styles.blockActions}>
                 {/* The action takes the room it needs and the delete stays a
                     fixed sliver, rather than the two splitting evenly and
@@ -123,6 +127,7 @@ export function DayScheduleGrid({
                   </Text>
                 </TouchableOpacity>
               </View>
+              )}
             </View>
           );
         })}
@@ -133,6 +138,16 @@ export function DayScheduleGrid({
 }
 
 const GUTTER = 62;
+
+/**
+ * Heights at which each line earns its place.
+ *
+ * A one-hour block cannot hold a title, a meta line and an action row at
+ * these sizes; drawing all three overflowed a clipped box and the lines
+ * collided.
+ */
+const ACTIONS_MIN_HEIGHT = 46;
+const META_MIN_HEIGHT = 66;
 
 const styles = StyleSheet.create({
   allDayRow: {

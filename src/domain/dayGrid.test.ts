@@ -139,4 +139,10 @@ describe('defaults', () => {
     expect(DEFAULT_DAY_GRID.startHour).toBe(8);
     expect(DEFAULT_DAY_GRID.endHour).toBe(20);
   });
+
+  test('an hour is tall enough to hold a title and an action row', () => {
+    // Below this a one-hour block cannot draw its contents without them
+    // colliding inside a clipped box.
+    expect(DEFAULT_DAY_GRID.hourHeight).toBeGreaterThanOrEqual(46);
+  });
 });

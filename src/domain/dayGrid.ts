@@ -24,8 +24,10 @@ export interface DayGridOptions {
 export const DEFAULT_DAY_GRID: DayGridOptions = {
   startHour: 8,
   endHour: 20,
-  hourHeight: 44,
-  minHeight: 30,
+  // An hour has to hold a title and an action row at readable sizes; at 44 a
+  // one-hour event could not, and its contents collided.
+  hourHeight: 58,
+  minHeight: 34,
 };
 
 export interface PlacedEvent {
