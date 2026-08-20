@@ -54,6 +54,7 @@ import { LASSO_BUTTON_ID, LASSO_PRESS_EVENT } from '../domain/buttonIds';
 import { parseCapturedText, resolveDateOrder, ParsedCapture } from '../domain/captureParser';
 import { captureLassoText } from '../supernote/lassoCapture';
 import { MonthGridView } from './MonthGridView';
+import { TaskListModal } from './TaskListModal';
 import { ItemCreationModal } from './ItemCreationModal';
 import { DatePickerModal } from './DatePickerModal';
 import { EventDetailModal } from './EventDetailModal';
@@ -142,6 +143,7 @@ export function AgendaScreen(): React.JSX.Element {
   const [editingTask, setEditingTask] = useState<CalendarTask | null>(null);
   /** Confirms whether an event's generated note goes with it. */
   const [showDeleteNoteModal, setShowDeleteNoteModal] = useState<boolean>(false);
+  const [showTaskList, setShowTaskList] = useState<boolean>(false);
   /** Note kind per event uid, for the month grid's M/C badges. */
   const [noteKindByEvent, setNoteKindByEvent] = useState<Record<string, NoteKind | undefined>>({});
   // Note paths found on disk for the day's events, keyed by event uid. The
@@ -1776,6 +1778,10 @@ export function AgendaScreen(): React.JSX.Element {
         </View>
 
         <View style={styles.headerBtnGroup}>
+          <TouchableOpacity style={styles.settingsBtn} onPress={() => setShowTaskList(true)}>
+            <Text style={styles.settingsBtnText}>☑ Tasks</Text>
+          </TouchableOpacity>
+
           {(caldavEnabled || hasSubscribedFeeds) && (
             <TouchableOpacity style={styles.syncNowBtn} onPress={handleSyncNow}>
               <Text style={styles.syncNowBtnText}>🔄 Sync Now</Text>
@@ -1850,6 +1856,17 @@ export function AgendaScreen(): React.JSX.Element {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      <TaskListModal
+        visible={showTaskList}
+        tasks={tasks}
+        onClose={() => setShowTaskList(false)}
+        onToggle={handleToggleTask}
+        onEdit={task => {
+          setShowTaskList(false);
+          handleEditTask(task);
+        }}
+      />
 
       {/* Asked once per event, then remembered. Replaces the global
           Business/Academic mode deciding this for every note at once. */}

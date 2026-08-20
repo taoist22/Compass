@@ -1,0 +1,158 @@
+import { compareTasks, isDone, taskStatus } from './taskModel';
+import { CalendarTask, TaskStatus } from './types';
+
+/**
+ * Filtering and grouping for the task list.
+ *
+ * Kept out of the screen so the rules are testable, and expressed as discrete
+ * choices rather than free text: this display ghosts on frequent redraws, so
+ * the list is driven by tapping a chip rather than filtering as you type.
+ */
+
+export type TaskScope = 'open' | 'today' | 'upcoming' | 'done' | 'all';
+export type TaskGrouping = 'none' | 'status' | 'priority' | 'due';
+
+export const TASK_SCOPES: TaskScope[] = ['open', 'today', 'upcoming', 'done', 'all'];
+
+const SCOPE_LABELS: Record<TaskScope, string> = {
+  open: 'Open',
+  today: 'Today',
+  upcoming: 'Upcoming',
+  done: 'Done',
+  all: 'All',
+};
+
+export function scopeLabel(scope: TaskScope): string {
+  return SCOPE_LABELS[scope];
+}
+
+export const TASK_GROUPINGS: TaskGrouping[] = ['none', 'status', 'priority', 'due'];
+
+const GROUPING_LABELS: Record<TaskGrouping, string> = {
+  none: 'Flat',
+  status: 'Status',
+  priority: 'Priority',
+  due: 'Due',
+};
+
+export function groupingLabel(grouping: TaskGrouping): string {
+  return GROUPING_LABELS[grouping];
+}
+
+function startOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/**
+ * Narrows the list to a scope.
+ *
+ * "Open" deliberately includes undated tasks: they are the ones most easily
+ * forgotten, and a list that hides them is how a No Date pile grows unnoticed.
+ */
+export function filterByScope(
+  tasks: CalendarTask[],
+  scope: TaskScope,
+  now: Date = new Date()
+): CalendarTask[] {
+  const today = startOfDay(now).getTime();
+
+  return tasks.filter(task => {
+    const done = isDone(task);
+    const due = task.dueDate ? startOfDay(task.dueDate).getTime() : null;
+
+    switch (scope) {
+      case 'open':
+        return !done;
+      case 'today':
+        // Overdue work is part of today's problem, so it belongs here too.
+        return !done && due !== null && due <= today;
+      case 'upcoming':
+        return !done && due !== null && due > today;
+      case 'done':
+        return done;
+      default:
+        return true;
+    }
+  });
+}
+
+export interface TaskGroup {
+  key: string;
+  label: string;
+  tasks: CalendarTask[];
+}
+
+const STATUS_ORDER: TaskStatus[] = ['in-progress', 'todo', 'done'];
+const STATUS_GROUP_LABELS: Record<TaskStatus, string> = {
+  'in-progress': 'In Progress',
+  todo: 'To Do',
+  done: 'Done',
+};
+
+function dueBucket(task: CalendarTask, now: Date): { key: string; label: string; rank: number } {
+  if (!task.dueDate) return { key: 'none', label: 'No Date', rank: 4 };
+
+  const today = startOfDay(now).getTime();
+  const due = startOfDay(task.dueDate).getTime();
+  const week = today + 7 * 24 * 60 * 60 * 1000;
+
+  if (due < today) return { key: 'overdue', label: 'Overdue', rank: 0 };
+  if (due === today) return { key: 'today', label: 'Today', rank: 1 };
+  if (due <= week) return { key: 'week', label: 'This Week', rank: 2 };
+  return { key: 'later', label: 'Later', rank: 3 };
+}
+
+/**
+ * Groups a filtered list for display.
+ *
+ * Empty groups are omitted rather than shown as headers with nothing beneath —
+ * on a small screen a run of empty headings buries the rows that do exist.
+ */
+export function groupTasks(
+  tasks: CalendarTask[],
+  grouping: TaskGrouping,
+  now: Date = new Date()
+): TaskGroup[] {
+  const sorted = [...tasks].sort(compareTasks);
+
+  if (grouping === 'none') {
+    return sorted.length ? [{ key: 'all', label: '', tasks: sorted }] : [];
+  }
+
+  if (grouping === 'status') {
+    return STATUS_ORDER.map(status => ({
+      key: status,
+      label: STATUS_GROUP_LABELS[status],
+      tasks: sorted.filter(t => taskStatus(t) === status),
+    })).filter(g => g.tasks.length > 0);
+  }
+
+  if (grouping === 'priority') {
+    const buckets: Array<{ key: string; label: string; match: (t: CalendarTask) => boolean }> = [
+      { key: '4', label: 'High', match: t => t.priority === 4 },
+      { key: '3', label: 'Medium', match: t => t.priority === 3 },
+      { key: '2', label: 'Low', match: t => t.priority === 2 },
+      { key: '1', label: 'No Priority', match: t => !t.priority || t.priority === 1 },
+    ];
+    return buckets
+      .map(b => ({ key: b.key, label: b.label, tasks: sorted.filter(b.match) }))
+      .filter(g => g.tasks.length > 0);
+  }
+
+  const byBucket = new Map<string, TaskGroup & { rank: number }>();
+  for (const task of sorted) {
+    const bucket = dueBucket(task, now);
+    const existing = byBucket.get(bucket.key);
+    if (existing) existing.tasks.push(task);
+    else byBucket.set(bucket.key, { ...bucket, tasks: [task] });
+  }
+
+  return [...byBucket.values()]
+    .sort((a, b) => a.rank - b.rank)
+    .map(({ key, label, tasks: groupTasksList }) => ({ key, label, tasks: groupTasksList }));
+}
+
+/** Total across groups, for the list header. */
+export function countGrouped(groups: TaskGroup[]): number {
+  return groups.reduce((n, g) => n + g.tasks.length, 0);
+}
