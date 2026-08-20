@@ -6,6 +6,8 @@ import {
   groupTasks,
   groupingLabel,
   activeProjects,
+  archivedProjects,
+  areaProjectCounts,
   projectOverdue,
   projectProgress,
   projectsByArea,
@@ -399,5 +401,53 @@ describe('project due dates', () => {
 
   test('no due date is never overdue', () => {
     expect(projectOverdue(project(), NOW_DAY)).toBe(false);
+  });
+});
+
+describe('the PARA browser', () => {
+  const area = (id: string, name: string): Area => ({ id, name, createdAt: new Date(2026, 0, 1) });
+  const project = (id: string, name: string, over: Partial<Project> = {}): Project => ({
+    id,
+    name,
+    status: 'active',
+    createdAt: new Date(2026, 0, 1),
+    ...over,
+  });
+
+  const areas = [area('work', 'Work'), area('acad', 'Academic'), area('fin', 'Finance')];
+  const projects = [
+    project('p1', 'Website Redesign', { areaId: 'work' }),
+    project('p2', 'Client Launch', { areaId: 'work' }),
+    project('p3', 'Term Paper', { areaId: 'acad' }),
+    project('p4', 'Old Thing', { areaId: 'work', status: 'done' }),
+  ];
+
+  test('area counts are of projects, not tasks', () => {
+    // The left pane answers "how much is in flight", not "how much to do".
+    const counts = areaProjectCounts(areas, projects);
+    expect(counts.map(c => [c.area.name, c.count])).toEqual([
+      ['Work', 2],
+      ['Academic', 1],
+      ['Finance', 0],
+    ]);
+  });
+
+  test('finished projects are excluded from the counts', () => {
+    // 'Old Thing' is done, so Work reads 2 rather than 3.
+    expect(areaProjectCounts(areas, projects).find(c => c.area.id === 'work')?.count).toBe(2);
+  });
+
+  test('an area with nothing in it still appears, showing zero', () => {
+    // Vanishing when empty would make an area look deleted.
+    expect(areaProjectCounts(areas, projects).some(c => c.area.name === 'Finance')).toBe(true);
+  });
+
+  test('the archive holds everything not active', () => {
+    const mixed = [...projects, project('p5', 'Filed', { status: 'archived' })];
+    expect(archivedProjects(mixed).map(p => p.name)).toEqual(['Old Thing', 'Filed']);
+  });
+
+  test('nothing finished means an empty archive', () => {
+    expect(archivedProjects([project('p1', 'Live')])).toEqual([]);
   });
 });

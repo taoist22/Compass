@@ -308,3 +308,26 @@ export function projectOverdue(project: Project, now: Date = new Date()): boolea
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   return due.getTime() < today.getTime();
 }
+
+/**
+ * Counts shown beside each area in the browser's left pane.
+ *
+ * Counts *projects*, not tasks: the left pane answers "what am I responsible
+ * for and how much is in flight", and a task count there would compete with
+ * the per-project progress on the right.
+ */
+export function areaProjectCounts(
+  areas: Area[],
+  projects: Project[]
+): Array<{ area: Area; count: number }> {
+  const live = activeProjects(projects);
+  return areas.map(area => ({
+    area,
+    count: live.filter(p => p.areaId === area.id).length,
+  }));
+}
+
+/** Projects that are finished or filed away — PARA's Archive. */
+export function archivedProjects(projects: Project[]): Project[] {
+  return projects.filter(p => p.status !== 'active');
+}

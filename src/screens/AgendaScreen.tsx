@@ -58,6 +58,7 @@ import { parseCapturedText, resolveDateOrder, ParsedCapture } from '../domain/ca
 import { captureLassoText } from '../supernote/lassoCapture';
 import { MonthGridView } from './MonthGridView';
 import { TaskListModal } from './TaskListModal';
+import { ParaView } from './ParaView';
 import { AreaManagerModal } from './AreaManagerModal';
 import { ItemCreationModal } from './ItemCreationModal';
 import { DatePickerModal } from './DatePickerModal';
@@ -159,6 +160,10 @@ export function AgendaScreen(): React.JSX.Element {
   const [areas, setAreas] = useState<Area[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [showAreaManager, setShowAreaManager] = useState<boolean>(false);
+  const [paraAreaId, setParaAreaId] = useState<string | null>(null);
+  const [paraShowArchive, setParaShowArchive] = useState<boolean>(false);
+  /** Project a new task should be filed under, when adding from inside one. */
+  const [pendingProjectId, setPendingProjectId] = useState<string | undefined>(undefined);
   /** Bumped when membership changes, so the list and pickers re-read. */
   const [membershipRevision, setMembershipRevision] = useState<number>(0);
   /** Note kind per event uid, for the month grid's M/C badges. */
@@ -1992,10 +1997,18 @@ export function AgendaScreen(): React.JSX.Element {
               </Text>
             </TouchableOpacity>
 
-            {/* Beside the view switcher rather than with the header actions:
-                it opens a view of your work, not a setting or a sync. */}
-            <TouchableOpacity style={styles.switcherBtn} onPress={() => setShowTaskList(true)}>
-              <Text style={styles.switcherBtnText}>☑ Tasks</Text>
+            {/* A real view, not a modal opened from the switcher. Looking like
+                a peer of Month and Day View while behaving like an overlay is
+                what made it feel bolted on. */}
+            <TouchableOpacity
+              style={[styles.switcherBtn, viewMode === 'para' && styles.switcherBtnActive]}
+              onPress={() => setViewMode('para')}
+            >
+              <Text
+                style={[styles.switcherBtnText, viewMode === 'para' && styles.switcherBtnTextActive]}
+              >
+                📁 Tasks/PARA
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -2782,6 +2795,7 @@ export function AgendaScreen(): React.JSX.Element {
               setLassoDraftDate(null);
               setEditingEvent(null);
               setEditingTask(null);
+              setPendingProjectId(undefined);
             }}
             onCreateEvent={handleCreateNewEvent}
             onCreateTask={handleCreateNewTask}
@@ -2790,7 +2804,9 @@ export function AgendaScreen(): React.JSX.Element {
             taskAreaId={editingTask ? areaOfTask(editingTask.uid) : undefined}
             onCreateArea={handleCreateArea}
             projects={projects}
-            taskProjectId={editingTask ? projectOfTask(editingTask.uid) : undefined}
+            taskProjectId={
+              editingTask ? projectOfTask(editingTask.uid) : pendingProjectId
+            }
             onCreateProject={handleCreateProject}
             onDeleteTask={uid => {
               const task = calendarStorage.getTasks().find(t => t.uid === uid);
@@ -2875,6 +2891,38 @@ export function AgendaScreen(): React.JSX.Element {
               ))}
             </View>
             </ScrollView>
+          )}
+
+          {viewMode === 'para' && (
+            <ParaView
+              areas={areas}
+              projects={projects}
+              tasks={tasks}
+              projectOf={projectOfTask}
+              selectedAreaId={paraAreaId}
+              onSelectArea={id => {
+                setParaAreaId(id);
+                setParaShowArchive(false);
+              }}
+              showArchive={paraShowArchive}
+              onToggleArchive={() => setParaShowArchive(v => !v)}
+              onNewProject={() => setShowAreaManager(true)}
+              onNewArea={() => setShowAreaManager(true)}
+              onOpenProject={() => setShowAreaManager(true)}
+              onToggleTask={handleToggleTask}
+              onEditTask={handleEditTask}
+              onAddTaskToProject={project => {
+                // Opens the task form already filed under this project, so
+                // adding from inside a project does not mean re-selecting it.
+                setEditingTask(null);
+                setEditingEvent(null);
+                setLassoDraftTitle('');
+                setLassoDraftParsed(null);
+                setCreationType('task');
+                setPendingProjectId(project.id);
+                setShowItemCreationModal(true);
+              }}
+            />
           )}
 
           {/* ── Day View: planner layout ─────────────────────────────

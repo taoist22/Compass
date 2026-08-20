@@ -1,4 +1,9 @@
-export type CalendarViewMode = 'month' | 'agenda';
+/**
+ * 'para' is the Tasks/Projects/Areas browser. It is a peer of the calendar
+ * views rather than a modal: it sat in the view switcher but opened an
+ * overlay, which is what made it feel bolted on.
+ */
+export type CalendarViewMode = 'month' | 'agenda' | 'para';
 export type ProfileThemeMode = 'business' | 'academic';
 
 export interface Attendee {
