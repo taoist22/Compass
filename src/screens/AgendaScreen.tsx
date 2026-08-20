@@ -37,6 +37,7 @@ import { DAILY_NOTE_PRESETS, dailyNotePath, dateKey, formatDailyNoteName, looksM
 import {
   DEFAULT_SYSTEM_TEMPLATE,
   SystemTemplate,
+  ICON_CHOICES,
   templateLabel,
   templateSettingKey,
 } from '../domain/noteTemplates';
@@ -157,6 +158,7 @@ export function AgendaScreen(): React.JSX.Element {
   const [pushTasksAsEvents, setPushTasksAsEvents] = useState<boolean>(false);
   const [defaultView, setDefaultView] = useState<CalendarViewMode>('month');
   const [newTypeName, setNewTypeName] = useState<string>('');
+  const [iconPickerTypeId, setIconPickerTypeId] = useState<string | null>(null);
   /** Event type whose template is being chosen, if any. */
   const [typeTemplatePicker, setTypeTemplatePicker] = useState<EventType | null>(null);
   const [scheduleStartHour, setScheduleStartHour] = useState<number>(8);
@@ -2766,13 +2768,16 @@ export function AgendaScreen(): React.JSX.Element {
 
           {eventTypes.map(type => (
             <View key={type.id} style={styles.typeRow}>
-              <TextInput
-                style={[styles.textInput, styles.typeIconInput]}
-                value={type.icon || ''}
-                onChangeText={text => handleUpdateEventType({ ...type, icon: text.slice(0, 2) })}
-                placeholder="icon"
-                placeholderTextColor="#909090"
-              />
+              {/* Same reason as areas: there is no emoji keyboard here, so an
+                  icon has to be chosen rather than typed. */}
+              <TouchableOpacity
+                style={styles.typeIconBtn}
+                onPress={() => setIconPickerTypeId(iconPickerTypeId === type.id ? null : type.id)}
+              >
+                <Text allowFontScaling={false} style={styles.typeIconText}>
+                  {type.icon || '·'}
+                </Text>
+              </TouchableOpacity>
               <TextInput
                 style={[styles.textInput, styles.typeNameInput]}
                 value={type.name}
@@ -2819,6 +2824,38 @@ export function AgendaScreen(): React.JSX.Element {
               </TouchableOpacity>
             </View>
           ))}
+
+          {iconPickerTypeId !== null && (
+            <View style={styles.iconRow}>
+              {ICON_CHOICES.map(icon => (
+                <TouchableOpacity
+                  key={icon}
+                  style={styles.iconChoice}
+                  onPress={() => {
+                    const type = eventTypes.find(t => t.id === iconPickerTypeId);
+                    if (type) handleUpdateEventType({ ...type, icon });
+                    setIconPickerTypeId(null);
+                  }}
+                >
+                  <Text allowFontScaling={false} style={styles.iconChoiceText}>
+                    {icon}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                style={styles.iconChoice}
+                onPress={() => {
+                  const type = eventTypes.find(t => t.id === iconPickerTypeId);
+                  if (type) handleUpdateEventType({ ...type, icon: '' });
+                  setIconPickerTypeId(null);
+                }}
+              >
+                <Text allowFontScaling={false} style={styles.iconChoiceText}>
+                  ✕
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           <View style={[styles.timeRow, { maxWidth: 660 }]}>
             <TextInput
@@ -4059,7 +4096,29 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     maxWidth: 660,
   },
-  typeIconInput: { width: 46, marginRight: 4, textAlign: 'center' },
+  typeIconBtn: {
+    width: 46,
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    paddingVertical: 6,
+    marginRight: 4,
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+  },
+  typeIconText: { fontSize: 16, color: '#000000' },
+  iconRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8, maxWidth: 660 },
+  iconChoice: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    marginRight: 5,
+    marginBottom: 5,
+    backgroundColor: '#ffffff',
+  },
+  iconChoiceText: { fontSize: 18, color: '#000000' },
   typeNameInput: { width: 150, marginRight: 4 },
   typeFolderBtn: {
     borderWidth: 2,

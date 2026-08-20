@@ -1,5 +1,6 @@
 import {
   DEFAULT_SYSTEM_TEMPLATE,
+  ICON_CHOICES,
   isSystemTemplate,
   parseSystemTemplates,
   templateCandidates,
@@ -153,5 +154,32 @@ describe('resolveNoteDestination', () => {
   test('blank settings are treated as unset, not as an empty path', () => {
     // Otherwise a cleared field files notes at the filesystem root.
     expect(resolveNoteDestination({ folder: '   ', template: '' }, fallback)).toEqual(fallback);
+  });
+});
+
+describe('ICON_CHOICES', () => {
+  test('offers a workable spread without becoming a grid to scan', () => {
+    expect(ICON_CHOICES.length).toBeGreaterThanOrEqual(8);
+    expect(ICON_CHOICES.length).toBeLessThanOrEqual(16);
+  });
+
+  test('has no duplicates', () => {
+    expect(new Set(ICON_CHOICES).size).toBe(ICON_CHOICES.length);
+  });
+
+  test('covers the PARA ground CT named', () => {
+    // Work, school, home, personal, finance — the areas people actually keep.
+    for (const icon of ['💼', '🎓', '🏠', '👤', '💰']) {
+      expect(ICON_CHOICES).toContain(icon);
+    }
+  });
+
+  test('avoids emoji newer than Unicode 6.0', () => {
+    // Newer codepoints are far likelier to be missing from the device font and
+    // render as tofu, which is how an arrow glyph was lost in the project
+    // manager. 🧍 (Unicode 12) is the tempting one to reach for here.
+    for (const risky of ['🧍', '🧑', '🏦', '🩺', '🛠️']) {
+      expect(ICON_CHOICES).not.toContain(risky);
+    }
   });
 });

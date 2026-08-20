@@ -128,3 +128,29 @@ export function resolveNoteDestination(
     template: type?.template?.trim() || fallback.template,
   };
 }
+
+/**
+ * Icons offered for Areas and Event Types.
+ *
+ * A fixed set rather than a free text field: the Supernote keyboard has no
+ * emoji, and handwriting recognition will not produce one either, so a text
+ * box for an icon can never be filled on this device.
+ *
+ * Every entry is Unicode 6.0 or earlier. Newer emoji are far likelier to be
+ * missing from the device font and render as tofu — the same failure that took
+ * out an arrow glyph in the project manager.
+ */
+export const ICON_CHOICES: string[] = [
+  '💼',
+  '🎓',
+  '🏠',
+  '👤',
+  '💰',
+  '❤️',
+  '👪',
+  '✈️',
+  '🔧',
+  '📚',
+  '🎨',
+  '⚙️',
+];

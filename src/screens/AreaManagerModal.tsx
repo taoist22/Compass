@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Area, Project, ProjectStatus } from '../domain/types';
 import { projectOverdue, projectsByArea } from '../domain/taskListView';
+import { ICON_CHOICES } from '../domain/noteTemplates';
 
 interface AreaManagerModalProps {
   visible: boolean;
@@ -50,6 +51,7 @@ export function AreaManagerModal({
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [newName, setNewName] = useState<string>('');
   const [newProjectName, setNewProjectName] = useState<string>('');
+  const [iconPickerId, setIconPickerId] = useState<string | null>(null);
 
   const nameFor = (area: Area) => drafts[area.id] ?? area.name;
 
@@ -114,13 +116,16 @@ export function AreaManagerModal({
                   </>
                 ) : (
                   <>
-                    <TextInput
-                      style={styles.iconInput}
-                      value={area.icon || ''}
-                      onChangeText={text => onRename(area.id, area.name, text.slice(0, 2))}
-                      placeholder="icon"
-                      placeholderTextColor="#909090"
-                    />
+                    {/* Tapping opens the set inline. A text field could never
+                        be filled: this device's keyboard has no emoji. */}
+                    <TouchableOpacity
+                      style={styles.iconBtn}
+                      onPress={() => setIconPickerId(iconPickerId === area.id ? null : area.id)}
+                    >
+                      <Text allowFontScaling={false} style={styles.iconBtnText}>
+                        {area.icon || '·'}
+                      </Text>
+                    </TouchableOpacity>
                     <TextInput
                       style={styles.nameInput}
                       value={nameFor(area)}
@@ -143,6 +148,40 @@ export function AreaManagerModal({
                 )}
               </View>
             ))}
+
+            {/* Expanded in place rather than in a second modal, which this
+                runtime does not stack reliably. */}
+            {iconPickerId !== null && (
+              <View style={styles.iconRow}>
+                {ICON_CHOICES.map(icon => (
+                  <TouchableOpacity
+                    key={icon}
+                    style={styles.iconChoice}
+                    onPress={() => {
+                      const area = areas.find(a => a.id === iconPickerId);
+                      if (area) onRename(area.id, area.name, icon);
+                      setIconPickerId(null);
+                    }}
+                  >
+                    <Text allowFontScaling={false} style={styles.iconChoiceText}>
+                      {icon}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  style={styles.iconChoice}
+                  onPress={() => {
+                    const area = areas.find(a => a.id === iconPickerId);
+                    if (area) onRename(area.id, area.name, '');
+                    setIconPickerId(null);
+                  }}
+                >
+                  <Text allowFontScaling={false} style={styles.iconChoiceText}>
+                    ✕
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </ScrollView>
 
           {/* Projects sit below Areas rather than in their own sheet: the
@@ -353,18 +392,35 @@ const styles = StyleSheet.create({
     borderBottomColor: '#d0d0d0',
     paddingVertical: 6,
   },
-  iconInput: {
+  iconBtn: {
     width: 46,
     borderWidth: 2,
     borderColor: '#000000',
     borderRadius: 6,
-    paddingHorizontal: 4,
-    paddingVertical: 4,
+    paddingVertical: 5,
     marginRight: 4,
-    fontSize: 13,
-    color: '#000000',
-    textAlign: 'center',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
   },
+  iconBtnText: { fontSize: 16, color: '#000000' },
+  iconRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingVertical: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#c0c0c0',
+  },
+  iconChoice: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    marginRight: 5,
+    marginBottom: 5,
+    backgroundColor: '#ffffff',
+  },
+  iconChoiceText: { fontSize: 18, color: '#000000' },
   nameInput: {
     flex: 1,
     borderWidth: 2,
