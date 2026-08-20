@@ -72,7 +72,12 @@ interface ItemCreationModalProps {
    */
   editingEvent?: CalendarEvent | null;
   onClose: () => void;
-  onCreateEvent: (event: CalendarEvent, targetFeedId: string, typeId?: string) => void;
+  onCreateEvent: (
+    event: CalendarEvent,
+    targetFeedId: string,
+    typeId?: string,
+    projectId?: string
+  ) => void;
   /** dueDate omitted means a genuinely undated task, not one dated today. */
   onCreateTask: (task: {
     uid?: string;
@@ -103,6 +108,7 @@ interface ItemCreationModalProps {
   /** Event types to tag this event with, and its current one. */
   eventTypes?: EventType[];
   eventTypeId?: string;
+  eventProjectId?: string;
 }
 
 
@@ -127,6 +133,7 @@ export function ItemCreationModal({
   onCreateProject,
   eventTypes = [],
   eventTypeId,
+  eventProjectId,
 }: ItemCreationModalProps): React.JSX.Element {
   const [title, setTitle] = useState<string>('');
 
@@ -235,7 +242,7 @@ export function ItemCreationModal({
       setAreaValue(taskAreaId);
       setAddingArea(false);
       setNewAreaName('');
-      setProjectValue(taskProjectId);
+      setProjectValue(taskProjectId ?? eventProjectId);
       setTypeValue(eventTypeId);
       setAddingProject(false);
       setNewProjectName('');
@@ -274,7 +281,7 @@ export function ItemCreationModal({
     } else {
       setIsAllDay(initialParsed ? initialParsed.allDay : type === 'task');
     }
-  }, [visible, initialTitle, initialParsed, type, editingEvent, targetDate, editingTask, taskAreaId, taskProjectId, eventTypeId]);
+  }, [visible, initialTitle, initialParsed, type, editingEvent, targetDate, editingTask, taskAreaId, taskProjectId, eventTypeId, eventProjectId]);
 
   const shiftDate = (days: number) => {
     setItemDate(prev => {
@@ -325,7 +332,7 @@ export function ItemCreationModal({
           'Primary Calendar',
       };
 
-      onCreateEvent(newEvt, selectedFeedId, typeValue);
+      onCreateEvent(newEvt, selectedFeedId, typeValue, projectValue);
     } else {
       onCreateTask({
         uid: editingEvent?.uid,
@@ -729,6 +736,47 @@ export function ItemCreationModal({
                       </Text>
                     </TouchableOpacity>
                   ))}
+                </View>
+              </>
+            )}
+
+            {/* Events can belong to a project too: that membership is what
+                gathers their notes into the project's meeting ledger. */}
+            {itemKind === 'event' && projects.length > 0 && (
+              <>
+                <Text allowFontScaling={false} style={styles.label}>Project:</Text>
+                <View style={styles.chipRow}>
+                  <TouchableOpacity
+                    style={[styles.stateChip, !projectValue && styles.stateChipSelected]}
+                    onPress={() => setProjectValue(undefined)}
+                  >
+                    <Text
+                      allowFontScaling={false}
+                      style={[styles.stateChipText, !projectValue && styles.stateChipTextSelected]}
+                    >
+                      None
+                    </Text>
+                  </TouchableOpacity>
+
+                  {projects
+                    .filter(pr => pr.status === 'active')
+                    .map(pr => (
+                      <TouchableOpacity
+                        key={pr.id}
+                        style={[styles.stateChip, projectValue === pr.id && styles.stateChipSelected]}
+                        onPress={() => setProjectValue(pr.id)}
+                      >
+                        <Text
+                          allowFontScaling={false}
+                          style={[
+                            styles.stateChipText,
+                            projectValue === pr.id && styles.stateChipTextSelected,
+                          ]}
+                        >
+                          {pr.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
                 </View>
               </>
             )}

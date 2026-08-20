@@ -61,6 +61,7 @@ import { captureLassoText } from '../supernote/lassoCapture';
 import { MonthGridView } from './MonthGridView';
 import { TaskListModal } from './TaskListModal';
 import { ParaView } from './ParaView';
+import { ProjectDetailView } from './ProjectDetailView';
 import { activeProjects, projectProgress } from '../domain/taskListView';
 
 /** Progress as solid blocks; a drawn bar smears at these widths on e-ink. */
@@ -183,6 +184,8 @@ export function AgendaScreen(): React.JSX.Element {
   const [paraShowArchive, setParaShowArchive] = useState<boolean>(false);
   /** Project whose due date is being picked, if any. */
   const [projectDueTarget, setProjectDueTarget] = useState<Project | null>(null);
+  /** Project open in the detail view; null shows the browser. */
+  const [openProject, setOpenProject] = useState<Project | null>(null);
   /** Project a new task should be filed under, when adding from inside one. */
   const [pendingProjectId, setPendingProjectId] = useState<string | undefined>(undefined);
   /** Bumped when membership changes, so the list and pickers re-read. */
@@ -1717,7 +1720,8 @@ export function AgendaScreen(): React.JSX.Element {
   const handleCreateNewEvent = async (
     newEvent: CalendarEvent,
     targetFeedId: string,
-    typeId?: string
+    typeId?: string,
+    projectId?: string
   ) => {
     // Stored beside the event rather than on it: a sync rebuilds the event
     // object from ICS, and anything held on it would be lost.
@@ -1727,6 +1731,7 @@ export function AgendaScreen(): React.JSX.Element {
 
     calendarStorage.setMembership(identity, {
       typeId,
+      projectId,
       // Prefilled from the type, never forced: an area already chosen for this
       // event wins, so tagging cannot silently refile something.
       areaId: existingArea || chosenType?.defaultAreaId,
@@ -1962,6 +1967,28 @@ export function AgendaScreen(): React.JSX.Element {
    * Filed in the project's own folder with its template when it has them —
    * the notes are what make a project a container rather than a labelled list.
    */
+  /**
+   * Notes written for this project's events — the meeting ledger.
+   *
+   * Read from the note mappings rather than the filesystem: the mapping is
+   * what records that a note was made for a given event, and listFiles does
+   * not exist on this device anyway.
+   */
+  const linkedNotesForProject = (project: Project): Array<{ label: string; path: string }> => {
+    void membershipRevision;
+    const seen = new Set<string>();
+    const out: Array<{ label: string; path: string }> = [];
+
+    for (const mapping of Object.values(calendarStorage.getAllMappings())) {
+      if (!mapping?.notePath || seen.has(mapping.notePath)) continue;
+      const identity = mapping.seriesId || mapping.eventUid;
+      if (calendarStorage.getMembership(identity).projectId !== project.id) continue;
+      seen.add(mapping.notePath);
+      out.push({ label: mapping.notePath.split('/').pop() || 'Note', path: mapping.notePath });
+    }
+    return out;
+  };
+
   const handleProjectNote = async (project: Project) => {
     if (project.notePath) {
       await handleOpenExistingNote(project.notePath);
@@ -3149,6 +3176,11 @@ export function AgendaScreen(): React.JSX.Element {
             eventTypeId={
               editingEvent ? calendarStorage.getEventType(noteIdentity(editingEvent)) : undefined
             }
+            eventProjectId={
+              editingEvent
+                ? calendarStorage.getMembership(noteIdentity(editingEvent)).projectId
+                : undefined
+            }
             onCreateTask={handleCreateNewTask}
             editingTask={editingTask}
             areas={areas}
@@ -3244,7 +3276,35 @@ export function AgendaScreen(): React.JSX.Element {
             </ScrollView>
           )}
 
-          {viewMode === 'para' && (
+          {viewMode === 'para' && openProject && (
+            <ProjectDetailView
+              project={openProject}
+              area={areas.find(a => a.id === openProject.areaId)}
+              tasks={tasks}
+              projectOf={projectOfTask}
+              linkedNotes={linkedNotesForProject(openProject)}
+              onBack={() => setOpenProject(null)}
+              onSetDue={() => setProjectDueTarget(openProject)}
+              onOpenNotebook={() => {
+                const current = calendarStorage.getProjects().find(p => p.id === openProject.id);
+                if (current) void handleProjectNote(current);
+              }}
+              onOpenNote={path => void handleOpenExistingNote(path)}
+              onAddTask={() => {
+                setEditingTask(null);
+                setEditingEvent(null);
+                setLassoDraftTitle('');
+                setLassoDraftParsed(null);
+                setCreationType('task');
+                setPendingProjectId(openProject.id);
+                setShowItemCreationModal(true);
+              }}
+              onToggleTask={handleToggleTask}
+              onEditTask={handleEditTask}
+            />
+          )}
+
+          {viewMode === 'para' && !openProject && (
             <ParaView
               areas={areas}
               projects={projects}
@@ -3259,7 +3319,7 @@ export function AgendaScreen(): React.JSX.Element {
               onToggleArchive={() => setParaShowArchive(v => !v)}
               onNewProject={() => setShowAreaManager(true)}
               onNewArea={() => setShowAreaManager(true)}
-              onOpenProject={() => setShowAreaManager(true)}
+              onOpenProject={setOpenProject}
               onProjectNote={handleProjectNote}
               onSetProjectDue={project => setProjectDueTarget(project)}
               onToggleTask={handleToggleTask}
