@@ -1404,7 +1404,14 @@ export function AgendaScreen(): React.JSX.Element {
     if (!path) return null;
 
     try {
-      if (FileUtils.deleteFile) await FileUtils.deleteFile(path);
+      // Reported as a failure rather than skipped silently: clearing the
+      // mapping while the file remained would claim a deletion that never
+      // happened, and the note would still be sitting in the folder.
+      if (!FileUtils.deleteFile) return null;
+
+      const removed = await FileUtils.deleteFile(path);
+      if (removed === false) return null;
+
       calendarStorage.setMapping({ ...mapping, notePath: '' });
       // The recorded kind goes with the note. Without this a wrong answer to
       // the Meeting-or-Class prompt could never be corrected: the prompt only
@@ -1445,19 +1452,39 @@ export function AgendaScreen(): React.JSX.Element {
     }
   };
 
-  const handleConfirmDeleteWithNote = async (alsoDeleteNote: boolean) => {
+  const handleConfirmDeleteWithNote = async (choice: 'both' | 'event' | 'note') => {
     const event = pendingDeleteEvent;
     setShowDeleteNoteModal(false);
     setPendingDeleteEvent(null);
     if (!event) return;
 
-    const removedNote = alsoDeleteNote ? await deleteNoteForEvent(event) : null;
-    removeEventEverywhere(event);
+    if (choice === 'event') {
+      removeEventEverywhere(event);
+      setStatusMsg(`Deleted "${event.summary}". Its note was kept.`);
+      return;
+    }
 
+    const removedNote = await deleteNoteForEvent(event);
+
+    if (choice === 'note') {
+      // The event survives, and the recorded kind went with the note, so
+      // Create Note will ask Meeting or Class again. That is the whole point:
+      // fixing a wrong answer should not cost you the appointment.
+      setStatusMsg(
+        removedNote
+          ? `Deleted the note. "${event.summary}" kept — Create Note will ask again.`
+          : `Could not delete the note. Close it in the Note app first.`
+      );
+      return;
+    }
+
+    removeEventEverywhere(event);
+    // A failed delete used to report identically to a chosen keep, so a locked
+    // file looked like the user's own decision.
     setStatusMsg(
       removedNote
         ? `Deleted "${event.summary}" and its note.`
-        : `Deleted "${event.summary}". Its note was kept.`
+        : `Deleted "${event.summary}", but its note could not be removed — close it in the Note app first.`
     );
   };
 
@@ -1833,7 +1860,7 @@ export function AgendaScreen(): React.JSX.Element {
           }}
         >
           <View style={styles.actionSheetContentCompact}>
-            <Text style={styles.actionSheetTitle}>Delete this event?</Text>
+            <Text style={styles.actionSheetTitle}>Delete…</Text>
             <Text style={styles.bodyTextCenter} numberOfLines={2}>
               "{pendingDeleteEvent?.summary}"
             </Text>
@@ -1847,16 +1874,26 @@ export function AgendaScreen(): React.JSX.Element {
                 : ''}
             </Text>
 
+            {/* Deleting only the note is how a wrong Meeting-or-Class answer
+                gets fixed: the recorded kind goes with the note, so Create
+                Note asks again, and the event itself is untouched. */}
             <TouchableOpacity
               style={styles.deleteOptionBtn}
-              onPress={() => handleConfirmDeleteWithNote(false)}
+              onPress={() => handleConfirmDeleteWithNote('note')}
             >
-              <Text style={styles.deleteOptionBtnText}>🗑️ Delete event, keep the note</Text>
+              <Text style={styles.deleteOptionBtnText}>📝 Delete the note, keep the event</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.deleteOptionBtn}
+              onPress={() => handleConfirmDeleteWithNote('event')}
+            >
+              <Text style={styles.deleteOptionBtnText}>🗑️ Delete the event, keep the note</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.deleteOptionBtnDanger}
-              onPress={() => handleConfirmDeleteWithNote(true)}
+              onPress={() => handleConfirmDeleteWithNote('both')}
             >
               <Text style={styles.deleteOptionBtnTextDanger}>🗑️ Delete both</Text>
             </TouchableOpacity>
