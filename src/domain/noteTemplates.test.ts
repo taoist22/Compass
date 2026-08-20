@@ -4,6 +4,7 @@ import {
   parseSystemTemplates,
   templateCandidates,
   templateLabel,
+  resolveNoteDestination,
   templateSettingKey,
 } from './noteTemplates';
 
@@ -125,5 +126,32 @@ describe('parseSystemTemplates', () => {
   test('skips malformed entries rather than failing wholesale', () => {
     const parsed = parseSystemTemplates([null, {}, { name: '' }, { name: 'style_white' }]);
     expect(parsed).toEqual([{ name: 'style_white', hUri: undefined, vUri: undefined }]);
+  });
+});
+
+describe('resolveNoteDestination', () => {
+  const fallback = { folder: '/Note/Meetings', template: DEFAULT_SYSTEM_TEMPLATE };
+
+  test('an event type overrides both', () => {
+    expect(
+      resolveNoteDestination({ folder: '/Note/SNHU', template: 'style_college_ruled' }, fallback)
+    ).toEqual({ folder: '/Note/SNHU', template: 'style_college_ruled' });
+  });
+
+  test('a type may override only one', () => {
+    // A type that only cares where its notes land keeps the default look.
+    expect(resolveNoteDestination({ folder: '/Note/SNHU' }, fallback)).toEqual({
+      folder: '/Note/SNHU',
+      template: DEFAULT_SYSTEM_TEMPLATE,
+    });
+  });
+
+  test('an untyped event falls back entirely', () => {
+    expect(resolveNoteDestination(undefined, fallback)).toEqual(fallback);
+  });
+
+  test('blank settings are treated as unset, not as an empty path', () => {
+    // Otherwise a cleared field files notes at the filesystem root.
+    expect(resolveNoteDestination({ folder: '   ', template: '' }, fallback)).toEqual(fallback);
   });
 });

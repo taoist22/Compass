@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { CalendarEvent, CalendarFeed, CalendarSettings, CalendarTask, MeetingNoteMapping, NoteKind, Area, Project, ItemMembership } from '../domain/types';
+import { CalendarEvent, CalendarFeed, CalendarSettings, CalendarTask, MeetingNoteMapping, NoteKind, Area, EventType, Project, ItemMembership } from '../domain/types';
 import { isLegacyTaskEvent, taskFromLegacyEvent } from '../domain/taskFilters';
 import { normaliseTask } from '../domain/taskModel';
 import { DEFAULT_SYSTEM_TEMPLATE } from '../domain/noteTemplates';
@@ -16,6 +16,7 @@ const AREAS_KEY = '@sn-calendar/areas';
 const PROJECTS_KEY = '@sn-calendar/projects';
 const MEMBERSHIP_KEY = '@sn-calendar/itemMembership';
 const PENDING_DELETES_KEY = '@sn-calendar/pendingNoteDeletes';
+const EVENT_TYPES_KEY = '@sn-calendar/eventTypes';
 
 const DEFAULT_SETTINGS: CalendarSettings = {
   feeds: [
@@ -141,6 +142,7 @@ export class CalendarStorage {
    */
   private eventKinds: Record<string, NoteKind> = {};
   private areas: Area[] = [];
+  private eventTypes: EventType[] = [];
   private projects: Project[] = [];
   /**
    * Area and project membership keyed by noteIdentity, so one store serves
@@ -161,7 +163,7 @@ export class CalendarStorage {
 
   async load(): Promise<{ settings: CalendarSettings; mappings: Record<string, MeetingNoteMapping> }> {
     try {
-      const [rawSettings, rawMappings, rawEvents, rawTasks, rawPushState, rawCaldavEvents, rawEventKinds, rawAreas, rawProjects, rawMembership, rawPendingDeletes] =
+      const [rawSettings, rawMappings, rawEvents, rawTasks, rawPushState, rawCaldavEvents, rawEventKinds, rawAreas, rawProjects, rawMembership, rawPendingDeletes, rawEventTypes] =
         await Promise.all([
         AsyncStorage.getItem(SETTINGS_KEY),
         AsyncStorage.getItem(MAPPINGS_KEY),
@@ -174,6 +176,7 @@ export class CalendarStorage {
         AsyncStorage.getItem(PROJECTS_KEY),
         AsyncStorage.getItem(MEMBERSHIP_KEY),
         AsyncStorage.getItem(PENDING_DELETES_KEY),
+        AsyncStorage.getItem(EVENT_TYPES_KEY),
       ]);
 
       if (rawSettings) {
@@ -188,6 +191,9 @@ export class CalendarStorage {
         // normaliseTask fills in a status for anything stored before statuses
         // existed, so nothing has to be migrated on disk.
         this.tasks = (JSON.parse(rawTasks) as any[]).map(reviveTask).map(normaliseTask);
+      }
+      if (rawEventTypes) {
+        this.eventTypes = (JSON.parse(rawEventTypes) as any[]).map(reviveArea) as EventType[];
       }
       if (rawAreas) {
         this.areas = (JSON.parse(rawAreas) as any[]).map(reviveArea);
@@ -246,6 +252,7 @@ export class CalendarStorage {
       this.caldavEvents = [];
       this.eventKinds = {};
       this.areas = [];
+      this.eventTypes = [];
       this.projects = [];
       this.membership = {};
       this.pendingDeletes = [];
@@ -282,6 +289,7 @@ export class CalendarStorage {
         AsyncStorage.setItem(PROJECTS_KEY, JSON.stringify(this.projects)),
         AsyncStorage.setItem(MEMBERSHIP_KEY, JSON.stringify(this.membership)),
         AsyncStorage.setItem(PENDING_DELETES_KEY, JSON.stringify(this.pendingDeletes)),
+        AsyncStorage.setItem(EVENT_TYPES_KEY, JSON.stringify(this.eventTypes)),
       ]);
     } catch (e) {
       // A failed write must not take down the UI; state stays correct in memory.
@@ -376,6 +384,39 @@ export class CalendarStorage {
   // An Area never completes; a Project does. That is the whole distinction,
   // and it is what keeps ongoing commitments out of an active project list.
 
+  getEventTypes(): EventType[] {
+    return this.eventTypes;
+  }
+
+  upsertEventType(type: EventType): EventType[] {
+    const idx = this.eventTypes.findIndex(t => t.id === type.id);
+    if (idx >= 0) this.eventTypes[idx] = type;
+    else this.eventTypes.push(type);
+    void this.save();
+    return this.eventTypes;
+  }
+
+  /** Removes a type and untags its events; nothing else is destroyed. */
+  removeEventType(typeId: string): EventType[] {
+    this.eventTypes = this.eventTypes.filter(t => t.id !== typeId);
+    for (const [identity, entry] of Object.entries(this.membership)) {
+      if (entry.typeId === typeId) this.setMembership(identity, { typeId: undefined });
+    }
+    void this.save();
+    return this.eventTypes;
+  }
+
+  /**
+   * The type an event carries now.
+   *
+   * Deliberately does NOT consult the note mapping. getEventKind does, because
+   * what a note was created as outranks a later tag — but a type is about what
+   * happens next, so the event's current tag wins.
+   */
+  getEventType(identity: string): string | undefined {
+    return this.membership[identity]?.typeId;
+  }
+
   getAreas(): Area[] {
     return this.areas;
   }
@@ -436,7 +477,7 @@ export class CalendarStorage {
     const merged = { ...this.getMembership(identity), ...entry };
     // Dropping empty entries keeps the store from growing a row per item that
     // was assigned and then cleared.
-    if (!merged.areaId && !merged.projectId) delete this.membership[identity];
+    if (!merged.areaId && !merged.projectId && !merged.typeId) delete this.membership[identity];
     else this.membership[identity] = merged;
     void this.save();
   }

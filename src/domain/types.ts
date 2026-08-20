@@ -64,6 +64,39 @@ export interface Project {
 export interface ItemMembership {
   areaId?: string;
   projectId?: string;
+  /**
+   * What kind of thing this event is — Class, Work, Client Visit — chosen by
+   * the user rather than from a fixed list.
+   *
+   * Distinct from MeetingNoteMapping.kind, which records what an existing note
+   * was *created as*. Retyping an event must not retroactively claim its old
+   * note used a different template, since the template is baked in at
+   * creation. This field decides where the *next* note goes.
+   */
+  typeId?: string;
+}
+
+/**
+ * A user-defined kind of event: Class, Work, Personal, Client Visit.
+ *
+ * Replaces the hardcoded meeting/class dichotomy, which assumed everyone is
+ * either in an office or at university. Carries where its notes are filed and
+ * what they look like, so tagging an event is the whole decision — no prompt
+ * when a note is created.
+ */
+export interface EventType {
+  id: string;
+  name: string;
+  /** Shown on the schedule block; one or two characters. */
+  icon?: string;
+  /** Where notes for this type are filed, and their background. */
+  folder?: string;
+  template?: string;
+  /** Prefilled when filing an event of this type; never forced. */
+  defaultAreaId?: string;
+  defaultProjectId?: string;
+  createdAt: Date;
+  archived?: boolean;
 }
 
 /** Where a task is, not merely whether it is finished. */

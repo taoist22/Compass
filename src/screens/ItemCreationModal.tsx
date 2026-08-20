@@ -14,6 +14,7 @@ import {
   CalendarEvent,
   CalendarFeed,
   CalendarTask,
+  EventType,
   Project,
   TaskPriority,
   TaskStatus,
@@ -71,7 +72,7 @@ interface ItemCreationModalProps {
    */
   editingEvent?: CalendarEvent | null;
   onClose: () => void;
-  onCreateEvent: (event: CalendarEvent, targetFeedId: string) => void;
+  onCreateEvent: (event: CalendarEvent, targetFeedId: string, typeId?: string) => void;
   /** dueDate omitted means a genuinely undated task, not one dated today. */
   onCreateTask: (task: {
     uid?: string;
@@ -99,6 +100,9 @@ interface ItemCreationModalProps {
   projects?: Project[];
   taskProjectId?: string;
   onCreateProject?: (name: string) => string;
+  /** Event types to tag this event with, and its current one. */
+  eventTypes?: EventType[];
+  eventTypeId?: string;
 }
 
 
@@ -121,6 +125,8 @@ export function ItemCreationModal({
   projects = [],
   taskProjectId,
   onCreateProject,
+  eventTypes = [],
+  eventTypeId,
 }: ItemCreationModalProps): React.JSX.Element {
   const [title, setTitle] = useState<string>('');
 
@@ -199,6 +205,7 @@ export function ItemCreationModal({
   const [projectValue, setProjectValue] = useState<string | undefined>(undefined);
   const [newProjectName, setNewProjectName] = useState<string>('');
   const [addingProject, setAddingProject] = useState<boolean>(false);
+  const [typeValue, setTypeValue] = useState<string | undefined>(undefined);
 
   // Reseed every time the modal opens: with the edited item's values, or with
   // freshly captured lasso text, so a second open never shows stale state.
@@ -229,6 +236,7 @@ export function ItemCreationModal({
       setAddingArea(false);
       setNewAreaName('');
       setProjectValue(taskProjectId);
+      setTypeValue(eventTypeId);
       setAddingProject(false);
       setNewProjectName('');
       return;
@@ -242,6 +250,7 @@ export function ItemCreationModal({
     setAddingArea(false);
     setNewAreaName('');
     setProjectValue(undefined);
+    setTypeValue(eventTypeId);
     setAddingProject(false);
     setNewProjectName('');
     setTimeRange({ start: 9 * 60, end: 10 * 60 });
@@ -265,7 +274,7 @@ export function ItemCreationModal({
     } else {
       setIsAllDay(initialParsed ? initialParsed.allDay : type === 'task');
     }
-  }, [visible, initialTitle, initialParsed, type, editingEvent, targetDate, editingTask, taskAreaId, taskProjectId]);
+  }, [visible, initialTitle, initialParsed, type, editingEvent, targetDate, editingTask, taskAreaId, taskProjectId, eventTypeId]);
 
   const shiftDate = (days: number) => {
     setItemDate(prev => {
@@ -316,7 +325,7 @@ export function ItemCreationModal({
           'Primary Calendar',
       };
 
-      onCreateEvent(newEvt, selectedFeedId);
+      onCreateEvent(newEvt, selectedFeedId, typeValue);
     } else {
       onCreateTask({
         uid: editingEvent?.uid,
@@ -720,6 +729,44 @@ export function ItemCreationModal({
                       </Text>
                     </TouchableOpacity>
                   ))}
+                </View>
+              </>
+            )}
+
+            {itemKind === 'event' && eventTypes.length > 0 && (
+              <>
+                {/* Settles where this event's notes go and what they look like,
+                    so creating one asks nothing. */}
+                <Text style={styles.label}>Event Type:</Text>
+                <View style={styles.chipRow}>
+                  <TouchableOpacity
+                    style={[styles.stateChip, !typeValue && styles.stateChipSelected]}
+                    onPress={() => setTypeValue(undefined)}
+                  >
+                    <Text style={[styles.stateChipText, !typeValue && styles.stateChipTextSelected]}>
+                      None
+                    </Text>
+                  </TouchableOpacity>
+
+                  {eventTypes
+                    .filter(t => !t.archived)
+                    .map(t => (
+                      <TouchableOpacity
+                        key={t.id}
+                        style={[styles.stateChip, typeValue === t.id && styles.stateChipSelected]}
+                        onPress={() => setTypeValue(t.id)}
+                      >
+                        <Text
+                          style={[
+                            styles.stateChipText,
+                            typeValue === t.id && styles.stateChipTextSelected,
+                          ]}
+                        >
+                          {t.icon ? `${t.icon} ` : ''}
+                          {t.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
                 </View>
               </>
             )}

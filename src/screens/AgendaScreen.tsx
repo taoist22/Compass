@@ -18,6 +18,7 @@ import {
   CalendarTask,
   CalendarViewMode,
   NoteKind,
+  EventType,
   Project,
   ProjectStatus,
   ProfileThemeMode,
@@ -155,6 +156,9 @@ export function AgendaScreen(): React.JSX.Element {
   const [tasks, setTasks] = useState<CalendarTask[]>([]);
   const [pushTasksAsEvents, setPushTasksAsEvents] = useState<boolean>(false);
   const [defaultView, setDefaultView] = useState<CalendarViewMode>('month');
+  const [newTypeName, setNewTypeName] = useState<string>('');
+  /** Event type whose template is being chosen, if any. */
+  const [typeTemplatePicker, setTypeTemplatePicker] = useState<EventType | null>(null);
   const [scheduleStartHour, setScheduleStartHour] = useState<number>(8);
   const [scheduleEndHour, setScheduleEndHour] = useState<number>(20);
   const [dailyNoteFolder, setDailyNoteFolder] = useState<string>('/storage/emulated/0/Note/Daily Notes');
@@ -171,6 +175,7 @@ export function AgendaScreen(): React.JSX.Element {
   const [showTaskList, setShowTaskList] = useState<boolean>(false);
   const [areas, setAreas] = useState<Area[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [eventTypes, setEventTypes] = useState<EventType[]>([]);
   const [showAreaManager, setShowAreaManager] = useState<boolean>(false);
   const [paraAreaId, setParaAreaId] = useState<string | null>(null);
   const [paraShowArchive, setParaShowArchive] = useState<boolean>(false);
@@ -228,6 +233,7 @@ export function AgendaScreen(): React.JSX.Element {
     setTasks([...calendarStorage.getTasks()]);
     setAreas([...calendarStorage.getAreas()]);
     setProjects([...calendarStorage.getProjects()]);
+    setEventTypes([...calendarStorage.getEventTypes()]);
 
     const savedUserEvts = calendarStorage.getUserEvents();
     // The cached CalDAV read goes on screen immediately. Without it the
@@ -1112,6 +1118,15 @@ export function AgendaScreen(): React.JSX.Element {
    */
   const handleRequestNoteCreation = (event: CalendarEvent) => {
     setShowDateActionSheet(false);
+
+    // A typed event has already answered where its notes go and what they look
+    // like, so there is nothing to ask. The prompt survives only for events
+    // with no type, and disappears entirely once types are in use.
+    if (calendarStorage.getEventType(noteIdentity(event))) {
+      void handleExecuteNoteCreation(event);
+      return;
+    }
+
     // Keyed on the series, so a weekly class is asked once rather than
     // every occurrence.
     const known = calendarStorage.getEventKind(noteIdentity(event));
@@ -1133,9 +1148,17 @@ export function AgendaScreen(): React.JSX.Element {
 
   const handleExecuteNoteCreation = async (event: CalendarEvent, kind: NoteKind = 'meeting') => {
     setShowDateActionSheet(false);
-    setStatusMsg(`Creating ${kind} note...`);
+    setStatusMsg(`Creating ${eventTypeName(event) || kind} note...`);
 
-    const result = await meetingNoteService.createOrAppendMeetingNote(event, false, kind);
+    const typeId = calendarStorage.getEventType(noteIdentity(event));
+    const eventType = typeId ? eventTypes.find(t => t.id === typeId) : undefined;
+
+    const result = await meetingNoteService.createOrAppendMeetingNote(
+      event,
+      false,
+      kind,
+      eventType
+    );
     if (result.success) {
       const actionText = result.isNewFile ? 'Created' : `Appended page ${result.pageNum} of`;
       setRefreshState(prev => prev + 1);
@@ -1687,7 +1710,16 @@ export function AgendaScreen(): React.JSX.Element {
     setPendingDeleteEvent(null);
   };
 
-  const handleCreateNewEvent = async (newEvent: CalendarEvent, targetFeedId: string) => {
+  const handleCreateNewEvent = async (
+    newEvent: CalendarEvent,
+    targetFeedId: string,
+    typeId?: string
+  ) => {
+    // Stored beside the event rather than on it: a sync rebuilds the event
+    // object from ICS, and anything held on it would be lost.
+    calendarStorage.setMembership(noteIdentity(newEvent), { typeId });
+    setMembershipRevision(n => n + 1);
+
     // Same uid means this is an edit: replace in place rather than appending a
     // second copy. addUserEvent already upserts by uid.
     // The modal still builds the event shape. Tasks now live in their own
@@ -1897,9 +1929,64 @@ export function AgendaScreen(): React.JSX.Element {
     return [eventPart, taskPart].filter(Boolean).join(' · ');
   })();
 
+  /** Display name of an event's type, for status lines and schedule blocks. */
+  const eventTypeName = (event: CalendarEvent): string => {
+    void membershipRevision;
+    const id = calendarStorage.getEventType(noteIdentity(event));
+    return eventTypes.find(t => t.id === id)?.name || '';
+  };
+
   const projectOfTask = (uid: string): string | undefined => {
     void membershipRevision;
     return calendarStorage.getMembership(uid).projectId;
+  };
+
+  /** Folder for a type's notes. Same browse-a-file-take-its-parent as elsewhere. */
+  const handleChooseTypeFolder = async (type: EventType) => {
+    try {
+      if (!RattaFileSelector?.selectFile) {
+        setStatusMsg('Native file picker unavailable on this device.');
+        return;
+      }
+      const result: any = await RattaFileSelector.selectFile({
+        selectType: 0,
+        maxNum: 1,
+        title: `Pick any file in the ${type.name} folder`,
+        rightButtonText: 'Use folder',
+        needSelectFolder: type.folder || '/storage/emulated/0/Note',
+      });
+      if (!result || !Array.isArray(result) || typeof result[0] !== 'string') return;
+
+      const slash = result[0].lastIndexOf('/');
+      const folder = slash > 0 ? result[0].slice(0, slash) : '';
+      if (!folder || folder === '/storage/emulated/0') {
+        setStatusMsg('Could not determine a usable folder from that file.');
+        return;
+      }
+      await meetingNoteService.ensureDirectory(folder);
+      handleUpdateEventType({ ...type, folder });
+    } catch (e: any) {
+      setStatusMsg(`Folder picker error: ${e?.message || 'Picker closed'}`);
+    }
+  };
+
+  const handleCreateEventType = (name: string): string => {
+    const type: EventType = { id: `type-${Date.now()}`, name, createdAt: new Date() };
+    calendarStorage.upsertEventType(type);
+    setEventTypes([...calendarStorage.getEventTypes()]);
+    return type.id;
+  };
+
+  const handleUpdateEventType = (type: EventType) => {
+    calendarStorage.upsertEventType(type);
+    setEventTypes([...calendarStorage.getEventTypes()]);
+  };
+
+  const handleDeleteEventType = (typeId: string) => {
+    // Untags its events; nothing else is destroyed.
+    calendarStorage.removeEventType(typeId);
+    setEventTypes([...calendarStorage.getEventTypes()]);
+    setMembershipRevision(n => n + 1);
   };
 
   const handleCreateProject = (name: string): string => {
@@ -2256,7 +2343,11 @@ export function AgendaScreen(): React.JSX.Element {
           never mounted while Settings was open. The SDK exposes the built-in
           template list but no native picker UI for it, so the list is ours;
           the file picker survives as the custom-PNG option at the bottom. */}
-        <Modal visible={templatePickerKind !== null} transparent animationType="fade">
+        <Modal
+        visible={templatePickerKind !== null || typeTemplatePicker !== null}
+        transparent
+        animationType="fade"
+      >
           <TouchableOpacity
             style={styles.modalOverlay}
             activeOpacity={1}
@@ -2286,7 +2377,14 @@ export function AgendaScreen(): React.JSX.Element {
                     <TouchableOpacity
                       key={tpl.name}
                       style={[styles.templateOptionRow, active && styles.templateOptionRowActive]}
-                      onPress={() => templatePickerKind && setNoteTemplate(templatePickerKind, tpl.name)}
+                      onPress={() => {
+                        if (typeTemplatePicker) {
+                          handleUpdateEventType({ ...typeTemplatePicker, template: tpl.name });
+                          setTypeTemplatePicker(null);
+                          return;
+                        }
+                        if (templatePickerKind) setNoteTemplate(templatePickerKind, tpl.name);
+                      }}
                     >
                       <Text
                         style={[styles.templateOptionText, active && styles.templateOptionTextActive]}
@@ -2630,6 +2728,75 @@ export function AgendaScreen(): React.JSX.Element {
 
           {settingsTab === 'app' && (
             <>
+          <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Event Types</Text>
+          <Text style={styles.bodyText}>
+            What kinds of event you have — Class, Work, Personal. Each carries where its notes are
+            filed and what they look like, so tagging an event settles both and no prompt appears
+            when you create a note. Untyped events fall back to the per-kind folders above.
+          </Text>
+
+          {eventTypes.map(type => (
+            <View key={type.id} style={styles.typeRow}>
+              <TextInput
+                style={[styles.textInput, styles.typeIconInput]}
+                value={type.icon || ''}
+                onChangeText={text => handleUpdateEventType({ ...type, icon: text.slice(0, 2) })}
+                placeholder="🎓"
+                placeholderTextColor="#909090"
+              />
+              <TextInput
+                style={[styles.textInput, styles.typeNameInput]}
+                value={type.name}
+                onChangeText={text => handleUpdateEventType({ ...type, name: text })}
+                autoCorrect={false}
+              />
+              <TouchableOpacity
+                style={styles.typeFolderBtn}
+                onPress={() => handleChooseTypeFolder(type)}
+              >
+                <Text style={styles.typeBtnText} numberOfLines={1}>
+                  {type.folder ? type.folder.split('/').pop() : 'Folder…'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.typeFolderBtn}
+                onPress={() => setTypeTemplatePicker(type)}
+              >
+                <Text style={styles.typeBtnText} numberOfLines={1}>
+                  {type.template ? templateLabel(type.template) : 'Template…'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteTypeBtn}
+                onPress={() => handleDeleteEventType(type.id)}
+              >
+                <Text style={styles.typeBtnText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+
+          <View style={styles.timeRow}>
+            <TextInput
+              style={[styles.textInput, styles.typeNameInput]}
+              value={newTypeName}
+              onChangeText={setNewTypeName}
+              placeholder="New event type"
+              placeholderTextColor="#707070"
+              autoCorrect={false}
+            />
+            <TouchableOpacity
+              style={styles.nudgeBtn}
+              onPress={() => {
+                const name = newTypeName.trim();
+                if (!name) return;
+                handleCreateEventType(name);
+                setNewTypeName('');
+              }}
+            >
+              <Text style={styles.nudgeText}>Add</Text>
+            </TouchableOpacity>
+          </View>
+
           <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Day View Schedule Hours</Text>
           <Text style={styles.bodyText}>
             Which hours the Day View draws. Anything outside is still shown, pulled to the nearest
@@ -2896,6 +3063,10 @@ export function AgendaScreen(): React.JSX.Element {
               setPendingProjectId(undefined);
             }}
             onCreateEvent={handleCreateNewEvent}
+            eventTypes={eventTypes}
+            eventTypeId={
+              editingEvent ? calendarStorage.getEventType(noteIdentity(editingEvent)) : undefined
+            }
             onCreateTask={handleCreateNewTask}
             editingTask={editingTask}
             areas={areas}
@@ -3089,6 +3260,11 @@ export function AgendaScreen(): React.JSX.Element {
                       else handleRequestNoteCreation(evt);
                     }}
                     onDeleteEvent={handleDeleteItem}
+                    typeLabel={evt => {
+                      const id = calendarStorage.getEventType(noteIdentity(evt));
+                      const type = eventTypes.find(t => t.id === id);
+                      return type ? `${type.icon ? `${type.icon} ` : ''}${type.name}` : '';
+                    }}
                   />
                 </View>
 
@@ -3828,6 +4004,28 @@ const styles = StyleSheet.create({
   dayProjectName: { flex: 1, fontSize: 12, fontWeight: 'bold', color: '#000000' },
   dayProjectMeta: { fontSize: 11, color: '#303030', marginLeft: 8 },
   timeRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  typeRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  typeIconInput: { width: 46, marginRight: 4, textAlign: 'center' },
+  typeNameInput: { flex: 1, marginRight: 4 },
+  typeFolderBtn: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    marginRight: 4,
+    maxWidth: 120,
+    backgroundColor: '#ffffff',
+  },
+  deleteTypeBtn: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    backgroundColor: '#ffffff',
+  },
+  typeBtnText: { fontSize: 11, fontWeight: 'bold', color: '#000000' },
   nudgeBtn: {
     borderWidth: 2,
     borderColor: '#000000',

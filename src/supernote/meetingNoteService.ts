@@ -1,8 +1,9 @@
 import { FileUtils, PluginCommAPI, PluginFileAPI, PluginNoteAPI } from 'sn-plugin-lib';
-import { CalendarEvent, CalendarSettings, MeetingSnapshot, NoteKind } from '../domain/types';
+import { CalendarEvent, CalendarSettings, EventType, MeetingSnapshot, NoteKind } from '../domain/types';
 import { createMeetingSnapshot, generateNoteFilename } from '../domain/meetingSnapshot';
 import {
   DEFAULT_SYSTEM_TEMPLATE,
+  resolveNoteDestination,
   parseSystemTemplates,
   SystemTemplate,
   templateCandidates,
@@ -118,18 +119,28 @@ export class MeetingNoteService {
   async createOrAppendMeetingNote(
     event: CalendarEvent,
     forceNewFile = false,
-    kind: NoteKind = 'meeting'
+    kind: NoteKind = 'meeting',
+    /** The event's type, when it has one; its folder and template win. */
+    eventType?: EventType
   ): Promise<MeetingNoteResult> {
     const settings = calendarStorage.getSettings();
-    const targetDir =
-      (kind === 'class'
-        ? settings.classNotesDirectory || settings.notesDirectory
-        : settings.notesDirectory) || '/storage/emulated/0/Note/Meetings';
+    // An event type answers both questions, so a typed event needs no prompt.
+    // Falls back to the per-kind settings when it has no type, or when its type
+    // has no preference of its own.
+    const destination = resolveNoteDestination(eventType, {
+      folder:
+        (kind === 'class'
+          ? settings.classNotesDirectory || settings.notesDirectory
+          : settings.notesDirectory) || '/storage/emulated/0/Note/Meetings',
+      template:
+        (kind === 'class' ? settings.classTemplate : settings.meetingTemplate) ||
+        DEFAULT_SYSTEM_TEMPLATE,
+    });
+
+    const targetDir = destination.folder;
     await this.ensureDirectory(targetDir);
 
-    const templateValue =
-      (kind === 'class' ? settings.classTemplate : settings.meetingTemplate) ||
-      DEFAULT_SYSTEM_TEMPLATE;
+    const templateValue = destination.template;
 
     const isRecurringSeries = Boolean(event.recurringSeriesId && !forceNewFile);
     const filename = generateNoteFilename(event, isRecurringSeries, settings.seriesNotebookPrefix, kind);

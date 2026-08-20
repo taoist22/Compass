@@ -110,3 +110,21 @@ export function parseSystemTemplates(raw: unknown): SystemTemplate[] {
   }
   return templates;
 }
+
+/**
+ * Where a note goes and what it looks like, given the event's type.
+ *
+ * An event type carries its own folder and template, so tagging the event is
+ * the whole decision — there is nothing left to ask when a note is created.
+ * Falls back to the per-kind settings when a type has no preference of its
+ * own, or when the event has no type at all.
+ */
+export function resolveNoteDestination(
+  type: { folder?: string; template?: string } | undefined,
+  fallback: { folder: string; template: string }
+): { folder: string; template: string } {
+  return {
+    folder: type?.folder?.trim() || fallback.folder,
+    template: type?.template?.trim() || fallback.template,
+  };
+}

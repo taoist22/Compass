@@ -12,6 +12,8 @@ interface DayScheduleGridProps {
   onEditEvent: (event: CalendarEvent) => void;
   onNoteAction: (event: CalendarEvent, existingPath?: string) => void;
   onDeleteEvent: (event: CalendarEvent) => void;
+  /** Type label for an event, e.g. "🎓 Class". Empty when untyped. */
+  typeLabel: (event: CalendarEvent) => string;
 }
 
 /**
@@ -32,6 +34,7 @@ export function DayScheduleGrid({
   onEditEvent,
   onNoteAction,
   onDeleteEvent,
+  typeLabel,
 }: DayScheduleGridProps): React.JSX.Element {
   // The grid grows with the hours chosen; the Day View already scrolls, so a
   // longer day makes a taller page rather than a squashed one.
@@ -97,7 +100,7 @@ export function DayScheduleGrid({
                 </Text>
                 {blockHeight >= 44 && (
                   <Text allowFontScaling={false} style={styles.blockMeta} numberOfLines={1}>
-                    {event.location || ''}
+                    {[typeLabel(event), event.location].filter(Boolean).join(' · ')}
                   </Text>
                 )}
               </TouchableOpacity>
