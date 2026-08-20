@@ -104,6 +104,25 @@ export function TaskListModal({
    */
   const offeredProjects = projectsInArea(activeProjects(projects), areaId);
 
+  /**
+   * Says which filter emptied the list.
+   *
+   * "Nothing here" is true but unhelpful — a project with no area disappears
+   * the moment an area is selected, and the list going quiet gives no clue
+   * that a filter did it.
+   */
+  const emptyReason = (() => {
+    if (projectId) {
+      const name = projects.find(p => p.id === projectId)?.name;
+      return `No ${scopeLabel(scope).toLowerCase()} tasks in ${name || 'this project'}.`;
+    }
+    if (areaId) {
+      const name = areas.find(a => a.id === areaId)?.name;
+      return `No ${scopeLabel(scope).toLowerCase()} tasks in ${name || 'this area'}.`;
+    }
+    return `Nothing ${scopeLabel(scope).toLowerCase()}.`;
+  })();
+
   return (
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.overlay}>
@@ -112,18 +131,20 @@ export function TaskListModal({
             <Text allowFontScaling={false} style={styles.headerTitle}>
               ☑ All Tasks ({total})
             </Text>
-            <View style={styles.headerActions}>
-              <TouchableOpacity onPress={onManageAreas}>
-                <Text allowFontScaling={false} style={styles.close}>
-                  Areas
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={onClose}>
-                <Text allowFontScaling={false} style={styles.close}>
-                  ✕ Close
-                </Text>
-              </TouchableOpacity>
-            </View>
+            {/* Centred and named for what it opens. Tucked beside Close and
+                labelled "Areas" it read as part of the dismiss controls, and
+                said nothing about projects living there too. */}
+            <TouchableOpacity style={styles.manageBtn} onPress={onManageAreas}>
+              <Text allowFontScaling={false} style={styles.manageText}>
+                ⚙ Areas &amp; Projects
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={onClose}>
+              <Text allowFontScaling={false} style={styles.close}>
+                ✕ Close
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <Text allowFontScaling={false} style={styles.filterLabel}>
@@ -246,7 +267,7 @@ export function TaskListModal({
           <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
             {groups.length === 0 ? (
               <Text allowFontScaling={false} style={styles.empty}>
-                Nothing here.
+                {emptyReason}
               </Text>
             ) : (
               groups.map(group => (
@@ -312,8 +333,16 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   headerTitle: { fontSize: 16, fontWeight: 'bold', color: '#000000' },
-  headerActions: { flexDirection: 'row' },
-  close: { fontSize: 14, fontWeight: 'bold', color: '#000000', marginLeft: 14 },
+  close: { fontSize: 14, fontWeight: 'bold', color: '#000000', marginLeft: 12 },
+  manageBtn: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    backgroundColor: '#ffffff',
+  },
+  manageText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
   filterLabel: { fontSize: 11, fontWeight: 'bold', color: '#505050', marginTop: 2 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 4 },
   chip: {
