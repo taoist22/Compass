@@ -18,6 +18,17 @@ import {
   taskStatus,
 } from '../domain/taskModel';
 import { DatePickerModal } from './DatePickerModal';
+import {
+  TIME_STEP,
+  TimeRange,
+  formatDuration,
+  formatTimeOfDay,
+  minutesFromDate,
+  moveEnd,
+  moveStart,
+  normaliseRange,
+  withTimeOfDay,
+} from '../domain/timeOfDay';
 
 interface ItemCreationModalProps {
   visible: boolean;
@@ -68,14 +79,6 @@ interface ItemCreationModalProps {
   onDeleteTask?: (uid: string) => void;
 }
 
-const HOURS = ['08', '09', '10', '11', '12', '01', '02', '03', '04', '05', '06', '07'];
-const MINUTES = ['00', '15', '30', '45'];
-const DURATIONS = [
-  { label: '30 min', mins: 30 },
-  { label: '1 hour', mins: 60 },
-  { label: '1.5 hrs', mins: 90 },
-  { label: '2 hours', mins: 120 },
-];
 
 export function ItemCreationModal({
   visible,
@@ -100,10 +103,10 @@ export function ItemCreationModal({
   const [location, setLocation] = useState<string>('');
   const [description, setDescription] = useState<string>('');
   const [isAllDay, setIsAllDay] = useState<boolean>(type === 'task');
-  const [startHour, setStartHour] = useState<string>('09');
-  const [startMin, setStartMin] = useState<string>('00');
-  const [startAmPm, setStartAmPm] = useState<'AM' | 'PM'>('AM');
-  const [durationMins, setDurationMins] = useState<number>(30);
+  const [timeRange, setTimeRange] = useState<TimeRange>({ start: 9 * 60, end: 10 * 60 });
+
+  const nudgeStart = (delta: number) => setTimeRange(r => moveStart(r, delta));
+  const nudgeEnd = (delta: number) => setTimeRange(r => moveEnd(r, delta));
 
   // The date is editable here rather than inherited from the calendar
   // selection — a lasso can happen on any page with no idea what day the grid
@@ -136,14 +139,12 @@ export function ItemCreationModal({
       setItemDate(new Date(editingEvent.start));
 
       const start = new Date(editingEvent.start);
-      const hour24 = start.getHours();
-      const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
-      setStartHour(String(hour12).padStart(2, '0'));
-      setStartMin(String(Math.floor(start.getMinutes() / 15) * 15).padStart(2, '0'));
-      setStartAmPm(hour24 >= 12 ? 'PM' : 'AM');
-
-      const mins = Math.round((new Date(editingEvent.end).getTime() - start.getTime()) / 60000);
-      setDurationMins(mins > 0 ? mins : 30);
+      setTimeRange(
+        normaliseRange({
+          start: minutesFromDate(start),
+          end: minutesFromDate(new Date(editingEvent.end)),
+        })
+      );
       setNoDueDate(false);
       setTaskStatusValue(editingTask ? taskStatus(editingTask) : 'todo');
       setTaskPriorityValue(editingTask?.priority || 1);
@@ -154,6 +155,7 @@ export function ItemCreationModal({
     setItemKind(type);
     setTaskStatusValue('todo');
     setTaskPriorityValue(1);
+    setTimeRange({ start: 9 * 60, end: 10 * 60 });
     setLocation('');
     setDescription('');
     setItemDate(targetDate);
@@ -163,11 +165,8 @@ export function ItemCreationModal({
     // A lasso capture may already carry a time; seed the controls from it so
     // the user only has to confirm rather than re-enter what they wrote.
     if (initialParsed && !initialParsed.allDay && initialParsed.hours !== undefined) {
-      const h24 = initialParsed.hours;
-      const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
-      setStartHour(String(h12).padStart(2, '0'));
-      setStartMin(String(Math.floor((initialParsed.minutes ?? 0) / 15) * 15).padStart(2, '0'));
-      setStartAmPm(h24 >= 12 ? 'PM' : 'AM');
+      const captured = initialParsed.hours * 60 + (initialParsed.minutes ?? 0);
+      setTimeRange(normaliseRange({ start: captured, end: captured + 60 }));
       setIsAllDay(false);
     } else {
       setIsAllDay(initialParsed ? initialParsed.allDay : type === 'task');
@@ -193,15 +192,15 @@ export function ItemCreationModal({
 
     const start = new Date(itemDate);
     if (!isAllDay) {
-      let hour = parseInt(startHour, 10);
-      if (startAmPm === 'PM' && hour < 12) hour += 12;
-      if (startAmPm === 'AM' && hour === 12) hour = 0;
-      start.setHours(hour, parseInt(startMin, 10), 0, 0);
+      start.setHours(Math.floor(timeRange.start / 60), timeRange.start % 60, 0, 0);
     } else {
       start.setHours(9, 0, 0, 0);
     }
 
-    const end = new Date(start.getTime() + durationMins * 60 * 1000);
+    // End comes from its own control now, so any length is expressible.
+    const end = isAllDay
+      ? new Date(start.getTime() + 60 * 60 * 1000)
+      : withTimeOfDay(start, timeRange.end);
 
     if (itemKind === 'event') {
       const newEvt: CalendarEvent = {
@@ -255,8 +254,9 @@ export function ItemCreationModal({
       <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onClose}>
         <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
           <View style={styles.modalHeader}>
+            {/* The same form both creates and edits, so it has to say which. */}
             <Text style={styles.modalTitle}>
-              Create {itemKind === 'event' ? 'Calendar Event' : 'Task'}
+              {`${editingEvent ? 'Edit' : 'New'} ${itemKind === 'event' ? 'Event' : 'Task'}`}
             </Text>
             <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
               <Text style={styles.closeBtnText}>✕ Close</Text>
@@ -369,72 +369,54 @@ export function ItemCreationModal({
 
             {!isAllDay && !(itemKind === 'task' && noDueDate) && (
               <>
-                <Text style={styles.label}>{itemKind === 'event' ? 'Start Time:' : 'Due Time:'}</Text>
-                <View style={styles.timePickerRow}>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    keyboardShouldPersistTaps="handled"
-                    style={styles.chipScroll}
-                  >
-                    {HOURS.map(h => (
-                      <TouchableOpacity
-                        key={h}
-                        style={[styles.timeChip, startHour === h && styles.timeChipSelected]}
-                        onPress={() => setStartHour(h)}
-                      >
-                        <Text style={[styles.timeChipText, startHour === h && styles.timeChipTextSelected]}>
-                          {h}
-                        </Text>
+                {/* Nudged by discrete taps rather than picked from rows of
+                    chips: three scrolling chip rows were too wide for a Nomad,
+                    and a fixed duration list could not express 2.5 or 5 hours. */}
+                <Text style={styles.label}>{itemKind === 'event' ? 'Start' : 'Due'}</Text>
+                <View style={styles.timeRow}>
+                  <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeStart(-60)}>
+                    <Text style={styles.nudgeText}>−1h</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeStart(-TIME_STEP)}>
+                    <Text style={styles.nudgeText}>−15</Text>
+                  </TouchableOpacity>
+
+                  <Text style={styles.timeValue}>{formatTimeOfDay(timeRange.start)}</Text>
+
+                  <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeStart(TIME_STEP)}>
+                    <Text style={styles.nudgeText}>+15</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeStart(60)}>
+                    <Text style={styles.nudgeText}>+1h</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {itemKind === 'event' && (
+                  <>
+                    <Text style={styles.label}>End</Text>
+                    <View style={styles.timeRow}>
+                      <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeEnd(-60)}>
+                        <Text style={styles.nudgeText}>−1h</Text>
                       </TouchableOpacity>
-                    ))}
-                  </ScrollView>
+                      <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeEnd(-TIME_STEP)}>
+                        <Text style={styles.nudgeText}>−15</Text>
+                      </TouchableOpacity>
 
-                  <View style={styles.colonContainer}>
-                    <Text style={styles.colonText}>:</Text>
-                  </View>
+                      <Text style={styles.timeValue}>{formatTimeOfDay(timeRange.end)}</Text>
 
-                  {MINUTES.map(m => (
-                    <TouchableOpacity
-                      key={m}
-                      style={[styles.timeChipMin, startMin === m && styles.timeChipSelected]}
-                      onPress={() => setStartMin(m)}
-                    >
-                      <Text style={[styles.timeChipText, startMin === m && styles.timeChipTextSelected]}>
-                        {m}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                      <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeEnd(TIME_STEP)}>
+                        <Text style={styles.nudgeText}>+15</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeEnd(60)}>
+                        <Text style={styles.nudgeText}>+1h</Text>
+                      </TouchableOpacity>
+                    </View>
 
-                  <TouchableOpacity
-                    style={[styles.ampmBtn, startAmPm === 'AM' && styles.ampmBtnActive]}
-                    onPress={() => setStartAmPm('AM')}
-                  >
-                    <Text style={[styles.ampmBtnText, startAmPm === 'AM' && styles.ampmBtnTextActive]}>AM</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.ampmBtn, startAmPm === 'PM' && styles.ampmBtnActive]}
-                    onPress={() => setStartAmPm('PM')}
-                  >
-                    <Text style={[styles.ampmBtnText, startAmPm === 'PM' && styles.ampmBtnTextActive]}>PM</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <Text style={styles.label}>Time Duration / Period:</Text>
-                <View style={styles.durationRow}>
-                  {DURATIONS.map(d => (
-                    <TouchableOpacity
-                      key={d.label}
-                      style={[styles.durationChip, durationMins === d.mins && styles.durationChipSelected]}
-                      onPress={() => setDurationMins(d.mins)}
-                    >
-                      <Text style={[styles.durationChipText, durationMins === d.mins && styles.durationChipTextSelected]}>
-                        {d.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                    <Text style={styles.durationHint}>
+                      Duration: {formatDuration(timeRange.end - timeRange.start)}
+                    </Text>
+                  </>
+                )}
               </>
             )}
 
@@ -746,95 +728,6 @@ const styles = StyleSheet.create({
     height: 60,
     textAlignVertical: 'top',
   },
-  timePickerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginBottom: 8,
-  },
-  chipScroll: {
-    flexGrow: 0,
-  },
-  timeChip: {
-    borderWidth: 1,
-    borderColor: '#000000',
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    marginRight: 4,
-    backgroundColor: '#ffffff',
-  },
-  timeChipMin: {
-    borderWidth: 1,
-    borderColor: '#000000',
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 6,
-    backgroundColor: '#ffffff',
-  },
-  timeChipSelected: {
-    backgroundColor: '#000000',
-  },
-  timeChipText: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#000000',
-  },
-  timeChipTextSelected: {
-    color: '#ffffff',
-  },
-  colonContainer: {
-    paddingHorizontal: 2,
-  },
-  colonText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#000000',
-  },
-  ampmBtn: {
-    borderWidth: 1,
-    borderColor: '#000000',
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    backgroundColor: '#ffffff',
-  },
-  ampmBtnActive: {
-    backgroundColor: '#000000',
-  },
-  ampmBtnText: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#000000',
-  },
-  ampmBtnTextActive: {
-    color: '#ffffff',
-  },
-  durationRow: {
-    flexDirection: 'row',
-    gap: 6,
-    marginBottom: 8,
-  },
-  durationChip: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#000000',
-    borderRadius: 4,
-    paddingVertical: 6,
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-  },
-  durationChipSelected: {
-    backgroundColor: '#000000',
-  },
-  durationChipText: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#000000',
-  },
-  durationChipTextSelected: {
-    color: '#ffffff',
-  },
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -883,6 +776,29 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#000000',
   },
+  timeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  nudgeBtn: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    marginRight: 4,
+    backgroundColor: '#ffffff',
+  },
+  nudgeText: { fontSize: 13, fontWeight: 'bold', color: '#000000' },
+  timeValue: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#000000',
+  },
+  durationHint: { fontSize: 12, color: '#505050', marginBottom: 4 },
   saveBtn: {
     backgroundColor: '#000000',
     borderRadius: 6,
