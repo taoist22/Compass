@@ -1717,7 +1717,16 @@ export function AgendaScreen(): React.JSX.Element {
   ) => {
     // Stored beside the event rather than on it: a sync rebuilds the event
     // object from ICS, and anything held on it would be lost.
-    calendarStorage.setMembership(noteIdentity(newEvent), { typeId });
+    const identity = noteIdentity(newEvent);
+    const chosenType = typeId ? calendarStorage.getEventTypes().find(t => t.id === typeId) : undefined;
+    const existingArea = calendarStorage.getMembership(identity).areaId;
+
+    calendarStorage.setMembership(identity, {
+      typeId,
+      // Prefilled from the type, never forced: an area already chosen for this
+      // event wins, so tagging cannot silently refile something.
+      areaId: existingArea || chosenType?.defaultAreaId,
+    });
     setMembershipRevision(n => n + 1);
 
     // Same uid means this is an edit: replace in place rather than appending a
@@ -2136,13 +2145,13 @@ export function AgendaScreen(): React.JSX.Element {
       {/* Top Header Bar */}
       <View style={styles.headerBar}>
         <View style={styles.titleWithSwitcher}>
-          <Text style={styles.appTitle}>Calendar</Text>
+          <Text allowFontScaling={false} style={styles.appTitle}>Calendar</Text>
           <View style={styles.viewSwitcherBar}>
             <TouchableOpacity
               style={[styles.switcherBtn, viewMode === 'month' && styles.switcherBtnActive]}
               onPress={() => setViewMode('month')}
             >
-              <Text style={[styles.switcherBtnText, viewMode === 'month' && styles.switcherBtnTextActive]}>
+              <Text allowFontScaling={false} style={[styles.switcherBtnText, viewMode === 'month' && styles.switcherBtnTextActive]}>
                 📅 Month
               </Text>
             </TouchableOpacity>
@@ -2151,7 +2160,7 @@ export function AgendaScreen(): React.JSX.Element {
               style={[styles.switcherBtn, viewMode === 'agenda' && styles.switcherBtnActive]}
               onPress={() => setViewMode('agenda')}
             >
-              <Text style={[styles.switcherBtnText, viewMode === 'agenda' && styles.switcherBtnTextActive]}>
+              <Text allowFontScaling={false} style={[styles.switcherBtnText, viewMode === 'agenda' && styles.switcherBtnTextActive]}>
                 📋 Day View
               </Text>
             </TouchableOpacity>
@@ -2163,7 +2172,7 @@ export function AgendaScreen(): React.JSX.Element {
               style={[styles.switcherBtn, viewMode === 'para' && styles.switcherBtnActive]}
               onPress={() => setViewMode('para')}
             >
-              <Text
+              <Text allowFontScaling={false}
                 style={[styles.switcherBtnText, viewMode === 'para' && styles.switcherBtnTextActive]}
               >
                 📁 Tasks/PARA
@@ -2175,22 +2184,22 @@ export function AgendaScreen(): React.JSX.Element {
         <View style={styles.headerBtnGroup}>
           {(caldavEnabled || hasSubscribedFeeds) && (
             <TouchableOpacity style={styles.syncNowBtn} onPress={handleSyncNow}>
-              <Text style={styles.syncNowBtnText}>🔄 Sync Now</Text>
+              <Text allowFontScaling={false} style={styles.syncNowBtnText}>🔄 Sync Now</Text>
             </TouchableOpacity>
           )}
 
           <TouchableOpacity style={styles.settingsBtn} onPress={() => setShowSettings(!showSettings)}>
-            <Text style={styles.settingsBtnText}>{showSettings ? 'Close Feeds' : 'Feeds / Config'}</Text>
+            <Text allowFontScaling={false} style={styles.settingsBtnText}>{showSettings ? 'Close Feeds' : 'Feeds / Config'}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.closePluginBtn} onPress={handleClosePlugin}>
-            <Text style={styles.closePluginBtnText}>✕ Exit</Text>
+            <Text allowFontScaling={false} style={styles.closePluginBtnText}>✕ Exit</Text>
           </TouchableOpacity>
         </View>
       </View>
 
       {statusMsg !== '' && (
         <View style={styles.statusBanner}>
-          <Text style={styles.statusText}>{statusMsg}</Text>
+          <Text allowFontScaling={false} style={styles.statusText}>{statusMsg}</Text>
         </View>
       )}
 
@@ -2207,16 +2216,16 @@ export function AgendaScreen(): React.JSX.Element {
           }}
         >
           <View style={styles.actionSheetContentCompact}>
-            <Text style={styles.actionSheetTitle}>Delete…</Text>
-            <Text style={styles.bodyTextCenter} numberOfLines={2}>
+            <Text allowFontScaling={false} style={styles.actionSheetTitle}>Delete…</Text>
+            <Text allowFontScaling={false} style={styles.bodyTextCenter} numberOfLines={2}>
               "{pendingDeleteEvent?.summary}"
             </Text>
-            <Text style={styles.previewHint}>
+            <Text allowFontScaling={false} style={styles.previewHint}>
               Replacing unlinks the note now and removes the file when its replacement opens.
               Deleting outright leaves the plugin and shows the folder — that is the device's
               own behaviour, and the deletion still happens.
             </Text>
-            <Text style={styles.previewHint}>
+            <Text allowFontScaling={false} style={styles.previewHint}>
               It has a note:{' '}
               {pendingDeleteEvent
                 ? calendarStorage
@@ -2233,21 +2242,21 @@ export function AgendaScreen(): React.JSX.Element {
               style={styles.deleteOptionBtn}
               onPress={() => handleConfirmDeleteWithNote('note')}
             >
-              <Text style={styles.deleteOptionBtnText}>📝 Replace the note, keep the event</Text>
+              <Text allowFontScaling={false} style={styles.deleteOptionBtnText}>📝 Replace the note, keep the event</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.deleteOptionBtn}
               onPress={() => handleConfirmDeleteWithNote('event')}
             >
-              <Text style={styles.deleteOptionBtnText}>🗑️ Delete the event, keep the note</Text>
+              <Text allowFontScaling={false} style={styles.deleteOptionBtnText}>🗑️ Delete the event, keep the note</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.deleteOptionBtnDanger}
               onPress={() => handleConfirmDeleteWithNote('both')}
             >
-              <Text style={styles.deleteOptionBtnTextDanger}>🗑️ Delete both</Text>
+              <Text allowFontScaling={false} style={styles.deleteOptionBtnTextDanger}>🗑️ Delete both</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -2257,7 +2266,7 @@ export function AgendaScreen(): React.JSX.Element {
                 setPendingDeleteEvent(null);
               }}
             >
-              <Text style={styles.cancelBtnText}>Cancel</Text>
+              <Text allowFontScaling={false} style={styles.cancelBtnText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -2313,26 +2322,26 @@ export function AgendaScreen(): React.JSX.Element {
           onPress={() => setKindPromptEvent(null)}
         >
           <View style={styles.actionSheetContentCompact}>
-            <Text style={styles.actionSheetTitle}>What kind of note?</Text>
-            <Text style={styles.bodyTextCenter} numberOfLines={2}>
+            <Text allowFontScaling={false} style={styles.actionSheetTitle}>What kind of note?</Text>
+            <Text allowFontScaling={false} style={styles.bodyTextCenter} numberOfLines={2}>
               "{kindPromptEvent?.summary}"
             </Text>
 
             <TouchableOpacity style={styles.deleteOptionBtn} onPress={() => handleAnswerNoteKind('meeting')}>
-              <Text style={styles.deleteOptionBtnText}>🏢 Meeting Note</Text>
+              <Text allowFontScaling={false} style={styles.deleteOptionBtnText}>🏢 Meeting Note</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.deleteOptionBtn} onPress={() => handleAnswerNoteKind('class')}>
-              <Text style={styles.deleteOptionBtnText}>🎓 Class Note</Text>
+              <Text allowFontScaling={false} style={styles.deleteOptionBtnText}>🎓 Class Note</Text>
             </TouchableOpacity>
 
-            <Text style={styles.previewHint}>
+            <Text allowFontScaling={false} style={styles.previewHint}>
               Remembered for this event — a recurring class is only asked once. Change it later
               from the event's details.
             </Text>
 
             <TouchableOpacity style={styles.cancelBtn} onPress={() => setKindPromptEvent(null)}>
-              <Text style={styles.cancelBtnText}>Cancel</Text>
+              <Text allowFontScaling={false} style={styles.cancelBtnText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -2354,7 +2363,7 @@ export function AgendaScreen(): React.JSX.Element {
             onPress={() => setTemplatePickerKind(null)}
           >
             <View style={styles.actionSheetContentCompact}>
-              <Text style={styles.actionSheetTitle}>
+              <Text allowFontScaling={false} style={styles.actionSheetTitle}>
                 {templatePickerKind === 'daily'
                   ? 'Daily'
                   : templatePickerKind === 'class'
@@ -2365,7 +2374,7 @@ export function AgendaScreen(): React.JSX.Element {
 
               <ScrollView style={styles.templateScroll} keyboardShouldPersistTaps="handled">
                 {systemTemplates.length === 0 && (
-                  <Text style={styles.bodyTextCenter}>
+                  <Text allowFontScaling={false} style={styles.bodyTextCenter}>
                     No built-in templates reported by this device. A custom PNG still works.
                   </Text>
                 )}
@@ -2386,7 +2395,7 @@ export function AgendaScreen(): React.JSX.Element {
                         if (templatePickerKind) setNoteTemplate(templatePickerKind, tpl.name);
                       }}
                     >
-                      <Text
+                      <Text allowFontScaling={false}
                         style={[styles.templateOptionText, active && styles.templateOptionTextActive]}
                       >
                         {active ? '✓ ' : ''}
@@ -2401,11 +2410,11 @@ export function AgendaScreen(): React.JSX.Element {
                 style={styles.pickerOpenBtn}
                 onPress={() => templatePickerKind && handleChooseCustomTemplate(templatePickerKind)}
               >
-                <Text style={styles.pickerOpenBtnText}>🎨 Custom PNG...</Text>
+                <Text allowFontScaling={false} style={styles.pickerOpenBtnText}>🎨 Custom PNG...</Text>
               </TouchableOpacity>
 
               <TouchableOpacity style={styles.cancelBtn} onPress={() => setTemplatePickerKind(null)}>
-                <Text style={styles.cancelBtnText}>Cancel</Text>
+                <Text allowFontScaling={false} style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
             </View>
           </TouchableOpacity>
@@ -2418,9 +2427,9 @@ export function AgendaScreen(): React.JSX.Element {
           contentContainerStyle={styles.settingsContent}
         >
           <View style={styles.settingsHeader}>
-            <Text style={styles.settingsHeaderTitle}>⚙️ SETTINGS &amp; CONFIGURATION</Text>
+            <Text allowFontScaling={false} style={styles.settingsHeaderTitle}>⚙️ SETTINGS &amp; CONFIGURATION</Text>
             <TouchableOpacity onPress={() => setShowSettings(false)}>
-              <Text style={styles.settingsHeaderClose}>✕ Close</Text>
+              <Text allowFontScaling={false} style={styles.settingsHeaderClose}>✕ Close</Text>
             </TouchableOpacity>
           </View>
 
@@ -2436,7 +2445,7 @@ export function AgendaScreen(): React.JSX.Element {
                 style={[styles.settingsTab, settingsTab === key && styles.settingsTabActive]}
                 onPress={() => setSettingsTab(key)}
               >
-                <Text style={[styles.settingsTabText, settingsTab === key && styles.settingsTabTextActive]}>
+                <Text allowFontScaling={false} style={[styles.settingsTabText, settingsTab === key && styles.settingsTabTextActive]}>
                   {label}
                 </Text>
               </TouchableOpacity>
@@ -2445,8 +2454,8 @@ export function AgendaScreen(): React.JSX.Element {
 
           {settingsTab === 'sync' && (
             <>
-          <Text style={styles.sectionTitle}>Universal CalDAV Two-Way Sync</Text>
-          <Text style={styles.bodyText}>Select your Calendar Provider:</Text>
+          <Text allowFontScaling={false} style={styles.sectionTitle}>Universal CalDAV Two-Way Sync</Text>
+          <Text allowFontScaling={false} style={styles.bodyText}>Select your Calendar Provider:</Text>
 
           {/* Provider Preset Selector Row */}
           <View style={styles.providerGrid}>
@@ -2457,7 +2466,7 @@ export function AgendaScreen(): React.JSX.Element {
                 calendarStorage.updateSettings({ caldavProvider: 'icloud' });
               }}
             >
-              <Text style={[styles.providerBtnText, caldavProvider === 'icloud' && styles.providerBtnTextActive]}>
+              <Text allowFontScaling={false} style={[styles.providerBtnText, caldavProvider === 'icloud' && styles.providerBtnTextActive]}>
                 🍏 Apple iCloud
               </Text>
             </TouchableOpacity>
@@ -2469,7 +2478,7 @@ export function AgendaScreen(): React.JSX.Element {
                 calendarStorage.updateSettings({ caldavProvider: 'custom' });
               }}
             >
-              <Text style={[styles.providerBtnText, caldavProvider === 'custom' && styles.providerBtnTextActive]}>
+              <Text allowFontScaling={false} style={[styles.providerBtnText, caldavProvider === 'custom' && styles.providerBtnTextActive]}>
                 📧 Custom / Other
               </Text>
             </TouchableOpacity>
@@ -2512,28 +2521,28 @@ export function AgendaScreen(): React.JSX.Element {
           </View>
 
           <TouchableOpacity style={styles.connectCaldavBtn} onPress={handleTestCaldavConnection}>
-            <Text style={styles.connectCaldavBtnText}>
+            <Text allowFontScaling={false} style={styles.connectCaldavBtnText}>
               🔒 Connect & Test {caldavProvider.toUpperCase()} CalDAV
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.diagRunBtn} onPress={handleRunDiagnostics}>
-            <Text style={styles.diagRunBtnText}>
+            <Text allowFontScaling={false} style={styles.diagRunBtnText}>
               🔍 Run CalDAV Diagnostic Test (Trace HTTP Steps)
             </Text>
           </TouchableOpacity>
 
           {caldavEnabled && (
             <View style={styles.caldavActiveBadge}>
-              <Text style={styles.caldavActiveBadgeText}>
+              <Text allowFontScaling={false} style={styles.caldavActiveBadgeText}>
                 ✓ {caldavProvider.toUpperCase()} CalDAV Push Active
               </Text>
               {/* Persistent readout — a status message scrolls away, and
                   whether tasks have a destination must stay checkable. */}
-              <Text style={styles.caldavTargetText}>
+              <Text allowFontScaling={false} style={styles.caldavTargetText}>
                 Events → {caldavUrl ? decodeURIComponent(caldavUrl.replace(/\/$/, '').split('/').pop() || '?') : 'not set'}
               </Text>
-              <Text style={styles.caldavTargetText}>
+              <Text allowFontScaling={false} style={styles.caldavTargetText}>
                 Reminders →{' '}
                 {caldavTaskListUrl
                   ? decodeURIComponent(caldavTaskListUrl.replace(/\/$/, '').split('/').pop() || '?')
@@ -2542,9 +2551,9 @@ export function AgendaScreen(): React.JSX.Element {
             </View>
           )}
 
-          <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Add a Calendar</Text>
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Add a Calendar</Text>
           <TouchableOpacity style={styles.pickerOpenBtn} onPress={handleImportFeedsFromTxt}>
-            <Text style={styles.pickerOpenBtnText}>📂 Import from File (.txt or .ics)...</Text>
+            <Text allowFontScaling={false} style={styles.pickerOpenBtnText}>📂 Import from File (.txt or .ics)...</Text>
           </TouchableOpacity>
           <View style={styles.inputRow}>
             <TextInput
@@ -2555,17 +2564,17 @@ export function AgendaScreen(): React.JSX.Element {
               placeholderTextColor="#707070"
             />
             <TouchableOpacity style={styles.addBtn} onPress={handleFetchFeedUrl}>
-              <Text style={styles.addBtnText}>Subscribe</Text>
+              <Text allowFontScaling={false} style={styles.addBtnText}>Subscribe</Text>
             </TouchableOpacity>
           </View>
 
-          <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Smart Event Filters</Text>
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Smart Event Filters</Text>
           <View style={styles.filterToggleRow}>
-            <Text style={styles.bodyText}>Hide All-Day Events (Holidays, Reminders):</Text>
+            <Text allowFontScaling={false} style={styles.bodyText}>Hide All-Day Events (Holidays, Reminders):</Text>
             <Switch value={hideAllDay} onValueChange={handleToggleHideAllDay} />
           </View>
           <View style={styles.filterToggleRow}>
-            <Text style={styles.bodyText}>Hide Solo Events (0 Attendees):</Text>
+            <Text allowFontScaling={false} style={styles.bodyText}>Hide Solo Events (0 Attendees):</Text>
             <Switch value={hideSolo} onValueChange={handleToggleHideSolo} />
           </View>
             </>
@@ -2576,21 +2585,21 @@ export function AgendaScreen(): React.JSX.Element {
           {/* Named for the filename alone: the folder and template for daily
               notes live in the per-kind blocks below, alongside meeting and
               class, so there is only one place to set each. */}
-          <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Daily Note Filename</Text>
-          <Text style={styles.bodyText}>
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Daily Note Filename</Text>
+          <Text allowFontScaling={false} style={styles.bodyText}>
             The Day View's Daily Log button opens that day's journal note, creating it only if it
             isn't already there. The plugin cannot search your folders, so this has to match your
             existing filenames exactly. Check the preview below against a real note first.
           </Text>
-          <Text style={styles.bodyText}>
-            Two rules: leave off the <Text style={styles.bodyStrong}>.note</Text> extension — it is
+          <Text allowFontScaling={false} style={styles.bodyText}>
+            Two rules: leave off the <Text allowFontScaling={false} style={styles.bodyStrong}>.note</Text> extension — it is
             added for you — and put any literal word in{' '}
-            <Text style={styles.bodyStrong}>[square brackets]</Text>, or its letters get read as
+            <Text allowFontScaling={false} style={styles.bodyStrong}>[square brackets]</Text>, or its letters get read as
             date codes. "Daily" becomes "5aily" on the 5th; write{' '}
-            <Text style={styles.bodyStrong}>[Daily] YYYY-MM-DD</Text> instead.
+            <Text allowFontScaling={false} style={styles.bodyStrong}>[Daily] YYYY-MM-DD</Text> instead.
           </Text>
 
-          <Text style={styles.fieldLabel}>Filename format</Text>
+          <Text allowFontScaling={false} style={styles.fieldLabel}>Filename format</Text>
           <TextInput
             style={styles.textInput}
             value={dailyNoteFormat}
@@ -2613,7 +2622,7 @@ export function AgendaScreen(): React.JSX.Element {
                   calendarStorage.updateSettings({ dailyNoteFormat: preset });
                 }}
               >
-                <Text
+                <Text allowFontScaling={false}
                   style={[
                     styles.formatPresetText,
                     dailyNoteFormat === preset && styles.formatPresetTextActive,
@@ -2628,19 +2637,19 @@ export function AgendaScreen(): React.JSX.Element {
           {/* Live preview: the single thing that tells the user whether this
               will find their journal or create a duplicate beside it. */}
           <View style={styles.previewBox}>
-            <Text style={styles.previewLabel}>Today would open</Text>
-            <Text style={styles.previewPath}>{dailyNotePath(dailyNoteFolder, dailyNoteFormat, new Date())}</Text>
+            <Text allowFontScaling={false} style={styles.previewLabel}>Today would open</Text>
+            <Text allowFontScaling={false} style={styles.previewPath}>{dailyNotePath(dailyNoteFolder, dailyNoteFormat, new Date())}</Text>
             {looksMangled(formatDailyNoteName(dailyNoteFormat, new Date())) ? (
-              <Text style={styles.previewWarn}>
+              <Text allowFontScaling={false} style={styles.previewWarn}>
                 ⚠ A word in your format is being read as date codes. Put it in [brackets].
               </Text>
             ) : null}
             {/\.note$/i.test(dailyNoteFormat.trim()) ? (
-              <Text style={styles.previewWarn}>
+              <Text allowFontScaling={false} style={styles.previewWarn}>
                 ⚠ Remove ".note" from the format — the extension is added automatically.
               </Text>
             ) : null}
-            <Text style={styles.previewHint}>
+            <Text allowFontScaling={false} style={styles.previewHint}>
               Tokens: YYYY YY MMMM MMM MM M DD D dddd ddd · literal words go in [brackets]
             </Text>
           </View>
@@ -2648,7 +2657,7 @@ export function AgendaScreen(): React.JSX.Element {
           {/* One block per note kind: template first, then where the notes are
               filed. Daily notes keep their own folder above, since that folder
               usually predates the plugin. */}
-          <Text style={styles.previewHint}>
+          <Text allowFontScaling={false} style={styles.previewHint}>
             Folder: type a full path and it is created if it does not exist. Browse picks any
             file and uses the folder it sits in — the device offers no folder picker.
           </Text>
@@ -2659,26 +2668,26 @@ export function AgendaScreen(): React.JSX.Element {
 
             return (
               <View key={kind} style={styles.templateBlock}>
-                <Text style={[styles.sectionTitle, { marginTop: 12 }]}>{label} Notes</Text>
+                <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 12 }]}>{label} Notes</Text>
 
                 {/* Template and folder side by side: stacked, the three kinds
                     ran past the bottom of the page and forced a scroll. */}
                 <View style={styles.templateColumns}>
                   <View style={styles.templateCol}>
-                    <Text style={styles.fieldLabel}>Template</Text>
-                    <Text style={styles.bodyText} numberOfLines={1}>
+                    <Text allowFontScaling={false} style={styles.fieldLabel}>Template</Text>
+                    <Text allowFontScaling={false} style={styles.bodyText} numberOfLines={1}>
                       {templateLabel(value)}
                     </Text>
                     <TouchableOpacity
                       style={styles.pickerOpenBtn}
                       onPress={() => setTemplatePickerKind(kind)}
                     >
-                      <Text style={styles.pickerOpenBtnText}>🎨 Choose Template...</Text>
+                      <Text allowFontScaling={false} style={styles.pickerOpenBtnText}>🎨 Choose Template...</Text>
                     </TouchableOpacity>
                   </View>
 
                   <View style={styles.templateCol}>
-                    <Text style={styles.fieldLabel}>Folder</Text>
+                    <Text allowFontScaling={false} style={styles.fieldLabel}>Folder</Text>
                     <TextInput
                       style={[styles.textInput, styles.folderInput]}
                       value={folderDrafts[kind] ?? folder}
@@ -2692,7 +2701,7 @@ export function AgendaScreen(): React.JSX.Element {
                       style={styles.pickerOpenBtn}
                       onPress={() => handleChooseNoteFolder(kind)}
                     >
-                      <Text style={styles.pickerOpenBtnText}>📁 Browse...</Text>
+                      <Text allowFontScaling={false} style={styles.pickerOpenBtnText}>📁 Browse...</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -2702,19 +2711,19 @@ export function AgendaScreen(): React.JSX.Element {
 
           {SHOW_DEV_PROBE && (
             <>
-          <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Device &amp; Template Probe</Text>
-          <Text style={styles.bodyText}>
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Device &amp; Template Probe</Text>
+          <Text allowFontScaling={false} style={styles.bodyText}>
             Lists the built-in note templates this device offers, and reports the real screen
             size in dp. Read-only — nothing is changed.
           </Text>
           <TouchableOpacity style={styles.diagRunBtn} onPress={handleProbeDevice}>
-            <Text style={styles.diagRunBtnText}>🔍 Probe Templates &amp; Screen Size</Text>
+            <Text allowFontScaling={false} style={styles.diagRunBtnText}>🔍 Probe Templates &amp; Screen Size</Text>
           </TouchableOpacity>
 
           {templateProbe.length > 0 && (
             <View style={styles.diagLogBox}>
               {templateProbe.map((line, idx) => (
-                <Text key={`probe-${idx}`} style={styles.diagLogLine}>
+                <Text allowFontScaling={false} key={`probe-${idx}`} style={styles.diagLogLine}>
                   {line}
                 </Text>
               ))}
@@ -2728,8 +2737,8 @@ export function AgendaScreen(): React.JSX.Element {
 
           {settingsTab === 'app' && (
             <>
-          <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Event Types</Text>
-          <Text style={styles.bodyText}>
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Event Types</Text>
+          <Text allowFontScaling={false} style={styles.bodyText}>
             What kinds of event you have — Class, Work, Personal. Each carries where its notes are
             filed and what they look like, so tagging an event settles both and no prompt appears
             when you create a note. Untyped events fall back to the per-kind folders above.
@@ -2741,7 +2750,7 @@ export function AgendaScreen(): React.JSX.Element {
                 style={[styles.textInput, styles.typeIconInput]}
                 value={type.icon || ''}
                 onChangeText={text => handleUpdateEventType({ ...type, icon: text.slice(0, 2) })}
-                placeholder="🎓"
+                placeholder="icon"
                 placeholderTextColor="#909090"
               />
               <TextInput
@@ -2754,7 +2763,7 @@ export function AgendaScreen(): React.JSX.Element {
                 style={styles.typeFolderBtn}
                 onPress={() => handleChooseTypeFolder(type)}
               >
-                <Text style={styles.typeBtnText} numberOfLines={1}>
+                <Text allowFontScaling={false} style={styles.typeBtnText} numberOfLines={1}>
                   {type.folder ? type.folder.split('/').pop() : 'Folder…'}
                 </Text>
               </TouchableOpacity>
@@ -2762,20 +2771,36 @@ export function AgendaScreen(): React.JSX.Element {
                 style={styles.typeFolderBtn}
                 onPress={() => setTypeTemplatePicker(type)}
               >
-                <Text style={styles.typeBtnText} numberOfLines={1}>
+                <Text allowFontScaling={false} style={styles.typeBtnText} numberOfLines={1}>
                   {type.template ? templateLabel(type.template) : 'Template…'}
                 </Text>
               </TouchableOpacity>
+              {/* Cycles through the areas, wrapping through none. A text
+                  button rather than a glyph: an unverified symbol rendered as
+                  tofu here once already. */}
+              <TouchableOpacity
+                style={styles.typeFolderBtn}
+                onPress={() => {
+                  const ids: Array<string | undefined> = [...areas.map(a => a.id), undefined];
+                  const at = ids.indexOf(type.defaultAreaId);
+                  handleUpdateEventType({ ...type, defaultAreaId: ids[(at + 1) % ids.length] });
+                }}
+              >
+                <Text allowFontScaling={false} style={styles.typeBtnText} numberOfLines={1}>
+                  {areas.find(a => a.id === type.defaultAreaId)?.name || 'Area…'}
+                </Text>
+              </TouchableOpacity>
+
               <TouchableOpacity
                 style={styles.deleteTypeBtn}
                 onPress={() => handleDeleteEventType(type.id)}
               >
-                <Text style={styles.typeBtnText}>✕</Text>
+                <Text allowFontScaling={false} style={styles.typeBtnText}>✕</Text>
               </TouchableOpacity>
             </View>
           ))}
 
-          <View style={styles.timeRow}>
+          <View style={[styles.timeRow, { maxWidth: 660 }]}>
             <TextInput
               style={[styles.textInput, styles.typeNameInput]}
               value={newTypeName}
@@ -2793,37 +2818,37 @@ export function AgendaScreen(): React.JSX.Element {
                 setNewTypeName('');
               }}
             >
-              <Text style={styles.nudgeText}>Add</Text>
+              <Text allowFontScaling={false} style={styles.nudgeText}>Add</Text>
             </TouchableOpacity>
           </View>
 
-          <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Day View Schedule Hours</Text>
-          <Text style={styles.bodyText}>
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Day View Schedule Hours</Text>
+          <Text allowFontScaling={false} style={styles.bodyText}>
             Which hours the Day View draws. Anything outside is still shown, pulled to the nearest
             edge — a longer day makes a taller page rather than a squashed one.
           </Text>
 
           <View style={styles.timeRow}>
-            <Text style={styles.fieldLabel}>Start</Text>
+            <Text allowFontScaling={false} style={styles.fieldLabel}>Start</Text>
             <TouchableOpacity style={styles.nudgeBtn} onPress={() => shiftScheduleHour('start', -1)}>
-              <Text style={styles.nudgeText}>−</Text>
+              <Text allowFontScaling={false} style={styles.nudgeText}>−</Text>
             </TouchableOpacity>
-            <Text style={styles.hourValue}>{hourLabel(scheduleStartHour)}</Text>
+            <Text allowFontScaling={false} style={styles.hourValue}>{hourLabel(scheduleStartHour)}</Text>
             <TouchableOpacity style={styles.nudgeBtn} onPress={() => shiftScheduleHour('start', 1)}>
-              <Text style={styles.nudgeText}>+</Text>
+              <Text allowFontScaling={false} style={styles.nudgeText}>+</Text>
             </TouchableOpacity>
 
-            <Text style={[styles.fieldLabel, { marginLeft: 16 }]}>End</Text>
+            <Text allowFontScaling={false} style={[styles.fieldLabel, { marginLeft: 16 }]}>End</Text>
             <TouchableOpacity style={styles.nudgeBtn} onPress={() => shiftScheduleHour('end', -1)}>
-              <Text style={styles.nudgeText}>−</Text>
+              <Text allowFontScaling={false} style={styles.nudgeText}>−</Text>
             </TouchableOpacity>
-            <Text style={styles.hourValue}>{hourLabel(scheduleEndHour)}</Text>
+            <Text allowFontScaling={false} style={styles.hourValue}>{hourLabel(scheduleEndHour)}</Text>
             <TouchableOpacity style={styles.nudgeBtn} onPress={() => shiftScheduleHour('end', 1)}>
-              <Text style={styles.nudgeText}>+</Text>
+              <Text allowFontScaling={false} style={styles.nudgeText}>+</Text>
             </TouchableOpacity>
           </View>
 
-          <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Opening View</Text>
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Opening View</Text>
           <View style={styles.providerGrid}>
             {(['month', 'agenda'] as CalendarViewMode[]).map(mode => (
               <TouchableOpacity
@@ -2834,20 +2859,20 @@ export function AgendaScreen(): React.JSX.Element {
                   calendarStorage.updateSettings({ defaultViewMode: mode });
                 }}
               >
-                <Text style={[styles.providerBtnText, defaultView === mode && styles.providerBtnTextActive]}>
+                <Text allowFontScaling={false} style={[styles.providerBtnText, defaultView === mode && styles.providerBtnTextActive]}>
                   {mode === 'month' ? '📅 Month Grid' : '📋 Day View'}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
 
-          <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Theme & Profile Mode</Text>
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Theme & Profile Mode</Text>
           <View style={styles.themeToggleRow}>
             <TouchableOpacity
               style={[styles.themeBtn, themeMode === 'business' && styles.themeBtnActive]}
               onPress={() => handleToggleThemeMode('business')}
             >
-              <Text style={[styles.themeBtnText, themeMode === 'business' && styles.themeBtnTextActive]}>
+              <Text allowFontScaling={false} style={[styles.themeBtnText, themeMode === 'business' && styles.themeBtnTextActive]}>
                 🏢 Business Mode
               </Text>
             </TouchableOpacity>
@@ -2856,13 +2881,13 @@ export function AgendaScreen(): React.JSX.Element {
               style={[styles.themeBtn, themeMode === 'academic' && styles.themeBtnActive]}
               onPress={() => handleToggleThemeMode('academic')}
             >
-              <Text style={[styles.themeBtnText, themeMode === 'academic' && styles.themeBtnTextActive]}>
+              <Text allowFontScaling={false} style={[styles.themeBtnText, themeMode === 'academic' && styles.themeBtnTextActive]}>
                 🎓 Academic / School Mode
               </Text>
             </TouchableOpacity>
           </View>
 
-          <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Tasks</Text>
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Tasks</Text>
           <TouchableOpacity
             style={styles.checkSettingRow}
             onPress={() => {
@@ -2871,10 +2896,10 @@ export function AgendaScreen(): React.JSX.Element {
               calendarStorage.updateSettings({ pushTasksAsEvents: next });
             }}
           >
-            <Text style={styles.checkSettingBox}>{pushTasksAsEvents ? '☑' : '☐'}</Text>
+            <Text allowFontScaling={false} style={styles.checkSettingBox}>{pushTasksAsEvents ? '☑' : '☐'}</Text>
             <View style={styles.checkSettingBody}>
-              <Text style={styles.checkSettingLabel}>Push tasks to my calendar as events</Text>
-              <Text style={styles.checkSettingHint}>
+              <Text allowFontScaling={false} style={styles.checkSettingLabel}>Push tasks to my calendar as events</Text>
+              <Text allowFontScaling={false} style={styles.checkSettingHint}>
                 Apple Reminders can't be reached by any third-party app, so an all-day event is the
                 only way to see tasks on your phone. Completed tasks get a ✓ in the title. Undated
                 tasks are never pushed — there's no day to put them on.
@@ -2887,15 +2912,15 @@ export function AgendaScreen(): React.JSX.Element {
 
           {settingsTab === 'help' && (
             <>
-          <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Adding Items by Handwriting</Text>
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Adding Items by Handwriting</Text>
           <View style={styles.hintBox}>
-            <Text style={styles.hintTitle}>Write it on one line</Text>
-            <Text style={styles.hintText}>
+            <Text allowFontScaling={false} style={styles.hintTitle}>Write it on one line</Text>
+            <Text allowFontScaling={false} style={styles.hintText}>
               Lasso your writing, then tap Add to Calendar. Keep the date, time and title on a
               single line:
             </Text>
-            <Text style={styles.hintExample}>08-20-2026 10:00A Meeting B</Text>
-            <Text style={styles.hintText}>
+            <Text allowFontScaling={false} style={styles.hintExample}>08-20-2026 10:00A Meeting B</Text>
+            <Text allowFontScaling={false} style={styles.hintText}>
               Splitting them across lines confuses the handwriting recogniser and it misreads
               times. With no date or time, the item becomes a task dated today.
             </Text>
@@ -2904,14 +2929,14 @@ export function AgendaScreen(): React.JSX.Element {
           {diagLogs.length > 0 && (
             <View style={styles.diagLogBox}>
               <TouchableOpacity onPress={() => setShowDiagLogs(!showDiagLogs)}>
-                <Text style={styles.diagLogTitle}>
+                <Text allowFontScaling={false} style={styles.diagLogTitle}>
                   {showDiagLogs ? '▾' : '▸'} CalDAV Diagnostic Trace Log ({diagLogs.length} lines) —
                   tap to {showDiagLogs ? 'hide' : 'show'}
                 </Text>
               </TouchableOpacity>
               {showDiagLogs &&
                 diagLogs.map((logLine, idx) => (
-                  <Text key={idx} style={styles.diagLogLine}>
+                  <Text allowFontScaling={false} key={idx} style={styles.diagLogLine}>
                     {logLine}
                   </Text>
                 ))}
@@ -2931,21 +2956,21 @@ export function AgendaScreen(): React.JSX.Element {
           <View style={styles.dateNavRow}>
             <View style={styles.dateNavSide}>
               <TouchableOpacity style={styles.navBtn} onPress={handlePrevDay}>
-                <Text style={styles.navBtnText}>‹ Prev</Text>
+                <Text allowFontScaling={false} style={styles.navBtnText}>‹ Prev</Text>
               </TouchableOpacity>
             </View>
 
             <TouchableOpacity style={styles.dateNavCenter} onPress={handleOpenDatePicker}>
-              <Text style={styles.todayBtnText}>{dateHeading} ▾</Text>
+              <Text allowFontScaling={false} style={styles.todayBtnText}>{dateHeading} ▾</Text>
             </TouchableOpacity>
 
             <View style={[styles.dateNavSide, styles.dateNavSideRight]}>
               <TouchableOpacity style={styles.jumpTodayHeaderBtn} onPress={handleToday}>
-                <Text style={styles.jumpTodayHeaderBtnText}>🎯 Today</Text>
+                <Text allowFontScaling={false} style={styles.jumpTodayHeaderBtnText}>🎯 Today</Text>
               </TouchableOpacity>
 
               <TouchableOpacity style={styles.navBtn} onPress={handleNextDay}>
-                <Text style={styles.navBtnText}>Next ›</Text>
+                <Text allowFontScaling={false} style={styles.navBtnText}>Next ›</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -2954,21 +2979,21 @@ export function AgendaScreen(): React.JSX.Element {
           <Modal visible={showDeleteModal} transparent animationType="fade">
             <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowDeleteModal(false)}>
               <View style={styles.actionSheetContentCompact}>
-                <Text style={styles.actionSheetTitle}>Delete Recurring Event</Text>
-                <Text style={styles.bodyTextCenter}>"{pendingDeleteEvent?.summary}"</Text>
+                <Text allowFontScaling={false} style={styles.actionSheetTitle}>Delete Recurring Event</Text>
+                <Text allowFontScaling={false} style={styles.bodyTextCenter}>"{pendingDeleteEvent?.summary}"</Text>
 
                 <TouchableOpacity style={styles.deleteOptionBtn} onPress={handleDeleteSingleOccurrence}>
-                  <Text style={styles.deleteOptionBtnText}>
+                  <Text allowFontScaling={false} style={styles.deleteOptionBtnText}>
                     🗑️ Delete This Occurrence Only ({selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})
                   </Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.deleteOptionBtnDanger} onPress={handleDeleteEntireSeries}>
-                  <Text style={styles.deleteOptionBtnTextDanger}>🗑️ Delete Entire Recurring Series</Text>
+                  <Text allowFontScaling={false} style={styles.deleteOptionBtnTextDanger}>🗑️ Delete Entire Recurring Series</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowDeleteModal(false)}>
-                  <Text style={styles.cancelBtnText}>Cancel</Text>
+                  <Text allowFontScaling={false} style={styles.cancelBtnText}>Cancel</Text>
                 </TouchableOpacity>
               </View>
             </TouchableOpacity>
@@ -2982,7 +3007,7 @@ export function AgendaScreen(): React.JSX.Element {
               onPress={() => setShowDateActionSheet(false)}
             >
               <View style={styles.actionSheetContentCompact}>
-                <Text style={styles.actionSheetTitle}>
+                <Text allowFontScaling={false} style={styles.actionSheetTitle}>
                   Create Item for {selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                 </Text>
 
@@ -3001,7 +3026,7 @@ export function AgendaScreen(): React.JSX.Element {
                     handleRequestNoteCreation(blankEvt);
                   }}
                 >
-                  <Text style={styles.actionSheetBtnText}>📝 Create Blank Note</Text>
+                  <Text allowFontScaling={false} style={styles.actionSheetBtnText}>📝 Create Blank Note</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -3015,7 +3040,7 @@ export function AgendaScreen(): React.JSX.Element {
                     setShowItemCreationModal(true);
                   }}
                 >
-                  <Text style={styles.actionSheetBtnText}>📅 Add Event</Text>
+                  <Text allowFontScaling={false} style={styles.actionSheetBtnText}>📅 Add Event</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -3029,7 +3054,7 @@ export function AgendaScreen(): React.JSX.Element {
                     setShowItemCreationModal(true);
                   }}
                 >
-                  <Text style={styles.actionSheetBtnText}>☑️ Add Task</Text>
+                  <Text allowFontScaling={false} style={styles.actionSheetBtnText}>☑️ Add Task</Text>
                 </TouchableOpacity>
               </View>
             </TouchableOpacity>
@@ -3123,12 +3148,12 @@ export function AgendaScreen(): React.JSX.Element {
                 ['Past Due', todayTaskSections.pastDue, true],
               ] as Array<[string, CalendarTask[], boolean]>).map(([label, items, showDate]) => (
                 <View key={label} style={styles.gridStripCol}>
-                  <Text style={styles.gridStripLabel}>
+                  <Text allowFontScaling={false} style={styles.gridStripLabel}>
                     {label} ({items.length})
                   </Text>
 
                   {items.length === 0 ? (
-                    <Text style={styles.gridStripEmpty}>—</Text>
+                    <Text allowFontScaling={false} style={styles.gridStripEmpty}>—</Text>
                   ) : (
                     <>
                       {items.slice(0, STRIP_TASK_LIMIT).map(task => (
@@ -3136,21 +3161,21 @@ export function AgendaScreen(): React.JSX.Element {
                           <TouchableOpacity
                             onPress={() => handleToggleTask(task)}
                           >
-                            <Text style={styles.gridStripCheck}>{statusGlyph(taskStatus(task))}</Text>
+                            <Text allowFontScaling={false} style={styles.gridStripCheck}>{statusGlyph(taskStatus(task))}</Text>
                           </TouchableOpacity>
                           <TouchableOpacity style={styles.gridStripBody} onPress={() => handleEditTask(task)}>
                             {/* One string, date first. As a separate element
                                 after the body the date floated at the right
                                 edge of the column and read as belonging to the
                                 next one. */}
-                            <Text style={styles.gridStripText} numberOfLines={1}>
+                            <Text allowFontScaling={false} style={styles.gridStripText} numberOfLines={1}>
                               {taskRowLabel(task, showDate)}
                             </Text>
                           </TouchableOpacity>
                         </View>
                       ))}
                       {items.length > STRIP_TASK_LIMIT && (
-                        <Text style={styles.gridStripEmpty}>
+                        <Text allowFontScaling={false} style={styles.gridStripEmpty}>
                           +{items.length - STRIP_TASK_LIMIT} more
                         </Text>
                       )}
@@ -3212,14 +3237,14 @@ export function AgendaScreen(): React.JSX.Element {
                       style={[styles.weekDayCell, isSel && styles.weekDayCellActive]}
                       onPress={() => setSelectedDate(d)}
                     >
-                      <Text style={[styles.weekDayLetter, isSel && styles.weekDayTextActive]}>
+                      <Text allowFontScaling={false} style={[styles.weekDayLetter, isSel && styles.weekDayTextActive]}>
                         {DAY_LETTERS[d.getDay()]}
                       </Text>
-                      <Text style={[styles.weekDayNum, isSel && styles.weekDayTextActive]}>
+                      <Text allowFontScaling={false} style={[styles.weekDayNum, isSel && styles.weekDayTextActive]}>
                         {isToday ? `(${d.getDate()})` : d.getDate()}
                       </Text>
                       {milestone ? (
-                        <Text style={[styles.weekDayMilestone, isSel && styles.weekDayTextActive]}>
+                        <Text allowFontScaling={false} style={[styles.weekDayMilestone, isSel && styles.weekDayTextActive]}>
                           {milestone}
                         </Text>
                       ) : null}
@@ -3232,7 +3257,7 @@ export function AgendaScreen(): React.JSX.Element {
                 {/* ── SCHEDULE ─────────────────────────────────────────── */}
                 <View style={[styles.panel, isWideScreen && styles.panelHalf]}>
                   <View style={styles.panelHeader}>
-                    <Text style={styles.panelHeaderText}>
+                    <Text allowFontScaling={false} style={styles.panelHeaderText}>
                       📅 TODAY'S SCHEDULE ({events.length})
                     </Text>
                     <TouchableOpacity
@@ -3245,7 +3270,7 @@ export function AgendaScreen(): React.JSX.Element {
                         setShowItemCreationModal(true);
                       }}
                     >
-                      <Text style={styles.panelHeaderAction}>+ Event</Text>
+                      <Text allowFontScaling={false} style={styles.panelHeaderAction}>+ Event</Text>
                     </TouchableOpacity>
                   </View>
 
@@ -3271,14 +3296,14 @@ export function AgendaScreen(): React.JSX.Element {
                 {/* ── DAY FOCUS & TASKS ────────────────────────────────── */}
                 <View style={[styles.panel, isWideScreen && styles.panelHalf]}>
                   <View style={styles.panelHeader}>
-                    <Text style={styles.panelHeaderText}>❤️ FOCUS &amp; DAILY JOURNAL</Text>
+                    <Text allowFontScaling={false} style={styles.panelHeaderText}>❤️ FOCUS &amp; DAILY JOURNAL</Text>
                   </View>
 
                   {/* The journal is a card rather than a button: it is the
                       first thing on this side of the page, so it should read
                       as a place rather than an action. */}
                   <View style={styles.journalCard}>
-                    <Text style={styles.journalTitle}>
+                    <Text allowFontScaling={false} style={styles.journalTitle}>
                       📝 Daily Journal:{' '}
                       {selectedDate.toLocaleDateString('en-US', {
                         weekday: 'short',
@@ -3288,14 +3313,14 @@ export function AgendaScreen(): React.JSX.Element {
                       })}
                     </Text>
                     <TouchableOpacity style={styles.journalBtn} onPress={handleOpenDailyNote}>
-                      <Text style={styles.journalBtnText}>
+                      <Text allowFontScaling={false} style={styles.journalBtnText}>
                         {dailyNoteExists === false ? '📂 Create' : '📂 Open'} Today's Journal Note
                       </Text>
                     </TouchableOpacity>
                   </View>
 
                   <View style={styles.subHeader}>
-                    <Text style={styles.subHeaderText}>
+                    <Text allowFontScaling={false} style={styles.subHeaderText}>
                       ☑ TASKS &amp; DELIVERABLES ({countOpenTasks(daySections)})
                     </Text>
                     <TouchableOpacity
@@ -3308,7 +3333,7 @@ export function AgendaScreen(): React.JSX.Element {
                         setShowItemCreationModal(true);
                       }}
                     >
-                      <Text style={styles.panelHeaderAction}>+ Add Task</Text>
+                      <Text allowFontScaling={false} style={styles.panelHeaderAction}>+ Add Task</Text>
                     </TouchableOpacity>
                   </View>
 
@@ -3319,7 +3344,7 @@ export function AgendaScreen(): React.JSX.Element {
                   {countOpenTasks(daySections) === 0 &&
                   daySections.completed.length === 0 &&
                   daySections.upcoming.length === 0 ? (
-                    <Text style={styles.panelEmpty}>Nothing to do.</Text>
+                    <Text allowFontScaling={false} style={styles.panelEmpty}>Nothing to do.</Text>
                   ) : (
                     ([
                       // Same labels and order as the month-grid strip, so the
@@ -3332,16 +3357,16 @@ export function AgendaScreen(): React.JSX.Element {
                     ] as Array<[string, CalendarTask[], boolean]>).map(([label, items, showDate]) =>
                       items.length === 0 ? null : (
                         <View key={label || 'due'}>
-                          {label ? <Text style={styles.taskGroupLabel}>{label}</Text> : null}
+                          {label ? <Text allowFontScaling={false} style={styles.taskGroupLabel}>{label}</Text> : null}
                           {items.map(task => (
                             <View key={task.uid} style={styles.focusTaskRow}>
                               <TouchableOpacity
                                 onPress={() => handleToggleTask(task)}
                               >
-                                <Text style={styles.focusCheck}>{statusGlyph(taskStatus(task))}</Text>
+                                <Text allowFontScaling={false} style={styles.focusCheck}>{statusGlyph(taskStatus(task))}</Text>
                               </TouchableOpacity>
                               <TouchableOpacity style={styles.focusTaskBody} onPress={() => handleEditTask(task)}>
-                                <Text
+                                <Text allowFontScaling={false}
                                   style={[styles.focusTaskText, task.completed && styles.focusTaskDone]}
                                   numberOfLines={1}
                                 >
@@ -3353,7 +3378,7 @@ export function AgendaScreen(): React.JSX.Element {
                                   a task has a visible consequence rather than
                                   only mattering inside the PARA view. */}
                               {areaTagFor(task.uid) ? (
-                                <Text style={styles.areaTag} numberOfLines={1}>
+                                <Text allowFontScaling={false} style={styles.areaTag} numberOfLines={1}>
                                   {areaTagFor(task.uid)}
                                 </Text>
                               ) : null}
@@ -3362,7 +3387,7 @@ export function AgendaScreen(): React.JSX.Element {
                                 style={styles.focusTaskDelete}
                                 onPress={() => handleDeleteTask(task)}
                               >
-                                <Text style={styles.focusTaskDeleteText}>✕</Text>
+                                <Text allowFontScaling={false} style={styles.focusTaskDeleteText}>✕</Text>
                               </TouchableOpacity>
                             </View>
                           ))}
@@ -3372,11 +3397,11 @@ export function AgendaScreen(): React.JSX.Element {
                   )}
 
                   <View style={styles.subHeader}>
-                    <Text style={styles.subHeaderText}>🚀 ACTIVE PROJECTS (PARA)</Text>
+                    <Text allowFontScaling={false} style={styles.subHeaderText}>🚀 ACTIVE PROJECTS (PARA)</Text>
                   </View>
 
                   {activeProjects(projects).length === 0 ? (
-                    <Text style={styles.panelEmpty}>No active projects.</Text>
+                    <Text allowFontScaling={false} style={styles.panelEmpty}>No active projects.</Text>
                   ) : (
                     activeProjects(projects).map(project => {
                       const progress = projectProgress(tasks, project.id, {
@@ -3389,10 +3414,10 @@ export function AgendaScreen(): React.JSX.Element {
                           style={styles.dayProjectRow}
                           onPress={() => setViewMode('para')}
                         >
-                          <Text style={styles.dayProjectName} numberOfLines={1}>
+                          <Text allowFontScaling={false} style={styles.dayProjectName} numberOfLines={1}>
                             {project.name}
                           </Text>
-                          <Text style={styles.dayProjectMeta}>
+                          <Text allowFontScaling={false} style={styles.dayProjectMeta}>
                             {blockBar(progress.percent)} {progress.done}/{progress.total} tasks
                           </Text>
                         </TouchableOpacity>
@@ -3403,9 +3428,9 @@ export function AgendaScreen(): React.JSX.Element {
                   {/* Tomorrow at a glance. Without it the planner stops dead at
                       midnight, which is not how anyone plans an evening. */}
                   <View style={styles.subHeader}>
-                    <Text style={styles.subHeaderText}>🔮 LOOKAHEAD (TOMORROW)</Text>
+                    <Text allowFontScaling={false} style={styles.subHeaderText}>🔮 LOOKAHEAD (TOMORROW)</Text>
                   </View>
-                  <Text style={styles.lookaheadText}>{lookaheadSummary}</Text>
+                  <Text allowFontScaling={false} style={styles.lookaheadText}>{lookaheadSummary}</Text>
                 </View>
               </View>
             </ScrollView>
@@ -4004,9 +4029,16 @@ const styles = StyleSheet.create({
   dayProjectName: { flex: 1, fontSize: 12, fontWeight: 'bold', color: '#000000' },
   dayProjectMeta: { fontSize: 11, color: '#303030', marginLeft: 8 },
   timeRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  typeRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  // Constrained rather than full width: a name and two short buttons do not
+  // need the whole page, and a row that wide is harder to scan than a narrow one.
+  typeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    maxWidth: 660,
+  },
   typeIconInput: { width: 46, marginRight: 4, textAlign: 'center' },
-  typeNameInput: { flex: 1, marginRight: 4 },
+  typeNameInput: { width: 150, marginRight: 4 },
   typeFolderBtn: {
     borderWidth: 2,
     borderColor: '#000000',

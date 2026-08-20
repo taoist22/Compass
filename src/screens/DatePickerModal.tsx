@@ -44,11 +44,11 @@ export function DatePickerModal({
       <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
         <View style={styles.content} onStartShouldSetResponder={() => true}>
           <View style={styles.header}>
-            <Text style={styles.title}>
+            <Text allowFontScaling={false} style={styles.title}>
               {month === null ? 'Pick a month' : `${MONTH_NAMES[month]} ${year}`}
             </Text>
             <TouchableOpacity onPress={onClose}>
-              <Text style={styles.closeText}>✕</Text>
+              <Text allowFontScaling={false} style={styles.closeText}>✕</Text>
             </TouchableOpacity>
           </View>
 
@@ -56,11 +56,11 @@ export function DatePickerModal({
             <>
               <View style={styles.yearRow}>
                 <TouchableOpacity style={styles.yearBtn} onPress={() => setYear(year - 1)}>
-                  <Text style={styles.yearBtnText}>‹</Text>
+                  <Text allowFontScaling={false} style={styles.yearBtnText}>‹</Text>
                 </TouchableOpacity>
-                <Text style={styles.yearText}>{year}</Text>
+                <Text allowFontScaling={false} style={styles.yearText}>{year}</Text>
                 <TouchableOpacity style={styles.yearBtn} onPress={() => setYear(year + 1)}>
-                  <Text style={styles.yearBtnText}>›</Text>
+                  <Text allowFontScaling={false} style={styles.yearBtnText}>›</Text>
                 </TouchableOpacity>
               </View>
 
@@ -73,7 +73,7 @@ export function DatePickerModal({
                       style={[styles.monthCell, active && styles.cellActive]}
                       onPress={() => setMonth(idx)}
                     >
-                      <Text style={[styles.cellText, active && styles.cellTextActive]}>{name}</Text>
+                      <Text allowFontScaling={false} style={[styles.cellText, active && styles.cellTextActive]}>{name}</Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -96,14 +96,14 @@ export function DatePickerModal({
                         onClose();
                       }}
                     >
-                      <Text style={[styles.cellText, active && styles.cellTextActive]}>{day}</Text>
+                      <Text allowFontScaling={false} style={[styles.cellText, active && styles.cellTextActive]}>{day}</Text>
                     </TouchableOpacity>
                   );
                 })}
               </View>
 
               <TouchableOpacity style={styles.backBtn} onPress={() => setMonth(null)}>
-                <Text style={styles.backBtnText}>‹ Months</Text>
+                <Text allowFontScaling={false} style={styles.backBtnText}>‹ Months</Text>
               </TouchableOpacity>
             </>
           )}
@@ -115,7 +115,7 @@ export function DatePickerModal({
               onClose();
             }}
           >
-            <Text style={styles.todayBtnText}>🎯 Today</Text>
+            <Text allowFontScaling={false} style={styles.todayBtnText}>🎯 Today</Text>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>

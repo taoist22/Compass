@@ -106,12 +106,18 @@ export function DayScheduleGrid({
               </TouchableOpacity>
 
               <View style={styles.blockActions}>
-                <TouchableOpacity onPress={() => onNoteAction(event, existingPath)}>
-                  <Text allowFontScaling={false} style={styles.blockAction}>
-                    {existingPath ? '📂 Open Note' : '📝 Note'}
+                {/* The action takes the room it needs and the delete stays a
+                    fixed sliver, rather than the two splitting evenly and
+                    truncating the only label that carries meaning. */}
+                <TouchableOpacity
+                  style={styles.blockActionBtn}
+                  onPress={() => onNoteAction(event, existingPath)}
+                >
+                  <Text allowFontScaling={false} style={styles.blockAction} numberOfLines={1}>
+                    {existingPath ? '📂 Open Note' : '📝 Create Note'}
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => onDeleteEvent(event)}>
+                <TouchableOpacity style={styles.blockDeleteBtn} onPress={() => onDeleteEvent(event)}>
                   <Text allowFontScaling={false} style={styles.blockDelete}>
                     ✕
                   </Text>
@@ -152,7 +158,7 @@ const styles = StyleSheet.create({
   },
   hourLabel: {
     width: GUTTER,
-    fontSize: 11,
+    fontSize: 12,
     color: '#303030',
     textAlign: 'right',
     paddingRight: 8,
@@ -183,9 +189,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   blockBody: { flex: 1 },
-  blockTitle: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
-  blockMeta: { fontSize: 10, color: '#404040' },
-  blockActions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  blockAction: { fontSize: 10, fontWeight: 'bold', color: '#000000' },
-  blockDelete: { fontSize: 11, color: '#606060', paddingHorizontal: 4 },
+  blockTitle: { fontSize: 13, fontWeight: 'bold', color: '#000000' },
+  blockMeta: { fontSize: 11, color: '#404040' },
+  blockActions: { flexDirection: 'row', alignItems: 'center' },
+  blockActionBtn: { flex: 1 },
+  blockAction: { fontSize: 11, fontWeight: 'bold', color: '#000000' },
+  blockDeleteBtn: { paddingLeft: 8 },
+  blockDelete: { fontSize: 12, color: '#606060' },
 });

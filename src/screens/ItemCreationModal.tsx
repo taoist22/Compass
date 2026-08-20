@@ -360,11 +360,11 @@ export function ItemCreationModal({
         <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
           <View style={styles.modalHeader}>
             {/* The same form both creates and edits, so it has to say which. */}
-            <Text style={styles.modalTitle}>
+            <Text allowFontScaling={false} style={styles.modalTitle}>
               {`${editingEvent ? 'Edit' : 'New'} ${itemKind === 'event' ? 'Event' : 'Task'}`}
             </Text>
             <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-              <Text style={styles.closeBtnText}>✕ Close</Text>
+              <Text allowFontScaling={false} style={styles.closeBtnText}>✕ Close</Text>
             </TouchableOpacity>
           </View>
 
@@ -374,11 +374,11 @@ export function ItemCreationModal({
           {initialParsed?.interpretation ? (
             <View style={styles.captureBox}>
               {initialParsed.sourceText ? (
-                <Text style={styles.captureRead}>read: "{initialParsed.sourceText}"</Text>
+                <Text allowFontScaling={false} style={styles.captureRead}>read: "{initialParsed.sourceText}"</Text>
               ) : null}
-              <Text style={styles.captureInterp}>→ {initialParsed.interpretation}</Text>
+              <Text allowFontScaling={false} style={styles.captureInterp}>→ {initialParsed.interpretation}</Text>
               {initialParsed.ambiguousDateOrder ? (
-                <Text style={styles.captureWarn}>
+                <Text allowFontScaling={false} style={styles.captureWarn}>
                   ⚠ Ambiguous date — check the day and month are the right way round.
                 </Text>
               ) : null}
@@ -393,16 +393,16 @@ export function ItemCreationModal({
           {!(itemKind === 'task' && noDueDate) && (
             <View style={styles.dateRow}>
               <TouchableOpacity style={styles.dateNavBtn} onPress={() => shiftDate(-1)}>
-                <Text style={styles.dateNavBtnText}>◀</Text>
+                <Text allowFontScaling={false} style={styles.dateNavBtnText}>◀</Text>
               </TouchableOpacity>
 
               <TouchableOpacity style={styles.dateDisplay} onPress={() => setShowDatePicker(true)}>
-                <Text style={styles.dateLabel}>{formattedDateStr} ▾</Text>
-                <Text style={styles.dateHint}>tap to change</Text>
+                <Text allowFontScaling={false} style={styles.dateLabel}>{formattedDateStr} ▾</Text>
+                <Text allowFontScaling={false} style={styles.dateHint}>tap to change</Text>
               </TouchableOpacity>
 
               <TouchableOpacity style={styles.dateNavBtn} onPress={() => shiftDate(1)}>
-                <Text style={styles.dateNavBtnText}>▶</Text>
+                <Text allowFontScaling={false} style={styles.dateNavBtnText}>▶</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -420,7 +420,7 @@ export function ItemCreationModal({
               style={[styles.kindBtn, itemKind === 'event' && styles.kindBtnActive]}
               onPress={() => setItemKind('event')}
             >
-              <Text style={[styles.kindBtnText, itemKind === 'event' && styles.kindBtnTextActive]}>
+              <Text allowFontScaling={false} style={[styles.kindBtnText, itemKind === 'event' && styles.kindBtnTextActive]}>
                 📅 Calendar Event
               </Text>
             </TouchableOpacity>
@@ -428,7 +428,7 @@ export function ItemCreationModal({
               style={[styles.kindBtn, itemKind === 'task' && styles.kindBtnActive]}
               onPress={() => setItemKind('task')}
             >
-              <Text style={[styles.kindBtnText, itemKind === 'task' && styles.kindBtnTextActive]}>
+              <Text allowFontScaling={false} style={[styles.kindBtnText, itemKind === 'task' && styles.kindBtnTextActive]}>
                 ✅ Task
               </Text>
             </TouchableOpacity>
@@ -443,7 +443,7 @@ export function ItemCreationModal({
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={styles.formContentInner}
           >
-            <Text style={styles.label}>{itemKind === 'event' ? 'Event Title:' : 'Task Name:'}</Text>
+            <Text allowFontScaling={false} style={styles.label}>{itemKind === 'event' ? 'Event Title:' : 'Task Name:'}</Text>
             <TextInput
               style={styles.textInput}
               value={title}
@@ -457,15 +457,15 @@ export function ItemCreationModal({
             <View style={styles.checkRow}>
               {itemKind === 'task' && (
                 <TouchableOpacity style={styles.checkToggle} onPress={() => setNoDueDate(!noDueDate)}>
-                  <Text style={styles.checkToggleBox}>{noDueDate ? '☑' : '☐'}</Text>
-                  <Text style={styles.checkToggleLabel}>No due date</Text>
+                  <Text allowFontScaling={false} style={styles.checkToggleBox}>{noDueDate ? '☑' : '☐'}</Text>
+                  <Text allowFontScaling={false} style={styles.checkToggleLabel}>No due date</Text>
                 </TouchableOpacity>
               )}
 
               {!(itemKind === 'task' && noDueDate) && (
                 <TouchableOpacity style={styles.checkToggle} onPress={() => setIsAllDay(!isAllDay)}>
-                  <Text style={styles.checkToggleBox}>{isAllDay ? '☑' : '☐'}</Text>
-                  <Text style={styles.checkToggleLabel}>
+                  <Text allowFontScaling={false} style={styles.checkToggleBox}>{isAllDay ? '☑' : '☐'}</Text>
+                  <Text allowFontScaling={false} style={styles.checkToggleLabel}>
                     {itemKind === 'task' ? 'No specific time' : 'All day'}
                   </Text>
                 </TouchableOpacity>
@@ -479,7 +479,7 @@ export function ItemCreationModal({
                     effort than nudging to it fifteen minutes at a time. */}
                 <View style={styles.timeFieldRow}>
                   <View style={styles.timeField}>
-                    <Text style={styles.label}>{itemKind === 'event' ? 'Start' : 'Due time'}</Text>
+                    <Text allowFontScaling={false} style={styles.label}>{itemKind === 'event' ? 'Start' : 'Due time'}</Text>
                     <View style={styles.timeEntryRow}>
                       <TextInput
                         style={[
@@ -497,14 +497,14 @@ export function ItemCreationModal({
                       />
                       {/* The meridiem is a tap, not something to write. */}
                       <TouchableOpacity style={styles.meridiemBtn} onPress={toggleStartMeridiem}>
-                        <Text style={styles.meridiemText}>{isPm(timeRange.start) ? 'PM' : 'AM'}</Text>
+                        <Text allowFontScaling={false} style={styles.meridiemText}>{isPm(timeRange.start) ? 'PM' : 'AM'}</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
 
                   {itemKind === 'event' && (
                     <View style={styles.timeField}>
-                      <Text style={styles.label}>End</Text>
+                      <Text allowFontScaling={false} style={styles.label}>End</Text>
                       <View style={styles.timeEntryRow}>
                         <TextInput
                           style={[
@@ -521,14 +521,14 @@ export function ItemCreationModal({
                           autoCorrect={false}
                         />
                         <TouchableOpacity style={styles.meridiemBtn} onPress={toggleEndMeridiem}>
-                          <Text style={styles.meridiemText}>{isPm(timeRange.end) ? 'PM' : 'AM'}</Text>
+                          <Text allowFontScaling={false} style={styles.meridiemText}>{isPm(timeRange.end) ? 'PM' : 'AM'}</Text>
                         </TouchableOpacity>
                       </View>
                     </View>
                   )}
                 </View>
 
-                <Text style={styles.durationHint}>
+                <Text allowFontScaling={false} style={styles.durationHint}>
                   {startInvalid || endInvalid
                     ? 'Try 9, 9:30, 930 or 14:00 — AM/PM is the button.'
                     : itemKind === 'event'
@@ -542,7 +542,7 @@ export function ItemCreationModal({
 
             {itemKind === 'event' && (
               <>
-                <Text style={styles.label}>Location / Room (Optional):</Text>
+                <Text allowFontScaling={false} style={styles.label}>Location / Room (Optional):</Text>
                 <TextInput
                   style={styles.textInput}
                   value={location}
@@ -555,7 +555,7 @@ export function ItemCreationModal({
 
             {isTaskForm && (
               <>
-                <Text style={styles.label}>Status:</Text>
+                <Text allowFontScaling={false} style={styles.label}>Status:</Text>
                 <View style={styles.chipRow}>
                   {TASK_STATUSES.map(st => (
                     <TouchableOpacity
@@ -563,7 +563,7 @@ export function ItemCreationModal({
                       style={[styles.stateChip, taskStatusValue === st && styles.stateChipSelected]}
                       onPress={() => setTaskStatusValue(st)}
                     >
-                      <Text
+                      <Text allowFontScaling={false}
                         style={[
                           styles.stateChipText,
                           taskStatusValue === st && styles.stateChipTextSelected,
@@ -575,13 +575,13 @@ export function ItemCreationModal({
                   ))}
                 </View>
 
-                <Text style={styles.label}>Area:</Text>
+                <Text allowFontScaling={false} style={styles.label}>Area:</Text>
                 <View style={styles.chipRow}>
                   <TouchableOpacity
                     style={[styles.stateChip, !areaValue && styles.stateChipSelected]}
                     onPress={() => setAreaValue(undefined)}
                   >
-                    <Text style={[styles.stateChipText, !areaValue && styles.stateChipTextSelected]}>
+                    <Text allowFontScaling={false} style={[styles.stateChipText, !areaValue && styles.stateChipTextSelected]}>
                       None
                     </Text>
                   </TouchableOpacity>
@@ -594,7 +594,7 @@ export function ItemCreationModal({
                         style={[styles.stateChip, areaValue === a.id && styles.stateChipSelected]}
                         onPress={() => setAreaValue(a.id)}
                       >
-                        <Text
+                        <Text allowFontScaling={false}
                           style={[
                             styles.stateChipText,
                             areaValue === a.id && styles.stateChipTextSelected,
@@ -607,7 +607,7 @@ export function ItemCreationModal({
 
                   {onCreateArea && !addingArea && (
                     <TouchableOpacity style={styles.stateChip} onPress={() => setAddingArea(true)}>
-                      <Text style={styles.stateChipText}>+ New</Text>
+                      <Text allowFontScaling={false} style={styles.stateChipText}>+ New</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -637,18 +637,18 @@ export function ItemCreationModal({
                         setAddingArea(false);
                       }}
                     >
-                      <Text style={styles.meridiemText}>Add</Text>
+                      <Text allowFontScaling={false} style={styles.meridiemText}>Add</Text>
                     </TouchableOpacity>
                   </View>
                 )}
 
-                <Text style={styles.label}>Project:</Text>
+                <Text allowFontScaling={false} style={styles.label}>Project:</Text>
                 <View style={styles.chipRow}>
                   <TouchableOpacity
                     style={[styles.stateChip, !projectValue && styles.stateChipSelected]}
                     onPress={() => setProjectValue(undefined)}
                   >
-                    <Text
+                    <Text allowFontScaling={false}
                       style={[styles.stateChipText, !projectValue && styles.stateChipTextSelected]}
                     >
                       None
@@ -665,7 +665,7 @@ export function ItemCreationModal({
                         style={[styles.stateChip, projectValue === pr.id && styles.stateChipSelected]}
                         onPress={() => setProjectValue(pr.id)}
                       >
-                        <Text
+                        <Text allowFontScaling={false}
                           style={[
                             styles.stateChipText,
                             projectValue === pr.id && styles.stateChipTextSelected,
@@ -678,7 +678,7 @@ export function ItemCreationModal({
 
                   {onCreateProject && !addingProject && (
                     <TouchableOpacity style={styles.stateChip} onPress={() => setAddingProject(true)}>
-                      <Text style={styles.stateChipText}>+ New</Text>
+                      <Text allowFontScaling={false} style={styles.stateChipText}>+ New</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -706,12 +706,12 @@ export function ItemCreationModal({
                         setAddingProject(false);
                       }}
                     >
-                      <Text style={styles.meridiemText}>Add</Text>
+                      <Text allowFontScaling={false} style={styles.meridiemText}>Add</Text>
                     </TouchableOpacity>
                   </View>
                 )}
 
-                <Text style={styles.label}>Priority:</Text>
+                <Text allowFontScaling={false} style={styles.label}>Priority:</Text>
                 <View style={styles.chipRow}>
                   {TASK_PRIORITIES.map(p => (
                     <TouchableOpacity
@@ -719,7 +719,7 @@ export function ItemCreationModal({
                       style={[styles.stateChip, taskPriorityValue === p && styles.stateChipSelected]}
                       onPress={() => setTaskPriorityValue(p)}
                     >
-                      <Text
+                      <Text allowFontScaling={false}
                         style={[
                           styles.stateChipText,
                           taskPriorityValue === p && styles.stateChipTextSelected,
@@ -737,13 +737,13 @@ export function ItemCreationModal({
               <>
                 {/* Settles where this event's notes go and what they look like,
                     so creating one asks nothing. */}
-                <Text style={styles.label}>Event Type:</Text>
+                <Text allowFontScaling={false} style={styles.label}>Event Type:</Text>
                 <View style={styles.chipRow}>
                   <TouchableOpacity
                     style={[styles.stateChip, !typeValue && styles.stateChipSelected]}
                     onPress={() => setTypeValue(undefined)}
                   >
-                    <Text style={[styles.stateChipText, !typeValue && styles.stateChipTextSelected]}>
+                    <Text allowFontScaling={false} style={[styles.stateChipText, !typeValue && styles.stateChipTextSelected]}>
                       None
                     </Text>
                   </TouchableOpacity>
@@ -756,7 +756,7 @@ export function ItemCreationModal({
                         style={[styles.stateChip, typeValue === t.id && styles.stateChipSelected]}
                         onPress={() => setTypeValue(t.id)}
                       >
-                        <Text
+                        <Text allowFontScaling={false}
                           style={[
                             styles.stateChipText,
                             typeValue === t.id && styles.stateChipTextSelected,
@@ -771,7 +771,7 @@ export function ItemCreationModal({
               </>
             )}
 
-            <Text style={styles.label}>Description / Details:</Text>
+            <Text allowFontScaling={false} style={styles.label}>Description / Details:</Text>
             <TextInput
               style={[styles.textInput, styles.multilineInput]}
               value={description}
@@ -788,7 +788,7 @@ export function ItemCreationModal({
               was clipped off screen entirely. */}
           <View style={styles.footerRow}>
             <TouchableOpacity style={[styles.saveBtn, styles.footerGrow]} onPress={handleSave}>
-              <Text style={styles.saveBtnText}>
+              <Text allowFontScaling={false} style={styles.saveBtnText}>
                 💾 Save {itemKind === 'event' ? 'Event' : 'Task'}
               </Text>
             </TouchableOpacity>
@@ -804,7 +804,7 @@ export function ItemCreationModal({
               >
                 {/* Labelled, not a bare icon: an unlabelled 🗑️ beside Save was
                     easy to miss entirely. */}
-                <Text style={styles.deleteTaskBtnText}>🗑️ Delete</Text>
+                <Text allowFontScaling={false} style={styles.deleteTaskBtnText}>🗑️ Delete</Text>
               </TouchableOpacity>
             )}
           </View>
