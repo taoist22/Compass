@@ -9,7 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { CalendarEvent, CalendarFeed, CalendarTask, TaskPriority, TaskStatus } from '../domain/types';
+import { Area, CalendarEvent, CalendarFeed, CalendarTask, TaskPriority, TaskStatus } from '../domain/types';
 import {
   TASK_PRIORITIES,
   TASK_STATUSES,
@@ -72,6 +72,7 @@ interface ItemCreationModalProps {
     notes?: string;
     status?: TaskStatus;
     priority?: TaskPriority;
+    areaId?: string;
   }) => void;
   /**
    * The task being edited, when one is. Passed whole rather than as separate
@@ -81,6 +82,10 @@ interface ItemCreationModalProps {
   editingTask?: CalendarTask | null;
   /** Only offered while editing an existing item, never while creating one. */
   onDeleteTask?: (uid: string) => void;
+  /** PARA areas to choose from, and the one this task is filed under. */
+  areas?: Area[];
+  taskAreaId?: string;
+  onCreateArea?: (name: string) => string;
 }
 
 
@@ -97,6 +102,9 @@ export function ItemCreationModal({
   onCreateTask,
   onDeleteTask,
   editingTask,
+  areas = [],
+  taskAreaId,
+  onCreateArea,
 }: ItemCreationModalProps): React.JSX.Element {
   const [title, setTitle] = useState<string>('');
 
@@ -169,6 +177,9 @@ export function ItemCreationModal({
   const isTaskForm = Boolean(editingTask) || itemKind === 'task';
   const [taskStatusValue, setTaskStatusValue] = useState<TaskStatus>('todo');
   const [taskPriorityValue, setTaskPriorityValue] = useState<TaskPriority>(1);
+  const [areaValue, setAreaValue] = useState<string | undefined>(undefined);
+  const [newAreaName, setNewAreaName] = useState<string>('');
+  const [addingArea, setAddingArea] = useState<boolean>(false);
 
   // Reseed every time the modal opens: with the edited item's values, or with
   // freshly captured lasso text, so a second open never shows stale state.
@@ -195,6 +206,9 @@ export function ItemCreationModal({
       setNoDueDate(false);
       setTaskStatusValue(editingTask ? taskStatus(editingTask) : 'todo');
       setTaskPriorityValue(editingTask?.priority || 1);
+      setAreaValue(taskAreaId);
+      setAddingArea(false);
+      setNewAreaName('');
       return;
     }
 
@@ -202,6 +216,9 @@ export function ItemCreationModal({
     setItemKind(type);
     setTaskStatusValue('todo');
     setTaskPriorityValue(1);
+    setAreaValue(undefined);
+    setAddingArea(false);
+    setNewAreaName('');
     setTimeRange({ start: 9 * 60, end: 10 * 60 });
     setStartText(formatClock(9 * 60));
     setEndText(formatClock(10 * 60));
@@ -223,7 +240,7 @@ export function ItemCreationModal({
     } else {
       setIsAllDay(initialParsed ? initialParsed.allDay : type === 'task');
     }
-  }, [visible, initialTitle, initialParsed, type, editingEvent, targetDate, editingTask]);
+  }, [visible, initialTitle, initialParsed, type, editingEvent, targetDate, editingTask, taskAreaId]);
 
   const shiftDate = (days: number) => {
     setItemDate(prev => {
@@ -280,6 +297,7 @@ export function ItemCreationModal({
         uid: editingEvent?.uid,
         status: taskStatusValue,
         priority: taskPriorityValue,
+        areaId: areaValue,
         title: title.trim(),
         // Omitted entirely when the user has said it has no due date, so the
         // task lands in No Date rather than being silently dated today.
@@ -521,6 +539,73 @@ export function ItemCreationModal({
                     </TouchableOpacity>
                   ))}
                 </View>
+
+                <Text style={styles.label}>Area:</Text>
+                <View style={styles.chipRow}>
+                  <TouchableOpacity
+                    style={[styles.stateChip, !areaValue && styles.stateChipSelected]}
+                    onPress={() => setAreaValue(undefined)}
+                  >
+                    <Text style={[styles.stateChipText, !areaValue && styles.stateChipTextSelected]}>
+                      None
+                    </Text>
+                  </TouchableOpacity>
+
+                  {areas
+                    .filter(a => !a.archived)
+                    .map(a => (
+                      <TouchableOpacity
+                        key={a.id}
+                        style={[styles.stateChip, areaValue === a.id && styles.stateChipSelected]}
+                        onPress={() => setAreaValue(a.id)}
+                      >
+                        <Text
+                          style={[
+                            styles.stateChipText,
+                            areaValue === a.id && styles.stateChipTextSelected,
+                          ]}
+                        >
+                          {a.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+
+                  {onCreateArea && !addingArea && (
+                    <TouchableOpacity style={styles.stateChip} onPress={() => setAddingArea(true)}>
+                      <Text style={styles.stateChipText}>+ New</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Created inline so filing a task never means leaving the
+                    form to go and set an area up first. */}
+                {addingArea && onCreateArea && (
+                  <View style={styles.timeEntryRow}>
+                    <TextInput
+                      style={[styles.textInput, styles.timeInput]}
+                      value={newAreaName}
+                      onChangeText={setNewAreaName}
+                      placeholder="Area name"
+                      placeholderTextColor="#707070"
+                      autoCorrect={false}
+                    />
+                    <TouchableOpacity
+                      style={styles.meridiemBtn}
+                      onPress={() => {
+                        const name = newAreaName.trim();
+                        if (!name) {
+                          setAddingArea(false);
+                          return;
+                        }
+                        setAreaValue(onCreateArea(name));
+                        setNewAreaName('');
+                        setAddingArea(false);
+                      }}
+                    >
+                      <Text style={styles.meridiemText}>Add</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
 
                 <Text style={styles.label}>Priority:</Text>
                 <View style={styles.chipRow}>

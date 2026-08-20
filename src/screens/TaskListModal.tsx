@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { CalendarTask } from '../domain/types';
+import { Area, CalendarTask } from '../domain/types';
 import { statusGlyph, taskRowLabel, taskStatus } from '../domain/taskModel';
 import {
   TASK_GROUPINGS,
@@ -8,6 +8,7 @@ import {
   TaskGrouping,
   TaskScope,
   countGrouped,
+  filterByArea,
   filterByScope,
   groupTasks,
   groupingLabel,
@@ -17,6 +18,9 @@ import {
 interface TaskListModalProps {
   visible: boolean;
   tasks: CalendarTask[];
+  areas: Area[];
+  /** Area membership by task uid; it lives outside the task itself. */
+  areaOf: (uid: string) => string | undefined;
   onClose: () => void;
   onToggle: (task: CalendarTask) => void;
   onEdit: (task: CalendarTask) => void;
@@ -34,15 +38,37 @@ interface TaskListModalProps {
 export function TaskListModal({
   visible,
   tasks,
+  areas,
+  areaOf,
   onClose,
   onToggle,
   onEdit,
 }: TaskListModalProps): React.JSX.Element {
   const [scope, setScope] = useState<TaskScope>('open');
   const [grouping, setGrouping] = useState<TaskGrouping>('due');
+  const [areaId, setAreaId] = useState<string | null>(null);
 
-  const groups = groupTasks(filterByScope(tasks, scope), grouping);
+  const lookup = {
+    areaOf,
+    nameOf: (id: string) => areas.find(a => a.id === id)?.name || 'Area',
+  };
+
+  const groups = groupTasks(
+    filterByArea(filterByScope(tasks, scope), areaId, lookup),
+    grouping,
+    new Date(),
+    lookup
+  );
   const total = countGrouped(groups);
+
+  /**
+   * Filtering to one area makes grouping by area pointless — every row would
+   * land in a single heading — so the grouping steps aside.
+   */
+  const chooseArea = (next: string | null) => {
+    setAreaId(next);
+    if (next && grouping === 'area') setGrouping('due');
+  };
 
   return (
     <Modal visible={visible} transparent animationType="fade">
@@ -98,6 +124,44 @@ export function TaskListModal({
               </TouchableOpacity>
             ))}
           </View>
+
+          {areas.length > 0 && (
+            <>
+              <Text allowFontScaling={false} style={styles.filterLabel}>
+                Area
+              </Text>
+              <View style={styles.chipRow}>
+                <TouchableOpacity
+                  style={[styles.chip, areaId === null && styles.chipActive]}
+                  onPress={() => chooseArea(null)}
+                >
+                  <Text
+                    allowFontScaling={false}
+                    style={[styles.chipText, areaId === null && styles.chipTextActive]}
+                  >
+                    All
+                  </Text>
+                </TouchableOpacity>
+
+                {areas
+                  .filter(a => !a.archived)
+                  .map(a => (
+                    <TouchableOpacity
+                      key={a.id}
+                      style={[styles.chip, areaId === a.id && styles.chipActive]}
+                      onPress={() => chooseArea(a.id)}
+                    >
+                      <Text
+                        allowFontScaling={false}
+                        style={[styles.chipText, areaId === a.id && styles.chipTextActive]}
+                      >
+                        {a.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+              </View>
+            </>
+          )}
 
           <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
             {groups.length === 0 ? (

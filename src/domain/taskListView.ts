@@ -10,7 +10,7 @@ import { CalendarTask, TaskStatus } from './types';
  */
 
 export type TaskScope = 'open' | 'today' | 'upcoming' | 'done' | 'all';
-export type TaskGrouping = 'none' | 'status' | 'priority' | 'due';
+export type TaskGrouping = 'none' | 'status' | 'priority' | 'due' | 'area';
 
 export const TASK_SCOPES: TaskScope[] = ['open', 'today', 'upcoming', 'done', 'all'];
 
@@ -26,13 +26,14 @@ export function scopeLabel(scope: TaskScope): string {
   return SCOPE_LABELS[scope];
 }
 
-export const TASK_GROUPINGS: TaskGrouping[] = ['none', 'status', 'priority', 'due'];
+export const TASK_GROUPINGS: TaskGrouping[] = ['none', 'status', 'priority', 'due', 'area'];
 
 const GROUPING_LABELS: Record<TaskGrouping, string> = {
   none: 'Flat',
   status: 'Status',
   priority: 'Priority',
   due: 'Due',
+  area: 'Area',
 };
 
 export function groupingLabel(grouping: TaskGrouping): string {
@@ -102,6 +103,22 @@ function dueBucket(task: CalendarTask, now: Date): { key: string; label: string;
   return { key: 'later', label: 'Later', rank: 3 };
 }
 
+export interface AreaLookup {
+  /** Area id for a task, by its uid. Absent means unfiled. */
+  areaOf: (uid: string) => string | undefined;
+  nameOf: (areaId: string) => string;
+}
+
+/** Narrows to one area. Membership lives outside the task, keyed by uid. */
+export function filterByArea(
+  tasks: CalendarTask[],
+  areaId: string | null,
+  lookup: AreaLookup
+): CalendarTask[] {
+  if (!areaId) return tasks;
+  return tasks.filter(t => lookup.areaOf(t.uid) === areaId);
+}
+
 /**
  * Groups a filtered list for display.
  *
@@ -111,7 +128,8 @@ function dueBucket(task: CalendarTask, now: Date): { key: string; label: string;
 export function groupTasks(
   tasks: CalendarTask[],
   grouping: TaskGrouping,
-  now: Date = new Date()
+  now: Date = new Date(),
+  lookup?: AreaLookup
 ): TaskGroup[] {
   const sorted = [...tasks].sort(compareTasks);
 
@@ -137,6 +155,24 @@ export function groupTasks(
     return buckets
       .map(b => ({ key: b.key, label: b.label, tasks: sorted.filter(b.match) }))
       .filter(g => g.tasks.length > 0);
+  }
+
+  if (grouping === 'area') {
+    // Unfiled last: it is a residue, not a peer of the areas you named.
+    const byArea = new Map<string, TaskGroup>();
+    for (const task of sorted) {
+      const areaId = lookup?.areaOf(task.uid);
+      const key = areaId || '__unfiled';
+      const label = areaId ? lookup?.nameOf(areaId) || 'Area' : 'Unfiled';
+      const existing = byArea.get(key);
+      if (existing) existing.tasks.push(task);
+      else byArea.set(key, { key, label, tasks: [task] });
+    }
+    return [...byArea.values()].sort((a, b) => {
+      if (a.key === '__unfiled') return 1;
+      if (b.key === '__unfiled') return -1;
+      return a.label.localeCompare(b.label);
+    });
   }
 
   const byBucket = new Map<string, TaskGroup & { rank: number }>();

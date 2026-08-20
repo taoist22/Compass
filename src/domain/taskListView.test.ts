@@ -1,5 +1,6 @@
 import {
   countGrouped,
+  filterByArea,
   filterByScope,
   groupTasks,
   groupingLabel,
@@ -191,5 +192,54 @@ describe('labels', () => {
   test('groupings read as plain words', () => {
     expect(groupingLabel('none')).toBe('Flat');
     expect(groupingLabel('due')).toBe('Due');
+  });
+});
+
+describe('areas', () => {
+  const membership: Record<string, string> = { a: 'area-work', b: 'area-eng', c: 'area-work' };
+  const names: Record<string, string> = { 'area-work': 'Work', 'area-eng': 'ENG 102' };
+  const lookup = {
+    areaOf: (uid: string) => membership[uid],
+    nameOf: (id: string) => names[id],
+  };
+
+  const tasks = [makeTask('a'), makeTask('b'), makeTask('c'), makeTask('d')];
+
+  test('filtering narrows to one area', () => {
+    expect(filterByArea(tasks, 'area-work', lookup).map(t => t.uid)).toEqual(['a', 'c']);
+  });
+
+  test('no area selected leaves the list untouched', () => {
+    expect(filterByArea(tasks, null, lookup)).toHaveLength(4);
+  });
+
+  test('grouping names each area and puts unfiled last', () => {
+    // Unfiled is a residue, not a peer of the areas you named.
+    const groups = groupTasks(tasks, 'area', NOW, lookup);
+    expect(groups.map(g => g.label)).toEqual(['ENG 102', 'Work', 'Unfiled']);
+  });
+
+  test('grouping by area loses nobody', () => {
+    const groups = groupTasks(tasks, 'area', NOW, lookup);
+    expect(countGrouped(groups)).toBe(4);
+  });
+
+  test('an area with no tasks produces no heading', () => {
+    const groups = groupTasks([makeTask('b')], 'area', NOW, lookup);
+    expect(groups.map(g => g.label)).toEqual(['ENG 102']);
+  });
+
+  test('grouping by area without a lookup files everything as Unfiled', () => {
+    // Rather than throwing: membership lives outside the task, so a caller
+    // that has not loaded it yet should still render something sane.
+    const groups = groupTasks(tasks, 'area', NOW);
+    expect(groups.map(g => g.label)).toEqual(['Unfiled']);
+    expect(countGrouped(groups)).toBe(4);
+  });
+
+  test('an area whose name is missing still groups', () => {
+    const partial = { areaOf: (uid: string) => membership[uid], nameOf: () => '' };
+    const groups = groupTasks([makeTask('a')], 'area', NOW, partial);
+    expect(groups).toHaveLength(1);
   });
 });

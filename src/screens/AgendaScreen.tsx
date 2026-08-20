@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { PluginManager, FileUtils, PluginCommAPI, RattaFileSelector } from 'sn-plugin-lib';
 import {
+  Area,
   CalendarEvent,
   CalendarTask,
   CalendarViewMode,
@@ -143,6 +144,9 @@ export function AgendaScreen(): React.JSX.Element {
   /** Confirms whether an event's generated note goes with it. */
   const [showDeleteNoteModal, setShowDeleteNoteModal] = useState<boolean>(false);
   const [showTaskList, setShowTaskList] = useState<boolean>(false);
+  const [areas, setAreas] = useState<Area[]>([]);
+  /** Bumped when membership changes, so the list and pickers re-read. */
+  const [membershipRevision, setMembershipRevision] = useState<number>(0);
   /** Note kind per event uid, for the month grid's M/C badges. */
   const [noteKindByEvent, setNoteKindByEvent] = useState<Record<string, NoteKind | undefined>>({});
   // Note paths found on disk for the day's events, keyed by event uid. The
@@ -189,6 +193,7 @@ export function AgendaScreen(): React.JSX.Element {
 
     // Load persisted user events
     setTasks([...calendarStorage.getTasks()]);
+    setAreas([...calendarStorage.getAreas()]);
 
     const savedUserEvts = calendarStorage.getUserEvents();
     // The cached CalDAV read goes on screen immediately. Without it the
@@ -1614,6 +1619,18 @@ export function AgendaScreen(): React.JSX.Element {
     }
   };
 
+  const areaOfTask = (uid: string): string | undefined => {
+    void membershipRevision;
+    return calendarStorage.getMembership(uid).areaId;
+  };
+
+  const handleCreateArea = (name: string): string => {
+    const area: Area = { id: `area-${Date.now()}`, name, createdAt: new Date() };
+    calendarStorage.upsertArea(area);
+    setAreas([...calendarStorage.getAreas()]);
+    return area.id;
+  };
+
   const handleCreateNewTask = (input: {
     uid?: string;
     title: string;
@@ -1621,6 +1638,7 @@ export function AgendaScreen(): React.JSX.Element {
     notes?: string;
     status?: TaskStatus;
     priority?: TaskPriority;
+    areaId?: string;
   }) => {
     const existing = input.uid ? calendarStorage.getTasks().find(t => t.uid === input.uid) : undefined;
 
@@ -1642,6 +1660,10 @@ export function AgendaScreen(): React.JSX.Element {
     const withState = withStatus(task, input.status || taskStatus(task));
 
     calendarStorage.upsertTask(withState);
+    // Membership is stored beside the task, not on it, so that one mechanism
+    // serves events and notes too and survives a sync rebuilding them.
+    calendarStorage.setMembership(withState.uid, { areaId: input.areaId });
+    setMembershipRevision(n => n + 1);
     setTasks([...calendarStorage.getTasks()]);
     setStatusMsg(`${existing ? 'Updated' : 'Added'} task "${task.title}".`);
     void pushTaskAsEvent(task);
@@ -1834,6 +1856,8 @@ export function AgendaScreen(): React.JSX.Element {
       <TaskListModal
         visible={showTaskList}
         tasks={tasks}
+        areas={areas}
+        areaOf={areaOfTask}
         onClose={() => setShowTaskList(false)}
         onToggle={handleToggleTask}
         onEdit={task => {
@@ -2496,6 +2520,9 @@ export function AgendaScreen(): React.JSX.Element {
             onCreateEvent={handleCreateNewEvent}
             onCreateTask={handleCreateNewTask}
             editingTask={editingTask}
+            areas={areas}
+            taskAreaId={editingTask ? areaOfTask(editingTask.uid) : undefined}
+            onCreateArea={handleCreateArea}
             onDeleteTask={uid => {
               const task = calendarStorage.getTasks().find(t => t.uid === uid);
               if (task) handleDeleteTask(task);
