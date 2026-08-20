@@ -5,6 +5,8 @@ import { DEFAULT_DAY_GRID, gridHeight, gridHours, hourLabel, placeEvents } from 
 
 interface DayScheduleGridProps {
   events: CalendarEvent[];
+  startHour: number;
+  endHour: number;
   /** Note path per event uid, so a row can offer Open rather than Create. */
   notePaths: Record<string, string>;
   onEditEvent: (event: CalendarEvent) => void;
@@ -24,15 +26,20 @@ interface DayScheduleGridProps {
  */
 export function DayScheduleGrid({
   events,
+  startHour,
+  endHour,
   notePaths,
   onEditEvent,
   onNoteAction,
   onDeleteEvent,
 }: DayScheduleGridProps): React.JSX.Element {
+  // The grid grows with the hours chosen; the Day View already scrolls, so a
+  // longer day makes a taller page rather than a squashed one.
+  const options = { ...DEFAULT_DAY_GRID, startHour, endHour };
   const allDay = events.filter(e => e.allDay);
-  const placed = placeEvents(events, DEFAULT_DAY_GRID);
-  const hours = gridHours(DEFAULT_DAY_GRID);
-  const height = gridHeight(DEFAULT_DAY_GRID);
+  const placed = placeEvents(events, options);
+  const hours = gridHours(options);
+  const height = gridHeight(options);
 
   return (
     <View>
@@ -52,7 +59,7 @@ export function DayScheduleGrid({
         {hours.map((hour, idx) => (
           <View
             key={hour}
-            style={[styles.hourRow, { top: idx * DEFAULT_DAY_GRID.hourHeight }]}
+            style={[styles.hourRow, { top: idx * options.hourHeight }]}
             pointerEvents="none"
           >
             <Text allowFontScaling={false} style={styles.hourLabel}>
@@ -62,6 +69,10 @@ export function DayScheduleGrid({
           </View>
         ))}
 
+        {/* Blocks sit in their own layer inset past the hour labels. Sharing
+            the grid's box meant a percentage width resolved against the full
+            width, so a full-width block overhung the right edge by the gutter. */}
+        <View style={styles.blockLayer} pointerEvents="box-none">
         {placed.map(({ event, top, height: blockHeight, column, columns }) => {
           const existingPath = notePaths[event.uid];
           // Columns share the track width; a single event takes all of it.
@@ -106,6 +117,7 @@ export function DayScheduleGrid({
             </View>
           );
         })}
+        </View>
       </View>
     </View>
   );
@@ -150,9 +162,15 @@ const styles = StyleSheet.create({
     borderBottomColor: '#b0b0b0',
     borderStyle: 'dotted',
   },
+  blockLayer: {
+    position: 'absolute',
+    left: GUTTER,
+    right: 4,
+    top: 0,
+    bottom: 0,
+  },
   block: {
     position: 'absolute',
-    marginLeft: GUTTER,
     borderWidth: 2,
     borderColor: '#000000',
     borderRadius: 5,

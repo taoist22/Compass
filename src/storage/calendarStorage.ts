@@ -44,6 +44,8 @@ const DEFAULT_SETTINGS: CalendarSettings = {
   classTemplate: DEFAULT_SYSTEM_TEMPLATE,
   dailyNoteTemplate: DEFAULT_SYSTEM_TEMPLATE,
   classNotesDirectory: '/storage/emulated/0/Note/Classes',
+  scheduleStartHour: 8,
+  scheduleEndHour: 20,
   dateOrder: 'auto',
   pushTasksAsEvents: false,
   dailyNoteFolder: '/storage/emulated/0/Note/Daily Notes',

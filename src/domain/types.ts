@@ -203,6 +203,13 @@ export interface CalendarSettings {
   classTemplate?: string;
   /** Where class notes are filed. Meeting notes use notesDirectory. */
   classNotesDirectory?: string;
+  /**
+   * Hours the Day View's schedule grid draws, 0–23. Anything outside is
+   * clamped into view rather than hidden, but a day that starts at 6am is
+   * better drawn from 6am than squashed against the top.
+   */
+  scheduleStartHour?: number;
+  scheduleEndHour?: number;
 }
 
 /**

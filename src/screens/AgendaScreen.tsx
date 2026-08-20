@@ -68,6 +68,7 @@ function blockBar(percent: number): string {
 }
 
 import { DayScheduleGrid } from './DayScheduleGrid';
+import { hourLabel } from '../domain/dayGrid';
 import { AreaManagerModal } from './AreaManagerModal';
 import { ItemCreationModal } from './ItemCreationModal';
 import { DatePickerModal } from './DatePickerModal';
@@ -154,6 +155,8 @@ export function AgendaScreen(): React.JSX.Element {
   const [tasks, setTasks] = useState<CalendarTask[]>([]);
   const [pushTasksAsEvents, setPushTasksAsEvents] = useState<boolean>(false);
   const [defaultView, setDefaultView] = useState<CalendarViewMode>('month');
+  const [scheduleStartHour, setScheduleStartHour] = useState<number>(8);
+  const [scheduleEndHour, setScheduleEndHour] = useState<number>(20);
   const [dailyNoteFolder, setDailyNoteFolder] = useState<string>('/storage/emulated/0/Note/Daily Notes');
   const [dailyNoteFormat, setDailyNoteFormat] = useState<string>('YYYY-MM-DD');
   // null while the existence check is in flight, so the button never claims
@@ -215,6 +218,8 @@ export function AgendaScreen(): React.JSX.Element {
     setCaldavTaskListUrl(settings.caldavTaskListUrl || '');
     setPushTasksAsEvents(Boolean(settings.pushTasksAsEvents));
     setDefaultView(settings.defaultViewMode || 'month');
+    setScheduleStartHour(settings.scheduleStartHour ?? 8);
+    setScheduleEndHour(settings.scheduleEndHour ?? 20);
     setDailyNoteFolder(settings.dailyNoteFolder || '/storage/emulated/0/Note/Daily Notes');
     setDailyNoteFormat(settings.dailyNoteFormat || 'YYYY-MM-DD');
     setCaldavCustomUrl(settings.caldavCustomUrl || '');
@@ -530,6 +535,22 @@ export function AgendaScreen(): React.JSX.Element {
     calendarStorage.setPushState(pushState);
 
     return { pushed, attempted: pending.length, error };
+  };
+
+  /**
+   * Moves a schedule bound, keeping at least an hour of grid between them and
+   * staying inside the day. A start after the end would draw nothing at all.
+   */
+  const shiftScheduleHour = (which: 'start' | 'end', delta: number) => {
+    if (which === 'start') {
+      const next = Math.max(0, Math.min(scheduleStartHour + delta, scheduleEndHour - 1));
+      setScheduleStartHour(next);
+      calendarStorage.updateSettings({ scheduleStartHour: next });
+    } else {
+      const next = Math.min(23, Math.max(scheduleEndHour + delta, scheduleStartHour + 1));
+      setScheduleEndHour(next);
+      calendarStorage.updateSettings({ scheduleEndHour: next });
+    }
   };
 
   const handleRunDiagnostics = async () => {
@@ -2609,6 +2630,32 @@ export function AgendaScreen(): React.JSX.Element {
 
           {settingsTab === 'app' && (
             <>
+          <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Day View Schedule Hours</Text>
+          <Text style={styles.bodyText}>
+            Which hours the Day View draws. Anything outside is still shown, pulled to the nearest
+            edge — a longer day makes a taller page rather than a squashed one.
+          </Text>
+
+          <View style={styles.timeRow}>
+            <Text style={styles.fieldLabel}>Start</Text>
+            <TouchableOpacity style={styles.nudgeBtn} onPress={() => shiftScheduleHour('start', -1)}>
+              <Text style={styles.nudgeText}>−</Text>
+            </TouchableOpacity>
+            <Text style={styles.hourValue}>{hourLabel(scheduleStartHour)}</Text>
+            <TouchableOpacity style={styles.nudgeBtn} onPress={() => shiftScheduleHour('start', 1)}>
+              <Text style={styles.nudgeText}>+</Text>
+            </TouchableOpacity>
+
+            <Text style={[styles.fieldLabel, { marginLeft: 16 }]}>End</Text>
+            <TouchableOpacity style={styles.nudgeBtn} onPress={() => shiftScheduleHour('end', -1)}>
+              <Text style={styles.nudgeText}>−</Text>
+            </TouchableOpacity>
+            <Text style={styles.hourValue}>{hourLabel(scheduleEndHour)}</Text>
+            <TouchableOpacity style={styles.nudgeBtn} onPress={() => shiftScheduleHour('end', 1)}>
+              <Text style={styles.nudgeText}>+</Text>
+            </TouchableOpacity>
+          </View>
+
           <Text style={[styles.sectionTitle, { marginTop: 15 }]}>Opening View</Text>
           <View style={styles.providerGrid}>
             {(['month', 'agenda'] as CalendarViewMode[]).map(mode => (
@@ -3033,6 +3080,8 @@ export function AgendaScreen(): React.JSX.Element {
 
                   <DayScheduleGrid
                     events={events}
+                    startHour={scheduleStartHour}
+                    endHour={scheduleEndHour}
                     notePaths={eventNotePaths}
                     onEditEvent={handleEditItem}
                     onNoteAction={(evt, existingPath) => {
@@ -3181,12 +3230,6 @@ export function AgendaScreen(): React.JSX.Element {
                     <Text style={styles.subHeaderText}>🔮 LOOKAHEAD (TOMORROW)</Text>
                   </View>
                   <Text style={styles.lookaheadText}>{lookaheadSummary}</Text>
-                  <TouchableOpacity style={styles.dailyNoteBtn} onPress={handleOpenDailyNote}>
-                    <Text style={styles.dailyNoteBtnText}>
-                      📝 {dailyNoteExists === false ? 'Create' : 'Open'}{' '}
-                      {selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} Daily Note
-                    </Text>
-                  </TouchableOpacity>
                 </View>
               </View>
             </ScrollView>
@@ -3784,6 +3827,18 @@ const styles = StyleSheet.create({
   },
   dayProjectName: { flex: 1, fontSize: 12, fontWeight: 'bold', color: '#000000' },
   dayProjectMeta: { fontSize: 11, color: '#303030', marginLeft: 8 },
+  timeRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  nudgeBtn: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    marginHorizontal: 3,
+    backgroundColor: '#ffffff',
+  },
+  nudgeText: { fontSize: 14, fontWeight: 'bold', color: '#000000' },
+  hourValue: { fontSize: 13, fontWeight: 'bold', color: '#000000', width: 58, textAlign: 'center' },
   lookaheadText: { fontSize: 12, color: '#000000', paddingHorizontal: 10, paddingVertical: 6 },
   focusSummary: { fontSize: 13, fontWeight: 'bold', color: '#000000', padding: 10 },
   subHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#000000', paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#f2f2f2' },
