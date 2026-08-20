@@ -84,3 +84,66 @@ export function normaliseRange(range: TimeRange): TimeRange {
   const end = clampToDay(range.end);
   return { start, end: end > start ? end : Math.min(start + TIME_STEP, MINUTES_IN_DAY - 1) };
 }
+
+/**
+ * Reads a time someone typed or handwrote into a time field.
+ *
+ * More permissive than captureParser's matchTime, deliberately: that one hunts
+ * for a time inside prose and so refuses a bare "930", which is far more often
+ * a quantity. Here the whole field is the time, so bare forms are unambiguous
+ * and refusing them would just make the user type punctuation.
+ *
+ * Accepts 9 · 9:30 · 930 · 0930 · 9.30 · 9h30 · 9am · 9:30 PM · 14:00 · 1430.
+ *
+ * @param after When given, a time at or before it with no explicit am/pm is
+ *   read as the afternoon — so an end of "5" against a 9 AM start means 5 PM,
+ *   which is what "9 to 5" means to everyone.
+ */
+export function parseTimeOfDay(input: string, after?: number): number | null {
+  const text = (input || '').trim().toLowerCase();
+  if (!text) return null;
+
+  const meridiemMatch = text.match(/([ap])\.?m?\.?$/);
+  const meridiem = meridiemMatch ? meridiemMatch[1] : null;
+  const body = (meridiemMatch ? text.slice(0, meridiemMatch.index) : text).trim().replace(/\s+/g, '');
+  if (!body) return null;
+
+  let hours: number;
+  let minutes: number;
+
+  const separated = body.match(/^(\d{1,2})[:h.](\d{1,2})$/);
+  if (separated) {
+    hours = parseInt(separated[1], 10);
+    minutes = parseInt(separated[2], 10);
+  } else if (/^\d{1,2}$/.test(body)) {
+    hours = parseInt(body, 10);
+    minutes = 0;
+  } else if (/^\d{3,4}$/.test(body)) {
+    hours = parseInt(body.slice(0, body.length - 2), 10);
+    minutes = parseInt(body.slice(-2), 10);
+  } else {
+    return null;
+  }
+
+  if (minutes > 59) return null;
+
+  if (meridiem === 'p') {
+    if (hours > 12) return null;
+    if (hours < 12) hours += 12;
+  } else if (meridiem === 'a') {
+    if (hours > 12) return null;
+    if (hours === 12) hours = 0;
+  }
+
+  if (hours > 23) return null;
+
+  let total = hours * 60 + minutes;
+
+  // "9 to 5": an unqualified end that lands before the start means the
+  // afternoon, not the small hours of the same morning.
+  if (!meridiem && after !== undefined && total <= after && hours < 12) {
+    total += 12 * 60;
+  }
+
+  return total > MINUTES_IN_DAY - 1 ? null : total;
+}

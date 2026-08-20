@@ -8,6 +8,7 @@ import {
   moveEnd,
   moveStart,
   normaliseRange,
+  parseTimeOfDay,
   withTimeOfDay,
 } from './timeOfDay';
 
@@ -135,5 +136,72 @@ describe('normaliseRange', () => {
     const fixed = normaliseRange({ start: -60, end: MINUTES_IN_DAY + 60 });
     expect(fixed.start).toBe(0);
     expect(fixed.end).toBe(MINUTES_IN_DAY - 1);
+  });
+});
+
+describe('parseTimeOfDay', () => {
+  test('reads the forms people actually write', () => {
+    expect(parseTimeOfDay('9')).toBe(9 * 60);
+    expect(parseTimeOfDay('9:30')).toBe(9 * 60 + 30);
+    expect(parseTimeOfDay('930')).toBe(9 * 60 + 30);
+    expect(parseTimeOfDay('0930')).toBe(9 * 60 + 30);
+    expect(parseTimeOfDay('9.30')).toBe(9 * 60 + 30);
+    expect(parseTimeOfDay('9h30')).toBe(9 * 60 + 30);
+  });
+
+  test('accepts bare forms that captureParser refuses', () => {
+    // That parser hunts inside prose, where "930" is usually a quantity. Here
+    // the whole field is the time.
+    expect(parseTimeOfDay('1430')).toBe(14 * 60 + 30);
+  });
+
+  test('handles am and pm in their various spellings', () => {
+    expect(parseTimeOfDay('9am')).toBe(9 * 60);
+    expect(parseTimeOfDay('9 AM')).toBe(9 * 60);
+    expect(parseTimeOfDay('9:30pm')).toBe(21 * 60 + 30);
+    expect(parseTimeOfDay('9:30 p.m.')).toBe(21 * 60 + 30);
+    expect(parseTimeOfDay('9a')).toBe(9 * 60);
+  });
+
+  test('midnight and noon land on the right side', () => {
+    expect(parseTimeOfDay('12am')).toBe(0);
+    expect(parseTimeOfDay('12pm')).toBe(12 * 60);
+  });
+
+  test('24-hour input is taken as written', () => {
+    expect(parseTimeOfDay('14:00')).toBe(14 * 60);
+    expect(parseTimeOfDay('23:59')).toBe(23 * 60 + 59);
+  });
+
+  test('an unqualified end before the start reads as the afternoon', () => {
+    // "9 to 5" means what everyone thinks it means.
+    expect(parseTimeOfDay('5', 9 * 60)).toBe(17 * 60);
+    expect(parseTimeOfDay('1:30', 9 * 60)).toBe(13 * 60 + 30);
+  });
+
+  test('an explicit am is never overridden by that rule', () => {
+    expect(parseTimeOfDay('5am', 9 * 60)).toBe(5 * 60);
+  });
+
+  test('an end already after the start is left alone', () => {
+    expect(parseTimeOfDay('11', 9 * 60)).toBe(11 * 60);
+  });
+
+  test('rejects nonsense rather than guessing', () => {
+    expect(parseTimeOfDay('')).toBeNull();
+    expect(parseTimeOfDay('   ')).toBeNull();
+    expect(parseTimeOfDay('lunch')).toBeNull();
+    expect(parseTimeOfDay('25:00')).toBeNull();
+    expect(parseTimeOfDay('9:75')).toBeNull();
+    expect(parseTimeOfDay('13pm')).toBeNull();
+    expect(parseTimeOfDay('99999')).toBeNull();
+  });
+
+  test('what it parses can be formatted back', () => {
+    for (const text of ['9', '9:30', '1430', '12am', '7:05pm']) {
+      const parsed = parseTimeOfDay(text);
+      expect(parsed).not.toBeNull();
+      expect(formatTimeOfDay(parsed as number)).toMatch(/^\d{1,2}:\d{2} [AP]M$/);
+    }
   });
 });

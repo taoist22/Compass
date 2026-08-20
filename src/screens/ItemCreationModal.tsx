@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Dimensions,
   Modal,
   ScrollView,
   StyleSheet,
@@ -19,7 +20,6 @@ import {
 } from '../domain/taskModel';
 import { DatePickerModal } from './DatePickerModal';
 import {
-  TIME_STEP,
   TimeRange,
   formatDuration,
   formatTimeOfDay,
@@ -27,6 +27,7 @@ import {
   moveEnd,
   moveStart,
   normaliseRange,
+  parseTimeOfDay,
   withTimeOfDay,
 } from '../domain/timeOfDay';
 
@@ -104,9 +105,37 @@ export function ItemCreationModal({
   const [description, setDescription] = useState<string>('');
   const [isAllDay, setIsAllDay] = useState<boolean>(type === 'task');
   const [timeRange, setTimeRange] = useState<TimeRange>({ start: 9 * 60, end: 10 * 60 });
+  // What the user is typing, kept apart from the parsed value so a half-typed
+  // "9:" is not rewritten under them mid-entry.
+  const [startText, setStartText] = useState<string>(formatTimeOfDay(9 * 60));
+  const [endText, setEndText] = useState<string>(formatTimeOfDay(10 * 60));
 
-  const nudgeStart = (delta: number) => setTimeRange(r => moveStart(r, delta));
-  const nudgeEnd = (delta: number) => setTimeRange(r => moveEnd(r, delta));
+  const startInvalid = parseTimeOfDay(startText) === null;
+  const endInvalid = parseTimeOfDay(endText, timeRange.start) === null;
+
+  const applyRange = (range: TimeRange) => {
+    const fixed = normaliseRange(range);
+    setTimeRange(fixed);
+    setStartText(formatTimeOfDay(fixed.start));
+    setEndText(formatTimeOfDay(fixed.end));
+  };
+
+  /**
+   * Commits on blur, not on every keystroke: rewriting the field while it is
+   * being written fights the user, and this display repaints slowly.
+   */
+  const commitStart = () => {
+    const parsed = parseTimeOfDay(startText);
+    if (parsed === null) return;
+    // Moving the start carries the end, so a meeting keeps its length.
+    applyRange(moveStart(timeRange, parsed - timeRange.start));
+  };
+
+  const commitEnd = () => {
+    const parsed = parseTimeOfDay(endText, timeRange.start);
+    if (parsed === null) return;
+    applyRange(moveEnd(timeRange, parsed - timeRange.end));
+  };
 
   // The date is editable here rather than inherited from the calendar
   // selection — a lasso can happen on any page with no idea what day the grid
@@ -139,12 +168,13 @@ export function ItemCreationModal({
       setItemDate(new Date(editingEvent.start));
 
       const start = new Date(editingEvent.start);
-      setTimeRange(
-        normaliseRange({
-          start: minutesFromDate(start),
-          end: minutesFromDate(new Date(editingEvent.end)),
-        })
-      );
+      const seeded = normaliseRange({
+        start: minutesFromDate(start),
+        end: minutesFromDate(new Date(editingEvent.end)),
+      });
+      setTimeRange(seeded);
+      setStartText(formatTimeOfDay(seeded.start));
+      setEndText(formatTimeOfDay(seeded.end));
       setNoDueDate(false);
       setTaskStatusValue(editingTask ? taskStatus(editingTask) : 'todo');
       setTaskPriorityValue(editingTask?.priority || 1);
@@ -156,6 +186,8 @@ export function ItemCreationModal({
     setTaskStatusValue('todo');
     setTaskPriorityValue(1);
     setTimeRange({ start: 9 * 60, end: 10 * 60 });
+    setStartText(formatTimeOfDay(9 * 60));
+    setEndText(formatTimeOfDay(10 * 60));
     setLocation('');
     setDescription('');
     setItemDate(targetDate);
@@ -166,7 +198,10 @@ export function ItemCreationModal({
     // the user only has to confirm rather than re-enter what they wrote.
     if (initialParsed && !initialParsed.allDay && initialParsed.hours !== undefined) {
       const captured = initialParsed.hours * 60 + (initialParsed.minutes ?? 0);
-      setTimeRange(normaliseRange({ start: captured, end: captured + 60 }));
+      const range = normaliseRange({ start: captured, end: captured + 60 });
+      setTimeRange(range);
+      setStartText(formatTimeOfDay(range.start));
+      setEndText(formatTimeOfDay(range.end));
       setIsAllDay(false);
     } else {
       setIsAllDay(initialParsed ? initialParsed.allDay : type === 'task');
@@ -369,54 +404,50 @@ export function ItemCreationModal({
 
             {!isAllDay && !(itemKind === 'task' && noDueDate) && (
               <>
-                {/* Nudged by discrete taps rather than picked from rows of
-                    chips: three scrolling chip rows were too wide for a Nomad,
-                    and a fixed duration list could not express 2.5 or 5 hours. */}
-                <Text style={styles.label}>{itemKind === 'event' ? 'Start' : 'Due'}</Text>
-                <View style={styles.timeRow}>
-                  <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeStart(-60)}>
-                    <Text style={styles.nudgeText}>−1h</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeStart(-TIME_STEP)}>
-                    <Text style={styles.nudgeText}>−15</Text>
-                  </TouchableOpacity>
+                {/* Typed or handwritten. A TextInput accepts the handwriting
+                    IME with no extra work, and reading "9:30" is far less
+                    effort than nudging to it fifteen minutes at a time. */}
+                <View style={styles.timeFieldRow}>
+                  <View style={styles.timeField}>
+                    <Text style={styles.label}>{itemKind === 'event' ? 'Start' : 'Due time'}</Text>
+                    <TextInput
+                      style={[styles.textInput, startText !== '' && startInvalid && styles.inputInvalid]}
+                      value={startText}
+                      onChangeText={setStartText}
+                      onEndEditing={commitStart}
+                      placeholder="9:00 AM"
+                      placeholderTextColor="#707070"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                  </View>
 
-                  <Text style={styles.timeValue}>{formatTimeOfDay(timeRange.start)}</Text>
-
-                  <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeStart(TIME_STEP)}>
-                    <Text style={styles.nudgeText}>+15</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeStart(60)}>
-                    <Text style={styles.nudgeText}>+1h</Text>
-                  </TouchableOpacity>
+                  {itemKind === 'event' && (
+                    <View style={styles.timeField}>
+                      <Text style={styles.label}>End</Text>
+                      <TextInput
+                        style={[styles.textInput, endText !== '' && endInvalid && styles.inputInvalid]}
+                        value={endText}
+                        onChangeText={setEndText}
+                        onEndEditing={commitEnd}
+                        placeholder="10:00 AM"
+                        placeholderTextColor="#707070"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                    </View>
+                  )}
                 </View>
 
-                {itemKind === 'event' && (
-                  <>
-                    <Text style={styles.label}>End</Text>
-                    <View style={styles.timeRow}>
-                      <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeEnd(-60)}>
-                        <Text style={styles.nudgeText}>−1h</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeEnd(-TIME_STEP)}>
-                        <Text style={styles.nudgeText}>−15</Text>
-                      </TouchableOpacity>
-
-                      <Text style={styles.timeValue}>{formatTimeOfDay(timeRange.end)}</Text>
-
-                      <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeEnd(TIME_STEP)}>
-                        <Text style={styles.nudgeText}>+15</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.nudgeBtn} onPress={() => nudgeEnd(60)}>
-                        <Text style={styles.nudgeText}>+1h</Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    <Text style={styles.durationHint}>
-                      Duration: {formatDuration(timeRange.end - timeRange.start)}
-                    </Text>
-                  </>
-                )}
+                <Text style={styles.durationHint}>
+                  {startInvalid || endInvalid
+                    ? 'Try 9, 9:30, 930, 2pm or 14:00.'
+                    : itemKind === 'event'
+                    ? `${formatTimeOfDay(timeRange.start)} – ${formatTimeOfDay(
+                        timeRange.end
+                      )} · ${formatDuration(timeRange.end - timeRange.start)}`
+                    : formatTimeOfDay(timeRange.start)}
+                </Text>
               </>
             )}
 
@@ -520,6 +551,9 @@ export function ItemCreationModal({
   );
 }
 
+/** Nomad-class devices report ~998dp tall; a Manta reports ~1365. */
+const SHORT_SCREEN = Dimensions.get('window').height < 1100;
+
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
@@ -534,10 +568,11 @@ const styles = StyleSheet.create({
     borderColor: '#000000',
     borderRadius: 8,
     padding: 12,
-    // 92%/85% originally. 80%/72% was applied but read as unchanged, so this
-    // goes further; the form scrolls, so a lower cap costs nothing.
-    width: '72%',
-    maxHeight: '62%',
+    width: SHORT_SCREEN ? '86%' : '72%',
+    // A percentage of a shorter screen is less absolute room: 62% of the
+    // Nomad's 998dp is 619, against 846 on a Manta. The smaller device needs
+    // the larger share, not the same one.
+    maxHeight: SHORT_SCREEN ? '88%' : '62%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -776,27 +811,16 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#000000',
   },
-  timeRow: {
+  timeFieldRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
   },
-  nudgeBtn: {
-    borderWidth: 2,
-    borderColor: '#000000',
-    borderRadius: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    marginRight: 4,
-    backgroundColor: '#ffffff',
-  },
-  nudgeText: { fontSize: 13, fontWeight: 'bold', color: '#000000' },
-  timeValue: {
+  timeField: {
     flex: 1,
-    textAlign: 'center',
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#000000',
+    marginRight: 8,
+  },
+  inputInvalid: {
+    borderColor: '#909090',
+    borderStyle: 'dashed',
   },
   durationHint: { fontSize: 12, color: '#505050', marginBottom: 4 },
   saveBtn: {
