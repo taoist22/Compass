@@ -13,6 +13,9 @@ interface ProjectDetailViewProps {
   linkedNotes: Array<{ label: string; path: string }>;
   onBack: () => void;
   onSetDue: () => void;
+  /** Moves the project to the next area. Shown in the breadcrumb, where the
+   *  wrong one is noticed. */
+  onCycleArea: () => void;
   onOpenNotebook: () => void;
   onOpenNote: (path: string) => void;
   onAddTask: () => void;
@@ -35,6 +38,7 @@ export function ProjectDetailView({
   linkedNotes,
   onBack,
   onSetDue,
+  onCycleArea,
   onOpenNotebook,
   onOpenNote,
   onAddTask,
@@ -51,7 +55,15 @@ export function ProjectDetailView({
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack}>
           <Text allowFontScaling={false} style={styles.breadcrumb}>
-            ‹ {area ? `${area.icon ? `${area.icon} ` : ''}${area.name}` : 'All Areas'}
+            ‹ Back
+          </Text>
+        </TouchableOpacity>
+
+        {/* Settable here, where a wrong area is actually noticed — the
+            breadcrumb already names it, so it should also change it. */}
+        <TouchableOpacity style={styles.areaBtn} onPress={onCycleArea}>
+          <Text allowFontScaling={false} style={styles.areaBtnText} numberOfLines={1}>
+            {area ? `${area.icon ? `${area.icon} ` : ''}${area.name}` : 'No Area'} ›
           </Text>
         </TouchableOpacity>
         <Text allowFontScaling={false} style={styles.title} numberOfLines={1}>
@@ -163,7 +175,17 @@ const styles = StyleSheet.create({
     borderBottomColor: '#000000',
     paddingBottom: 6,
   },
-  breadcrumb: { fontSize: 13, fontWeight: 'bold', color: '#000000', marginRight: 10 },
+  breadcrumb: { fontSize: 13, fontWeight: 'bold', color: '#000000', marginRight: 8 },
+  areaBtn: {
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginRight: 10,
+    maxWidth: 180,
+  },
+  areaBtnText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
   title: { flex: 1, fontSize: 16, fontWeight: 'bold', color: '#000000' },
   metaRow: {
     flexDirection: 'row',

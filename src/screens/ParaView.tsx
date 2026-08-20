@@ -1,5 +1,5 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Area, CalendarTask, Project } from '../domain/types';
 import { isDone, statusGlyph, taskStatus } from '../domain/taskModel';
 import {
@@ -22,8 +22,9 @@ interface ParaViewProps {
   onSelectArea: (areaId: string | null) => void;
   showArchive: boolean;
   onToggleArchive: () => void;
-  onNewProject: () => void;
-  onNewArea: () => void;
+  onNewProject: (name: string) => void;
+  onNewArea: (name: string) => void;
+  onManage: () => void;
   onOpenProject: (project: Project) => void;
   onProjectNote: (project: Project) => void;
   onSetProjectDue: (project: Project) => void;
@@ -52,6 +53,7 @@ export function ParaView({
   onToggleArchive,
   onNewProject,
   onNewArea,
+  onManage,
   onOpenProject,
   onProjectNote,
   onSetProjectDue,
@@ -74,6 +76,10 @@ export function ParaView({
   const grouped = projectsByArea(shown, areas);
 
   const tasksOf = (projectId: string) => tasks.filter(t => projectOf(t.uid) === projectId);
+  const selectedArea = areas.find(a => a.id === selectedAreaId);
+  const [adding, setAdding] = React.useState<'project' | 'area' | null>(null);
+  const [newName, setNewName] = React.useState<string>('');
+
   const areaIconFor = (areaId: string | null) => {
     const icon = areaId ? areas.find(a => a.id === areaId)?.icon : undefined;
     return icon ? `${icon} ` : '';
@@ -86,18 +92,72 @@ export function ParaView({
           📁 Projects &amp; Areas
         </Text>
         <View style={styles.topActions}>
-          <TouchableOpacity style={styles.topBtn} onPress={onNewProject}>
+          {/* "+ New" used to open the manage sheet, which is not what it says.
+              It creates now, and managing has a door of its own. */}
+          <TouchableOpacity style={styles.topBtn} onPress={() => setAdding('project')}>
             <Text allowFontScaling={false} style={styles.topBtnText}>
               + New Project
             </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.topBtn} onPress={onNewArea}>
+          <TouchableOpacity style={styles.topBtn} onPress={() => setAdding('area')}>
             <Text allowFontScaling={false} style={styles.topBtnText}>
               + Area
             </Text>
           </TouchableOpacity>
+          <TouchableOpacity style={styles.topBtn} onPress={onManage}>
+            <Text allowFontScaling={false} style={styles.topBtnText}>
+              Manage
+            </Text>
+          </TouchableOpacity>
         </View>
       </View>
+
+      {/* Named inline rather than in a sheet, as creating from a task form
+          already does. */}
+      {adding && (
+        <View style={styles.addRow}>
+          <TextInput
+            style={styles.addInput}
+            value={newName}
+            onChangeText={setNewName}
+            placeholder={
+              adding === 'area'
+                ? 'New area name'
+                : // Says where it will land, because a project quietly filed
+                  // under nothing is the thing that goes missing.
+                  selectedArea
+                  ? `New project in ${selectedArea.name}`
+                  : 'New project name'
+            }
+            placeholderTextColor="#707070"
+            autoCorrect={false}
+          />
+          <TouchableOpacity
+            style={styles.topBtn}
+            onPress={() => {
+              const name = newName.trim();
+              if (name) (adding === 'project' ? onNewProject : onNewArea)(name);
+              setNewName('');
+              setAdding(null);
+            }}
+          >
+            <Text allowFontScaling={false} style={styles.topBtnText}>
+              Add
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.topBtn}
+            onPress={() => {
+              setNewName('');
+              setAdding(null);
+            }}
+          >
+            <Text allowFontScaling={false} style={styles.topBtnText}>
+              Cancel
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View style={styles.columns}>
         <View style={styles.leftPane}>
@@ -308,6 +368,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   topBtnText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
+  addRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  addInput: {
+    flex: 1,
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    marginRight: 6,
+    fontSize: 13,
+    color: '#000000',
+  },
   columns: { flex: 1, flexDirection: 'row' },
   leftPane: {
     width: '32%',

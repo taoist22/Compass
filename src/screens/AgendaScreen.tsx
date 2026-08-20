@@ -1860,8 +1860,12 @@ export function AgendaScreen(): React.JSX.Element {
 
     const ids: Array<string | undefined> = [...calendarStorage.getAreas().map(a => a.id), undefined];
     const at = ids.indexOf(existing.areaId);
-    calendarStorage.upsertProject({ ...existing, areaId: ids[(at + 1) % ids.length] });
+    const moved = { ...existing, areaId: ids[(at + 1) % ids.length] };
+    calendarStorage.upsertProject(moved);
     setProjects([...calendarStorage.getProjects()]);
+    // The detail screen holds its own copy, so it has to be told, or the
+    // breadcrumb keeps naming the area the project just left.
+    setOpenProject(current => (current && current.id === moved.id ? moved : current));
   };
 
   const handleDeleteProject = (projectId: string) => {
@@ -2036,10 +2040,14 @@ export function AgendaScreen(): React.JSX.Element {
     setMembershipRevision(n => n + 1);
   };
 
-  const handleCreateProject = (name: string): string => {
+  const handleCreateProject = (name: string, areaId?: string): string => {
     const project: Project = {
       id: `proj-${Date.now()}`,
       name,
+      // Filed on creation when made from inside an area. A project created
+      // while looking at Home belongs to Home; making that a second step is
+      // how one ends up unfiled and hard to find.
+      areaId,
       status: 'active',
       createdAt: new Date(),
     };
@@ -2324,10 +2332,7 @@ export function AgendaScreen(): React.JSX.Element {
         onRename={handleRenameArea}
         onDelete={handleDeleteArea}
         onCreate={name => handleCreateArea(name)}
-        onClose={() => {
-          setShowAreaManager(false);
-          setShowTaskList(true);
-        }}
+        onClose={() => setShowAreaManager(false)}
       />
 
       <TaskListModal
@@ -3285,6 +3290,7 @@ export function AgendaScreen(): React.JSX.Element {
               linkedNotes={linkedNotesForProject(openProject)}
               onBack={() => setOpenProject(null)}
               onSetDue={() => setProjectDueTarget(openProject)}
+              onCycleArea={() => handleCycleProjectArea(openProject.id)}
               onOpenNotebook={() => {
                 const current = calendarStorage.getProjects().find(p => p.id === openProject.id);
                 if (current) void handleProjectNote(current);
@@ -3317,8 +3323,9 @@ export function AgendaScreen(): React.JSX.Element {
               }}
               showArchive={paraShowArchive}
               onToggleArchive={() => setParaShowArchive(v => !v)}
-              onNewProject={() => setShowAreaManager(true)}
-              onNewArea={() => setShowAreaManager(true)}
+              onNewProject={name => handleCreateProject(name, paraAreaId ?? undefined)}
+              onNewArea={name => handleCreateArea(name)}
+              onManage={() => setShowAreaManager(true)}
               onOpenProject={setOpenProject}
               onProjectNote={handleProjectNote}
               onSetProjectDue={project => setProjectDueTarget(project)}
