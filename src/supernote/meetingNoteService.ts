@@ -116,6 +116,29 @@ export class MeetingNoteService {
    * @param kind What this note is. Passed in rather than derived from a global
    *   mode, so a class note stays a class note whatever the settings say later.
    */
+  /**
+   * Creates a project's own notebook.
+   *
+   * A project that holds only tasks is a to-do list with a name; the notebook
+   * is what makes it the container it is meant to be. Filed in the project's
+   * folder with its template when it has them, which is what finally makes
+   * those two fields mean something.
+   */
+  async createProjectNote(
+    projectName: string,
+    folder: string,
+    template: string
+  ): Promise<{ success: boolean; notePath?: string; error?: string }> {
+    const dir = folder || '/storage/emulated/0/Note';
+    await this.ensureDirectory(dir);
+
+    const safe = projectName.replace(/[/\\?%*:|"<>]/g, '').replace(/\s+/g, ' ').trim() || 'Project';
+    const notePath = `${dir}/${safe}.note`;
+
+    const res = await this.createNoteWithTemplate(notePath, template || DEFAULT_SYSTEM_TEMPLATE);
+    return res.success ? { success: true, notePath } : { success: false, error: res.error };
+  }
+
   async createOrAppendMeetingNote(
     event: CalendarEvent,
     forceNewFile = false,

@@ -179,6 +179,8 @@ export function AgendaScreen(): React.JSX.Element {
   const [showAreaManager, setShowAreaManager] = useState<boolean>(false);
   const [paraAreaId, setParaAreaId] = useState<string | null>(null);
   const [paraShowArchive, setParaShowArchive] = useState<boolean>(false);
+  /** Project whose due date is being picked, if any. */
+  const [projectDueTarget, setProjectDueTarget] = useState<Project | null>(null);
   /** Project a new task should be filed under, when adding from inside one. */
   const [pendingProjectId, setPendingProjectId] = useState<string | undefined>(undefined);
   /** Bumped when membership changes, so the list and pickers re-read. */
@@ -1812,10 +1814,10 @@ export function AgendaScreen(): React.JSX.Element {
     return calendarStorage.getTasks().filter(t => areaOfTask(t.uid) === areaId).length;
   };
 
-  const handleRenameArea = (areaId: string, name: string) => {
+  const handleRenameArea = (areaId: string, name: string, icon?: string) => {
     const existing = calendarStorage.getAreas().find(a => a.id === areaId);
     if (!existing) return;
-    calendarStorage.upsertArea({ ...existing, name });
+    calendarStorage.upsertArea({ ...existing, name, icon: icon ?? existing.icon });
     setAreas([...calendarStorage.getAreas()]);
   };
 
@@ -1845,33 +1847,6 @@ export function AgendaScreen(): React.JSX.Element {
     setProjects([...calendarStorage.getProjects()]);
   };
 
-  const handleSetProjectDue = (projectId: string, text: string) => {
-    const existing = calendarStorage.getProjects().find(p => p.id === projectId);
-    if (!existing) return;
-
-    const trimmed = text.trim();
-    // Reuses the capture parser rather than adding a third date reader; it
-    // already handles ISO, numeric and month-name forms with the user's
-    // configured day/month order.
-    const parsed = trimmed
-      ? parseCapturedText(trimmed, { dateOrder: resolveDateOrder(calendarStorage.getSettings().dateOrder) }).date
-      : undefined;
-
-    if (trimmed && !parsed) {
-      setStatusMsg(`Could not read "${trimmed}" as a date. Try 2026-09-15 or Sep 15.`);
-      return;
-    }
-
-    calendarStorage.upsertProject({ ...existing, dueDate: parsed });
-    setProjects([...calendarStorage.getProjects()]);
-  };
-
-  /**
-   * Moves a project to the next area, wrapping through "no area".
-   *
-   * A tap rather than another picker: areas are few, and the row is already
-   * carrying a name, a due date, progress and two buttons.
-   */
   const handleCycleProjectArea = (projectId: string) => {
     const existing = calendarStorage.getProjects().find(p => p.id === projectId);
     if (!existing) return;
@@ -1977,6 +1952,40 @@ export function AgendaScreen(): React.JSX.Element {
     } catch (e: any) {
       setStatusMsg(`Folder picker error: ${e?.message || 'Picker closed'}`);
     }
+  };
+
+  /**
+   * Opens the project's notebook, creating it on first use.
+   *
+   * Filed in the project's own folder with its template when it has them —
+   * the notes are what make a project a container rather than a labelled list.
+   */
+  const handleProjectNote = async (project: Project) => {
+    if (project.notePath) {
+      await handleOpenExistingNote(project.notePath);
+      return;
+    }
+
+    const settings = calendarStorage.getSettings();
+    setStatusMsg(`Creating notebook for ${project.name}...`);
+
+    const res = await meetingNoteService.createProjectNote(
+      project.name,
+      project.folder || settings.notesDirectory || '/storage/emulated/0/Note',
+      project.template || settings.meetingTemplate || ''
+    );
+
+    if (!res.success || !res.notePath) {
+      setStatusMsg(`Could not create the notebook: ${res.error || 'unknown error'}`);
+      return;
+    }
+
+    calendarStorage.upsertProject({ ...project, notePath: res.notePath });
+    setProjects([...calendarStorage.getProjects()]);
+
+    const opened = await openNoteInEditor(res.notePath);
+    setStatusMsg(opened.success ? `Opened ${project.name}.note` : opened.message);
+    if (opened.success) closePanel();
   };
 
   const handleCreateEventType = (name: string): string => {
@@ -2282,7 +2291,6 @@ export function AgendaScreen(): React.JSX.Element {
         onSetProjectStatus={handleSetProjectStatus}
         onDeleteProject={handleDeleteProject}
         onCreateProject={name => handleCreateProject(name)}
-        onSetProjectDue={handleSetProjectDue}
         onCycleProjectArea={handleCycleProjectArea}
         onRename={handleRenameArea}
         onDelete={handleDeleteArea}
@@ -2346,6 +2354,18 @@ export function AgendaScreen(): React.JSX.Element {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      <DatePickerModal
+        visible={projectDueTarget !== null}
+        value={projectDueTarget?.dueDate || new Date()}
+        onSelect={date => {
+          if (!projectDueTarget) return;
+          calendarStorage.upsertProject({ ...projectDueTarget, dueDate: date });
+          setProjects([...calendarStorage.getProjects()]);
+          setProjectDueTarget(null);
+        }}
+        onClose={() => setProjectDueTarget(null)}
+      />
 
       {/* Template chooser. Rendered outside the settings/calendar ternary: it is
           opened from Settings, and living in the calendar branch meant it was
@@ -3203,6 +3223,8 @@ export function AgendaScreen(): React.JSX.Element {
               onNewProject={() => setShowAreaManager(true)}
               onNewArea={() => setShowAreaManager(true)}
               onOpenProject={() => setShowAreaManager(true)}
+              onProjectNote={handleProjectNote}
+              onSetProjectDue={project => setProjectDueTarget(project)}
               onToggleTask={handleToggleTask}
               onEditTask={handleEditTask}
               onAddTaskToProject={project => {

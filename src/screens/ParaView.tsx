@@ -25,6 +25,8 @@ interface ParaViewProps {
   onNewProject: () => void;
   onNewArea: () => void;
   onOpenProject: (project: Project) => void;
+  onProjectNote: (project: Project) => void;
+  onSetProjectDue: (project: Project) => void;
   onToggleTask: (task: CalendarTask) => void;
   onEditTask: (task: CalendarTask) => void;
   onAddTaskToProject: (project: Project) => void;
@@ -51,6 +53,8 @@ export function ParaView({
   onNewProject,
   onNewArea,
   onOpenProject,
+  onProjectNote,
+  onSetProjectDue,
   onToggleTask,
   onEditTask,
   onAddTaskToProject,
@@ -70,6 +74,10 @@ export function ParaView({
   const grouped = projectsByArea(shown, areas);
 
   const tasksOf = (projectId: string) => tasks.filter(t => projectOf(t.uid) === projectId);
+  const areaIconFor = (areaId: string | null) => {
+    const icon = areaId ? areas.find(a => a.id === areaId)?.icon : undefined;
+    return icon ? `${icon} ` : '';
+  };
 
   return (
     <View style={styles.root}>
@@ -127,6 +135,7 @@ export function ParaView({
                     allowFontScaling={false}
                     style={[styles.areaText, active && styles.areaTextActive]}
                   >
+                    {area.icon ? `${area.icon} ` : ''}
                     {area.name} ({count})
                   </Text>
                 </TouchableOpacity>
@@ -169,6 +178,7 @@ export function ParaView({
             {grouped.map(group => (
               <View key={group.areaId || '__none'}>
                 <Text allowFontScaling={false} style={styles.groupHeading}>
+                  {areaIconFor(group.areaId)}
                   {group.label}
                 </Text>
 
@@ -179,24 +189,54 @@ export function ParaView({
 
                   return (
                     <View key={project.id} style={styles.projectCard}>
-                      <TouchableOpacity onPress={() => onOpenProject(project)}>
-                        <Text allowFontScaling={false} style={styles.projectName}>
-                          {project.name}
-                        </Text>
+                      <View style={styles.projectHead}>
+                        <TouchableOpacity
+                          style={styles.projectNameBtn}
+                          onPress={() => onOpenProject(project)}
+                        >
+                          <Text allowFontScaling={false} style={styles.projectName} numberOfLines={1}>
+                            {project.name}
+                          </Text>
+                        </TouchableOpacity>
+
+                        {/* Due lives on the card, where projects are actually
+                            looked at — and the shared picker cannot open from
+                            the manage sheet, which is itself a modal. */}
+                        <TouchableOpacity
+                          style={styles.projectDueBtn}
+                          onPress={() => onSetProjectDue(project)}
+                        >
+                          <Text allowFontScaling={false} style={styles.projectDueText}>
+                            {project.dueDate
+                              ? `${overdue ? '⚠ ' : '📅 '}${project.dueDate.toLocaleDateString(
+                                  'en-US',
+                                  { month: 'short', day: 'numeric' }
+                                )}`
+                              : '📅 Due…'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+
+                      <View style={styles.projectHead}>
                         <Text allowFontScaling={false} style={styles.projectMeta}>
-                          {project.dueDate
-                            ? `${overdue ? '⚠ ' : '📅 '}${project.dueDate.toLocaleDateString('en-US', {
-                                month: 'short',
-                                day: 'numeric',
-                              })} · `
-                            : ''}
                           {progressBar(progress.percent)} {progress.done}/{progress.total} tasks (
                           {progress.percent}%)
                         </Text>
-                      </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.projectNoteBtn}
+                          onPress={() => onProjectNote(project)}
+                        >
+                          <Text allowFontScaling={false} style={styles.projectNoteText}>
+                            {project.notePath ? '📂 Note' : '📝 Note'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
 
-                      {projectTasks.map(task => (
+                      {projectTasks.map((task, idx) => (
                         <View key={task.uid} style={styles.taskRow}>
+                          <Text allowFontScaling={false} style={styles.treeStem}>
+                            {idx === projectTasks.length - 1 ? '└─' : '├─'}
+                          </Text>
                           <TouchableOpacity onPress={() => onToggleTask(task)}>
                             <Text allowFontScaling={false} style={styles.taskGlyph}>
                               {statusGlyph(taskStatus(task))}
@@ -219,7 +259,7 @@ export function ParaView({
                         onPress={() => onAddTaskToProject(project)}
                       >
                         <Text allowFontScaling={false} style={styles.addTaskText}>
-                          + Add task to project…
+                          {'   + Add task to project…'}
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -314,7 +354,30 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     backgroundColor: '#ffffff',
   },
+  projectHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  projectNameBtn: { flex: 1, paddingRight: 6 },
   projectName: { fontSize: 14, fontWeight: 'bold', color: '#000000' },
+  projectDueBtn: {
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  projectDueText: { fontSize: 11, fontWeight: 'bold', color: '#000000' },
+  projectNoteBtn: {
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  projectNoteText: { fontSize: 11, fontWeight: 'bold', color: '#000000' },
+  treeStem: { fontSize: 11, color: '#606060', marginRight: 4 },
   projectMeta: { fontSize: 11, color: '#303030', marginTop: 2 },
   taskRow: { flexDirection: 'row', alignItems: 'center', marginTop: 5 },
   taskGlyph: { fontSize: 14, color: '#000000', marginRight: 6 },

@@ -28,6 +28,8 @@ export interface Attendee {
 export interface Area {
   id: string;
   name: string;
+  /** Shown beside the name; one or two characters. */
+  icon?: string;
   createdAt: Date;
   /** PARA's Archive: kept for reference, hidden from active pickers. */
   archived?: boolean;
@@ -51,6 +53,14 @@ export interface Project {
   template?: string;
   createdAt: Date;
   completedAt?: Date;
+  /**
+   * The project's own notebook.
+   *
+   * Stored on the Project rather than in a uid-keyed store, unlike event
+   * membership: projects are local entities that no sync rebuilds, so there is
+   * nothing to survive.
+   */
+  notePath?: string;
 }
 
 /**

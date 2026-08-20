@@ -3,14 +3,6 @@ import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View 
 import { Area, Project, ProjectStatus } from '../domain/types';
 import { projectOverdue, projectsByArea } from '../domain/taskListView';
 
-/** Short, unambiguous, and what the field accepts back. */
-function formatProjectDue(due?: Date): string {
-  if (!due) return '';
-  return `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, '0')}-${String(
-    due.getDate()
-  ).padStart(2, '0')}`;
-}
-
 interface AreaManagerModalProps {
   visible: boolean;
   areas: Area[];
@@ -21,12 +13,11 @@ interface AreaManagerModalProps {
   onSetProjectStatus: (projectId: string, status: ProjectStatus) => void;
   onDeleteProject: (projectId: string) => void;
   onCreateProject: (name: string) => void;
-  onSetProjectDue: (projectId: string, text: string) => void;
   /** Moves a project to the next area; areas are few, so a tap beats a picker. */
   onCycleProjectArea: (projectId: string) => void;
   /** How many tasks each area holds, so deleting can say what it affects. */
   countFor: (areaId: string) => number;
-  onRename: (areaId: string, name: string) => void;
+  onRename: (areaId: string, name: string, icon?: string) => void;
   onDelete: (areaId: string) => void;
   onCreate: (name: string) => void;
   onClose: () => void;
@@ -49,7 +40,6 @@ export function AreaManagerModal({
   onSetProjectStatus,
   onDeleteProject,
   onCreateProject,
-  onSetProjectDue,
   onCycleProjectArea,
   onRename,
   onDelete,
@@ -60,7 +50,6 @@ export function AreaManagerModal({
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [newName, setNewName] = useState<string>('');
   const [newProjectName, setNewProjectName] = useState<string>('');
-  const [dueDrafts, setDueDrafts] = useState<Record<string, string>>({});
 
   const nameFor = (area: Area) => drafts[area.id] ?? area.name;
 
@@ -125,6 +114,13 @@ export function AreaManagerModal({
                   </>
                 ) : (
                   <>
+                    <TextInput
+                      style={styles.iconInput}
+                      value={area.icon || ''}
+                      onChangeText={text => onRename(area.id, area.name, text.slice(0, 2))}
+                      placeholder="icon"
+                      placeholderTextColor="#909090"
+                    />
                     <TextInput
                       style={styles.nameInput}
                       value={nameFor(area)}
@@ -216,15 +212,6 @@ export function AreaManagerModal({
                         }}
                         autoCorrect={false}
                       />
-                      <TextInput
-                        style={styles.dueInput}
-                        value={dueDrafts[project.id] ?? formatProjectDue(project.dueDate)}
-                        onChangeText={text => setDueDrafts(d => ({ ...d, [project.id]: text }))}
-                        onEndEditing={() => onSetProjectDue(project.id, dueDrafts[project.id] ?? '')}
-                        placeholder="due"
-                        placeholderTextColor="#909090"
-                        autoCorrect={false}
-                      />
                       <Text
                         allowFontScaling={false}
                         style={[styles.count, projectOverdue(project) && styles.countOverdue]}
@@ -239,8 +226,8 @@ export function AreaManagerModal({
                         style={styles.confirmBtn}
                         onPress={() => onCycleProjectArea(project.id)}
                       >
-                        <Text allowFontScaling={false} style={styles.confirmBtnText}>
-                          ↔
+                        <Text allowFontScaling={false} style={styles.confirmBtnText} numberOfLines={1}>
+                          {areas.find(a => a.id === project.areaId)?.name || 'No Area'}
                         </Text>
                       </TouchableOpacity>
                       {/* Finishing is what a project can do that an area cannot. */}
@@ -254,7 +241,7 @@ export function AreaManagerModal({
                         }
                       >
                         <Text allowFontScaling={false} style={styles.confirmBtnText}>
-                          {project.status === 'active' ? 'Done' : 'Reopen'}
+                          {project.status === 'active' ? 'Finish' : 'Reopen'}
                         </Text>
                       </TouchableOpacity>
                       <TouchableOpacity
@@ -366,6 +353,18 @@ const styles = StyleSheet.create({
     borderBottomColor: '#d0d0d0',
     paddingVertical: 6,
   },
+  iconInput: {
+    width: 46,
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    marginRight: 4,
+    fontSize: 13,
+    color: '#000000',
+    textAlign: 'center',
+  },
   nameInput: {
     flex: 1,
     borderWidth: 2,
@@ -407,17 +406,6 @@ const styles = StyleSheet.create({
     color: '#303030',
     paddingTop: 6,
     paddingHorizontal: 4,
-  },
-  dueInput: {
-    width: 74,
-    borderWidth: 1,
-    borderColor: '#909090',
-    borderRadius: 4,
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-    marginLeft: 4,
-    fontSize: 11,
-    color: '#000000',
   },
   countOverdue: { fontWeight: 'bold', color: '#000000' },
   sectionHeading: {
