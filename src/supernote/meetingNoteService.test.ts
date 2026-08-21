@@ -75,7 +75,7 @@ describe('meetingNoteService', () => {
     (PluginFileAPI.createNote as jest.Mock).mockClear().mockResolvedValue({ success: true });
     await meetingNoteService.createOrAppendMeetingNote({ ...sampleEvent, uid: 'evt-302' });
 
-    // themeMode defaults to business, so this is a meeting rather than a class.
+    // Untyped notes default to meeting; Class is selected per event/type.
     expect(calendarStorage.getMapping('evt-302')?.kind).toBe('meeting');
   });
 

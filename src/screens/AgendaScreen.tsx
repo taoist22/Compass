@@ -22,7 +22,6 @@ import {
   EventType,
   Project,
   ProjectStatus,
-  ProfileThemeMode,
   Resource,
   TaskPriority,
   TaskStatus,
@@ -156,7 +155,6 @@ function countPendingSyncItems(): number {
 
 export function AgendaScreen(): React.JSX.Element {
   const [viewMode, setViewMode] = useState<CalendarViewMode>('month');
-  const [themeMode, setThemeMode] = useState<ProfileThemeMode>('business');
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
 
   // Modals & Popups (Defaults to FALSE on launch)
@@ -273,7 +271,6 @@ export function AgendaScreen(): React.JSX.Element {
 
     const settings = calendarStorage.getSettings();
     setViewMode(settings.defaultViewMode || 'month');
-    setThemeMode(settings.themeMode || 'business');
     setHideAllDay(settings.hideAllDayEvents);
     setHideSolo(settings.hideSoloEvents);
     setTargetNotesDir(settings.notesDirectory || '/storage/emulated/0/Note/Meetings');
@@ -1612,7 +1609,7 @@ export function AgendaScreen(): React.JSX.Element {
       byEvent[identity] = mapping.kind;
     }
     setNoteKindByEvent(byEvent);
-  }, [events, themeMode, targetNotesDir, eventNotePaths, refreshState]);
+  }, [events, targetNotesDir, eventNotePaths, refreshState]);
 
   // Same check as above, across the whole visible month so the grid can badge
   // the days that have one. There is no index to consult — listFiles is
@@ -1671,10 +1668,9 @@ export function AgendaScreen(): React.JSX.Element {
           settings.seriesNotebookPrefix,
           // Inlined rather than calling kindForEvent: that helper is rebuilt
           // every render, so listing it as a dependency would re-run this
-          // sweep continuously. themeMode, its only reactive input, is
-          // already in the dependency list below.
-          calendarStorage.getEventKind(noteIdentity(evt)) ||
-            (themeMode === 'academic' ? 'class' : 'meeting')
+          // sweep continuously. Untyped events default to meeting; Class is
+          // chosen per event or by its Event Type, never by a global mode.
+          calendarStorage.getEventKind(noteIdentity(evt)) || 'meeting'
         );
         const path = `${dir}/${name}`;
         try {
@@ -1694,7 +1690,7 @@ export function AgendaScreen(): React.JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [events, themeMode, targetNotesDir, refreshState]);
+  }, [events, targetNotesDir, refreshState]);
 
   const handleOpenDailyNote = async () => {
     const settings = calendarStorage.getSettings();
@@ -2920,11 +2916,6 @@ export function AgendaScreen(): React.JSX.Element {
     calendarStorage.updateSettings({ hideSoloEvents: val });
   };
 
-  const handleToggleThemeMode = (mode: ProfileThemeMode) => {
-    setThemeMode(mode);
-    calendarStorage.updateSettings({ themeMode: mode });
-  };
-
   const dateHeading =
     viewMode === 'month'
       ? selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
@@ -3792,27 +3783,6 @@ export function AgendaScreen(): React.JSX.Element {
                 </Text>
               </TouchableOpacity>
             ))}
-          </View>
-
-          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Theme & Profile Mode</Text>
-          <View style={styles.themeToggleRow}>
-            <TouchableOpacity
-              style={[styles.themeBtn, themeMode === 'business' && styles.themeBtnActive]}
-              onPress={() => handleToggleThemeMode('business')}
-            >
-              <Text allowFontScaling={false} style={[styles.themeBtnText, themeMode === 'business' && styles.themeBtnTextActive]}>
-                🏢 Business Mode
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.themeBtn, themeMode === 'academic' && styles.themeBtnActive]}
-              onPress={() => handleToggleThemeMode('academic')}
-            >
-              <Text allowFontScaling={false} style={[styles.themeBtnText, themeMode === 'academic' && styles.themeBtnTextActive]}>
-                🎓 Academic / School Mode
-              </Text>
-            </TouchableOpacity>
           </View>
 
           <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Tasks</Text>
@@ -5392,31 +5362,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 13,
     textAlign: 'center',
-  },
-  themeToggleRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 14,
-  },
-  themeBtn: {
-    flex: 1,
-    borderWidth: 2,
-    borderColor: '#000000',
-    borderRadius: 6,
-    paddingVertical: 10,
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-  },
-  themeBtnActive: {
-    backgroundColor: '#000000',
-  },
-  themeBtnText: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#000000',
-  },
-  themeBtnTextActive: {
-    color: '#ffffff',
   },
   pickerOpenBtn: {
     alignSelf: 'flex-start',

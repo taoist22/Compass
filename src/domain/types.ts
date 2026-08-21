@@ -4,6 +4,7 @@
  * overlay, which is what made it feel bolted on.
  */
 export type CalendarViewMode = 'month' | 'agenda' | 'para';
+/** @deprecated Note wording is selected per event or Event Type. */
 export type ProfileThemeMode = 'business' | 'academic';
 
 export interface Attendee {
@@ -246,7 +247,8 @@ export interface CalendarSettings {
   defaultTemplate: string; // default: ""
   seriesNotebookPrefix: string; // default: "Series - "
   defaultViewMode: CalendarViewMode; // default: "agenda"
-  themeMode: ProfileThemeMode; // default: "business"
+  /** @deprecated Retained only so older stored settings still deserialize. */
+  themeMode: ProfileThemeMode;
   hideAllDayEvents: boolean; // default: false
   hideSoloEvents: boolean; // default: false
   caldavEnabled?: boolean;

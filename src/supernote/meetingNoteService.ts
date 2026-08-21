@@ -170,8 +170,7 @@ export class MeetingNoteService {
     const filename = generateNoteFilename(event, isRecurringSeries, settings.seriesNotebookPrefix, kind);
     const notePath = `${targetDir}/${filename}`;
 
-    // Both of these previously omitted the mode entirely and silently fell back
-    // to business wording, so a class note got meeting headings inside it.
+    // Wording follows this note's own kind, not a global Business/Academic mode.
     const snapshot: MeetingSnapshot = createMeetingSnapshot(event, kind);
 
     try {
@@ -263,8 +262,8 @@ export class MeetingNoteService {
       // Record mapping
       calendarStorage.setMapping({
         eventUid: event.uid,
-        // Recorded now because themeMode may change later, and the grid badge
-        // and per-type templates both need to know what this note was.
+        // Recorded because the grid badge and per-type templates both need to
+        // know what this note was after the event is rebuilt from sync data.
         kind,
         seriesId: event.recurringSeriesId || event.uid,
         notePath,
