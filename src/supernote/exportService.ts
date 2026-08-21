@@ -4,9 +4,18 @@ import { FileUtils } from 'sn-plugin-lib';
 type CalendarFileModule = {
   writeTextFile(path: string, content: string): Promise<string>;
   openNote(path: string, page: number): Promise<boolean>;
+  openDocument(path: string): Promise<boolean>;
+  listNoteFiles(path: string): Promise<string[]>;
+  listFolderEntries(path: string): Promise<ParaFolderEntry[]>;
 };
 
 const CalendarFile = NativeModules.CalendarFile as CalendarFileModule | undefined;
+
+function isVisibleResourcePath(path: unknown): path is string {
+  if (typeof path !== 'string') return false;
+  const name = path.split('/').pop() || '';
+  return Boolean(name) && !name.startsWith('.') && !name.toLowerCase().endsWith('.mark');
+}
 
 /** Fallback if getExportPath is unavailable; the standard user-visible area. */
 const FALLBACK_EXPORT_ROOT = '/storage/emulated/0/Export';
@@ -16,6 +25,48 @@ export interface ExportResult {
   /** Where the file actually landed, as reported by the native writer. */
   path?: string;
   message: string;
+}
+
+export interface ParaFolderEntry {
+  name: string;
+  path: string;
+  isFolder: boolean;
+}
+
+/** One navigable level of a PARA folder, including subfolders and files. */
+export async function listParaFolderEntries(folder: string): Promise<ParaFolderEntry[]> {
+  if (CalendarFile?.listFolderEntries) {
+    try {
+      const entries = await CalendarFile.listFolderEntries(folder);
+      return Array.isArray(entries)
+        ? entries
+            .filter(entry => entry && isVisibleResourcePath(entry.path))
+            .sort((a, b) => Number(b.isFolder) - Number(a.isFolder) || a.name.localeCompare(b.name))
+        : [];
+    } catch (e) {
+      // Fall through to the public SDK for older native builds.
+    }
+  }
+
+  try {
+    const raw: any = await FileUtils.listFiles(folder);
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((entry: any): ParaFolderEntry | undefined => {
+        const path = typeof entry === 'string' ? entry : entry?.path;
+        if (!isVisibleResourcePath(path)) return undefined;
+        const name = path.split('/').pop() || path;
+        return {
+          name,
+          path,
+          isFolder: typeof entry !== 'string' && entry?.type === 0 && !name.toLowerCase().endsWith('.note'),
+        };
+      })
+      .filter((entry: ParaFolderEntry | undefined): entry is ParaFolderEntry => Boolean(entry))
+      .sort((a, b) => Number(b.isFolder) - Number(a.isFolder) || a.name.localeCompare(b.name));
+  } catch (e) {
+    return [];
+  }
 }
 
 /**
@@ -35,6 +86,52 @@ export async function openNoteInEditor(path: string, page = 0): Promise<ExportRe
     return { success: true, path, message: `Opened ${path.split('/').pop()}` };
   } catch (e: any) {
     return { success: false, message: `Could not open note: ${e?.message || 'open failed'}` };
+  }
+}
+
+export async function listResourceFiles(folder: string): Promise<string[]> {
+  // The SDK declaration claims string[], but its Android implementation sends
+  // [{ path, type }]. Accept both so this works across plugin-lib versions.
+  try {
+    const raw: any = await FileUtils.listFiles(folder);
+    if (Array.isArray(raw)) {
+      const sdkPaths = raw
+        .filter(entry => typeof entry === 'string' || entry?.type !== 0 || entry?.path?.toLowerCase().endsWith('.note'))
+        .map(entry => (typeof entry === 'string' ? entry : entry?.path))
+        .filter(isVisibleResourcePath)
+        .sort((a, b) => a.localeCompare(b));
+      if (sdkPaths.length > 0) return sdkPaths;
+    }
+  } catch (e) {
+    // Older firmware can reject the public list call; use our narrow native
+    // .note-only reader below.
+  }
+
+  if (CalendarFile?.listNoteFiles) {
+    try {
+      const paths = await CalendarFile.listNoteFiles(folder);
+      return Array.isArray(paths)
+        ? paths
+            .filter(isVisibleResourcePath)
+            .sort((a, b) => a.localeCompare(b))
+        : [];
+    } catch (e) {
+      return [];
+    }
+  }
+  return [];
+}
+
+export async function openResourceFile(path: string): Promise<ExportResult> {
+  if (path.toLowerCase().endsWith('.note')) return openNoteInEditor(path);
+  if (!CalendarFile?.openDocument) {
+    return { success: false, path, message: 'Cannot open documents — this build is missing its native module.' };
+  }
+  try {
+    await CalendarFile.openDocument(path);
+    return { success: true, path, message: `Opened ${path.split('/').pop()}` };
+  } catch (e: any) {
+    return { success: false, path, message: `Could not open file: ${e?.message || 'open failed'}` };
   }
 }
 

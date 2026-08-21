@@ -1,5 +1,22 @@
 import { CalendarEvent, CalendarSettings } from './types';
 
+function feedFingerprint(event: CalendarEvent): string {
+  return [
+    event.summary.trim().toLocaleLowerCase(),
+    event.start.getTime(),
+    event.end.getTime(),
+    event.allDay ? '1' : '0',
+    (event.location || '').trim().toLocaleLowerCase(),
+  ].join('|');
+}
+
+/** Stable across duplicate subscribed calendars and recurring occurrences. */
+export function feedEventHideIdentity(event: CalendarEvent): string {
+  return event.recurringSeriesId
+    ? `series:${event.recurringSeriesId}`
+    : `event:${feedFingerprint(event)}`;
+}
+
 /**
  * Collapses items that appear more than once by UID, keeping the first.
  *
@@ -15,6 +32,7 @@ import { CalendarEvent, CalendarSettings } from './types';
  */
 export function dedupeEvents(events: CalendarEvent[]): CalendarEvent[] {
   const seen = new Set<string>();
+  const seenFeedFingerprints = new Set<string>();
   const result: CalendarEvent[] = [];
 
   for (const event of events) {
@@ -25,6 +43,15 @@ export function dedupeEvents(events: CalendarEvent[]): CalendarEvent[] {
     }
     if (seen.has(key)) continue;
     seen.add(key);
+
+    // Shared/invited events can appear in two subscribed Google calendars
+    // with different UIDs. Collapse only byte-for-byte-equivalent feed views;
+    // local and CalDAV events are never merged by a heuristic.
+    if (event.sourceKind === 'feed') {
+      const fingerprint = feedFingerprint(event);
+      if (seenFeedFingerprints.has(fingerprint)) continue;
+      seenFeedFingerprints.add(fingerprint);
+    }
     result.push(event);
   }
 
@@ -35,7 +62,11 @@ export function dedupeEvents(events: CalendarEvent[]): CalendarEvent[] {
  * Filters calendar events based on user preferences (all-day events, solo events)
  */
 export function filterEvents(events: CalendarEvent[], settings: CalendarSettings): CalendarEvent[] {
+  const hidden = new Set(settings.hiddenFeedEventIds || []);
   return dedupeEvents(events).filter(event => {
+    if (event.sourceKind === 'feed' && hidden.has(feedEventHideIdentity(event))) {
+      return false;
+    }
     if (settings.hideAllDayEvents && event.allDay) {
       return false;
     }

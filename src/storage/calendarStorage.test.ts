@@ -1,5 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { CalendarStorage, calendarStorage, clearSessionPassword, getSessionPassword } from './calendarStorage';
+import {
+  CalendarStorage,
+  calendarStorage,
+  clearSessionPassword,
+  clearSessionTaskPassword,
+  getSessionPassword,
+  getSessionTaskPassword,
+} from './calendarStorage';
 
 // AsyncStorage is mocked globally in jest.setup.js.
 
@@ -57,6 +64,7 @@ describe('credential handling', () => {
   beforeEach(async () => {
     await AsyncStorage.clear();
     clearSessionPassword();
+    clearSessionTaskPassword();
   });
 
   test('the CalDAV password is never written to AsyncStorage', async () => {
@@ -87,19 +95,93 @@ describe('credential handling', () => {
     expect(store.getSettings().caldavPassword).toBe('in-memory-only');
   });
 
-  test('a reload does not restore a password from disk', async () => {
+  test('the independent task password and server URL use encrypted storage', async () => {
+    const first = new CalendarStorage();
+    first.updateSettings({
+      taskCaldavEnabled: true,
+      taskCaldavUsername: 'tasks@example.com',
+      taskCaldavPassword: 'task-secret',
+      taskCaldavServerUrl: 'https://tasks.example.com/private/dav',
+      taskCaldavCollectionUrl: 'https://tasks.example.com/calendars/todos/',
+    });
+    await first.flush();
+
+    const raw = (await AsyncStorage.getItem('@sn-calendar/settings')) as string;
+    expect(raw).not.toContain('task-secret');
+    expect(raw).not.toContain('/private/dav');
+    expect(getSessionTaskPassword()).toBe('task-secret');
+
+    clearSessionTaskPassword();
+    const second = new CalendarStorage();
+    const { settings } = await second.load();
+    expect(settings.taskCaldavPassword).toBe('task-secret');
+    expect(settings.taskCaldavServerUrl).toBe('https://tasks.example.com/private/dav');
+  });
+
+  test('a reload restores a password only from encrypted native storage', async () => {
     const first = new CalendarStorage();
     first.updateSettings({ caldavAppleId: 'user@icloud.com', caldavPassword: 'gone-on-reboot' });
     await flushWrites();
 
-    // Simulate a PluginHost restart: module scope is cleared, disk survives.
+    // Simulate a PluginHost restart: module scope is cleared; encrypted native
+    // storage and ordinary settings survive.
     clearSessionPassword();
+    clearSessionTaskPassword();
 
     const second = new CalendarStorage();
     const { settings } = await second.load();
 
     expect(settings.caldavAppleId).toBe('user@icloud.com');
-    expect(settings.caldavPassword).toBe('');
+    expect(settings.caldavPassword).toBe('gone-on-reboot');
+  });
+
+  test('private feed URLs are not written to shared AsyncStorage', async () => {
+    const store = new CalendarStorage();
+    store.addFeed({
+      id: 'private-feed',
+      name: 'Private',
+      url: 'https://example.com/calendar/bearer-token.ics',
+      enabled: true,
+    });
+    await store.flush();
+
+    const raw = (await AsyncStorage.getItem('@sn-calendar/settings')) as string;
+    expect(raw).not.toContain('bearer-token');
+
+    const reloaded = new CalendarStorage();
+    await reloaded.load();
+    expect(reloaded.getSettings().feeds.find(feed => feed.id === 'private-feed')?.url)
+      .toBe('https://example.com/calendar/bearer-token.ics');
+  });
+
+  test('does not migrate iCloud legacy Reminders into modern task sync', async () => {
+    await AsyncStorage.setItem('@sn-calendar/settings', JSON.stringify({
+      caldavProvider: 'icloud',
+      caldavAppleId: 'user@icloud.com',
+      caldavTaskListUrl: 'https://p.test/calendars/legacy-reminders/',
+    }));
+
+    const store = new CalendarStorage();
+    await store.load();
+
+    expect(store.getSettings().taskCaldavEnabled).toBe(false);
+    expect(store.getSettings().taskCaldavCollectionUrl).toBeFalsy();
+  });
+
+  test('migrates a working non-iCloud same-account VTODO configuration', async () => {
+    await AsyncStorage.setItem('@sn-calendar/settings', JSON.stringify({
+      caldavProvider: 'custom',
+      caldavAppleId: 'tasks@example.com',
+      caldavTaskListUrl: 'https://tasks.example.com/calendars/todos/',
+      caldavCustomUrl: 'https://tasks.example.com/dav',
+    }));
+
+    const store = new CalendarStorage();
+    await store.load();
+
+    expect(store.getSettings().taskCaldavEnabled).toBe(true);
+    expect(store.getSettings().taskCaldavUsername).toBe('tasks@example.com');
+    expect(store.getSettings().taskCaldavCollectionUrl).toContain('/todos/');
   });
 });
 
@@ -107,6 +189,8 @@ describe('legacy task migration on load', () => {
   beforeEach(async () => {
     await AsyncStorage.clear();
     clearSessionPassword();
+    clearSessionTaskPassword();
+    clearSessionTaskPassword();
   });
 
   test('tasks stored as events are lifted into the task list and removed from events', async () => {
@@ -187,6 +271,8 @@ describe('legacy task migration on load', () => {
 describe('task storage', () => {
   beforeEach(async () => {
     await AsyncStorage.clear();
+    clearSessionPassword();
+    clearSessionTaskPassword();
     clearSessionPassword();
   });
 
@@ -382,6 +468,83 @@ describe('PARA areas, projects and membership', () => {
     expect(calendarStorage.getProjects().find(p => p.id === 'proj-doomed')).toBeUndefined();
     expect(calendarStorage.getMembership('task-y')).toEqual({});
   });
+
+  test('resources upsert, archive, and remove independently of projects', () => {
+    const store = new CalendarStorage();
+    store.upsertResource({
+      id: 'resource-writing',
+      name: 'Writing reference',
+      createdAt: new Date('2026-08-20T00:00:00Z'),
+    });
+    store.upsertResource({
+      ...store.getResources()[0],
+      description: 'Style guides and examples',
+      archived: true,
+    });
+
+    expect(store.getResources()).toHaveLength(1);
+    expect(store.getResources()[0]).toMatchObject({
+      name: 'Writing reference',
+      description: 'Style guides and examples',
+      archived: true,
+    });
+
+    store.removeResource('resource-writing');
+    expect(store.getResources()).toEqual([]);
+  });
+
+  test('legacy resource notebooks migrate to folders on storage reload', async () => {
+    await AsyncStorage.clear();
+    const first = new CalendarStorage();
+    first.upsertResource({
+      id: 'resource-travel',
+      name: 'Travel research',
+      notePath: '/storage/emulated/0/Note/Resources/Travel research.note',
+      createdAt: new Date('2026-08-20T00:00:00Z'),
+    });
+    await first.flush();
+
+    const second = new CalendarStorage();
+    await second.load();
+    expect(second.getResources()[0].createdAt).toBeInstanceOf(Date);
+    expect(second.getResources()[0].folder).toBe('/storage/emulated/0/Note/Resources');
+    expect(second.getResources()[0].notePath).toContain('/Note/Resources/');
+  });
+
+  test('legacy project notebooks migrate to their containing folder', async () => {
+    await AsyncStorage.clear();
+    const first = new CalendarStorage();
+    first.upsertProject({
+      id: 'project-legacy-note',
+      name: 'Kitchen remodel',
+      status: 'active',
+      notePath: '/storage/emulated/0/Note/Old Projects/Kitchen remodel.note',
+      createdAt: new Date('2026-08-20T00:00:00Z'),
+    });
+    await first.flush();
+
+    const second = new CalendarStorage();
+    await second.load();
+    expect(second.getProjects()[0].folder).toBe('/storage/emulated/0/Note/Old Projects');
+    expect(second.getProjects()[0].notePath).toContain('Kitchen remodel.note');
+  });
+
+  test('area folders survive a storage reload', async () => {
+    await AsyncStorage.clear();
+    const first = new CalendarStorage();
+    first.upsertArea({
+      id: 'area-health',
+      name: 'Health',
+      folder: '/storage/emulated/0/Note/Compass/Areas/Health',
+      createdAt: new Date('2026-08-20T00:00:00Z'),
+    });
+    await first.flush();
+
+    const second = new CalendarStorage();
+    await second.load();
+    expect(second.getAreas()[0].folder).toBe('/storage/emulated/0/Note/Compass/Areas/Health');
+    expect(second.getAreas()[0].createdAt).toBeInstanceOf(Date);
+  });
 });
 
 describe('clearing a note kind', () => {
@@ -414,5 +577,24 @@ describe('clearing a note kind', () => {
 
   test('clearing an unknown item is harmless', () => {
     expect(() => calendarStorage.clearEventKind('never-seen')).not.toThrow();
+  });
+});
+
+describe('storage failure isolation', () => {
+  beforeEach(async () => {
+    await AsyncStorage.clear();
+  });
+
+  test('one corrupt blob does not erase valid independent data', async () => {
+    await AsyncStorage.setItem('@sn-calendar/settings', '{broken json');
+    await AsyncStorage.setItem('@sn-calendar/areas', JSON.stringify([
+      { id: 'area-safe', name: 'Safe', createdAt: new Date().toISOString() },
+    ]));
+
+    const store = new CalendarStorage();
+    await store.load();
+
+    expect(store.getSettings().notesDirectory).toContain('/Note/Meetings');
+    expect(store.getAreas().map(area => area.id)).toEqual(['area-safe']);
   });
 });

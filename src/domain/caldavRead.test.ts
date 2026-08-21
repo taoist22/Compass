@@ -1,6 +1,7 @@
 import {
   CaldavService,
   buildCalendarQuery,
+  buildTodoQuery,
   extractCalendarData,
   isTaskItem,
   splitMultistatusResponses,
@@ -62,6 +63,12 @@ END:VCALENDAR</calendar-data></response>`.replace(/&#13;\n/g, '\n');
       expect(xml).toContain('start="20260817T000000Z"');
       expect(xml).toContain('end="20260824T000000Z"');
       expect(xml).toContain('<C:calendar-data />');
+    });
+
+    test('buildTodoQuery includes undated VTODO resources', () => {
+      const xml = buildTodoQuery();
+      expect(xml).toContain('name="VTODO"');
+      expect(xml).not.toContain('time-range');
     });
   });
 
@@ -201,6 +208,35 @@ END:VCALENDAR</calendar-data></response>`.replace(/&#13;\n/g, '\n');
 
       expect(events).toEqual([]);
       expect(error).toContain('Network request failed');
+    });
+  });
+
+  describe('fetchTasks', () => {
+    test('reads dated and undated VTODO resources with server metadata', async () => {
+      const body = `<?xml version="1.0"?><multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+<response><href>/tasks/one.ics</href><propstat><prop><getetag>"v1"</getetag><C:calendar-data><![CDATA[BEGIN:VCALENDAR
+BEGIN:VTODO
+UID:task-one
+SUMMARY:Buy milk
+STATUS:NEEDS-ACTION
+PRIORITY:1
+END:VTODO
+END:VCALENDAR]]></C:calendar-data></prop></propstat></response>
+</multistatus>`;
+      (globalThis as any).fetch = jest.fn().mockResolvedValue({ status: 207, text: async () => body });
+
+      const { tasks, error } = await new CaldavService().fetchTasks(COLLECTION, creds);
+
+      expect(error).toBeUndefined();
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]).toMatchObject({
+        uid: 'task-one',
+        isTask: true,
+        undatedTask: true,
+        priority: 4,
+        etag: '"v1"',
+      });
+      expect(tasks[0].caldavUrl).toContain('/tasks/one.ics');
     });
   });
 });

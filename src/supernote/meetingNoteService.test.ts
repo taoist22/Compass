@@ -2,7 +2,7 @@ import { meetingNoteService } from './meetingNoteService';
 import { CalendarEvent } from '../domain/types';
 import { calendarStorage } from '../storage/calendarStorage';
 import { noteIdentity } from '../domain/meetingSnapshot';
-import { PluginFileAPI, PluginNoteAPI, FileUtils } from 'sn-plugin-lib';
+import { PluginFileAPI } from 'sn-plugin-lib';
 
 jest.mock('sn-plugin-lib', () => ({
   PluginFileAPI: {
@@ -85,7 +85,11 @@ describe('meetingNoteService', () => {
     expect(res.isNewFile).toBe(true);
     expect(res.pageNum).toBe(1);
     expect(PluginFileAPI.createNote).toHaveBeenCalled();
-    expect(PluginNoteAPI.insertText).toHaveBeenCalled();
+    expect(PluginFileAPI.insertElements).toHaveBeenCalledWith(
+      expect.stringContaining('Design Review.note'),
+      1,
+      expect.any(Array)
+    );
   });
 
   test('appends page to existing recurring meeting notebook', async () => {
@@ -104,6 +108,23 @@ describe('meetingNoteService', () => {
     expect(res.isNewFile).toBe(false);
     expect(res.pageNum).toBe(4);
     expect(PluginFileAPI.insertNotePage).toHaveBeenCalled();
+  });
+
+  test('fails instead of writing the snapshot onto the previous page when append fails', async () => {
+    (PluginFileAPI.getNoteTotalPageNum as jest.Mock).mockResolvedValueOnce({ success: true, data: 3 });
+    (PluginFileAPI.insertNotePage as jest.Mock).mockResolvedValueOnce({
+      success: false,
+      error: { message: 'page locked' },
+    });
+
+    const res = await meetingNoteService.createOrAppendMeetingNote({
+      ...sampleEvent,
+      uid: 'evt-append-fail',
+      recurringSeriesId: 'series-append-fail',
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('page locked');
   });
 });
 

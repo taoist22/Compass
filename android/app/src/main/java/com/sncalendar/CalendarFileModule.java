@@ -2,17 +2,38 @@ package com.sncalendar;
 
 import android.content.ComponentName;
 import android.content.Intent;
+import android.net.Uri;
 import android.text.TextUtils;
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.util.Base64;
 
 import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
+import com.facebook.react.bridge.WritableArray;
+import com.facebook.react.bridge.WritableNativeArray;
+import com.facebook.react.bridge.WritableMap;
+import com.facebook.react.bridge.WritableNativeMap;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
+import java.util.Arrays;
+import java.util.Comparator;
+
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
 
 /**
  * Writes plain-text files to device storage.
@@ -25,6 +46,9 @@ import java.nio.charset.StandardCharsets;
  */
 public class CalendarFileModule extends ReactContextBaseJavaModule {
 
+    private static final String SECRET_ALIAS = "sn_calendar_secrets_v1";
+    private static final String SECRET_PREFS = "sn_calendar_encrypted";
+
     CalendarFileModule(ReactApplicationContext context) {
         super(context);
     }
@@ -32,6 +56,128 @@ public class CalendarFileModule extends ReactContextBaseJavaModule {
     @Override
     public String getName() {
         return "CalendarFile";
+    }
+
+    private SecretKey getOrCreateSecretKey() throws Exception {
+        KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
+        keyStore.load(null);
+        if (keyStore.containsAlias(SECRET_ALIAS)) {
+            return ((KeyStore.SecretKeyEntry) keyStore.getEntry(SECRET_ALIAS, null)).getSecretKey();
+        }
+        KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+        generator.init(new KeyGenParameterSpec.Builder(
+                SECRET_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .build());
+        return generator.generateKey();
+    }
+
+    /** Stores subscription URLs encrypted at rest rather than in shared AsyncStorage. */
+    @ReactMethod
+    public void setSecret(String key, String value, Promise promise) {
+        try {
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey());
+            byte[] encrypted = cipher.doFinal((value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
+            String packed = Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + ":" +
+                    Base64.encodeToString(encrypted, Base64.NO_WRAP);
+            getReactApplicationContext()
+                    .getSharedPreferences(SECRET_PREFS, Context.MODE_PRIVATE)
+                    .edit().putString(key, packed).apply();
+            promise.resolve(true);
+        } catch (Throwable error) {
+            promise.reject("E_SECRET_WRITE", error.getMessage(), error);
+        }
+    }
+
+    @ReactMethod
+    public void getSecret(String key, Promise promise) {
+        try {
+            SharedPreferences prefs = getReactApplicationContext()
+                    .getSharedPreferences(SECRET_PREFS, Context.MODE_PRIVATE);
+            String packed = prefs.getString(key, null);
+            if (packed == null) {
+                promise.resolve(null);
+                return;
+            }
+            String[] parts = packed.split(":", 2);
+            if (parts.length != 2) throw new IllegalStateException("Invalid encrypted value");
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(),
+                    new GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP)));
+            byte[] clear = cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP));
+            promise.resolve(new String(clear, StandardCharsets.UTF_8));
+        } catch (Throwable error) {
+            promise.reject("E_SECRET_READ", error.getMessage(), error);
+        }
+    }
+
+    /**
+     * Reads a UTF-8 text file selected by Android. The Supernote picker may
+     * return an absolute path, file:// URI, or content:// URI; React Native's
+     * fetch(file://...) does not reliably support those forms.
+     */
+    @ReactMethod
+    public void readTextFile(String pathOrUri, Promise promise) {
+        if (TextUtils.isEmpty(pathOrUri)) {
+            promise.reject("E_PATH", "No path given");
+            return;
+        }
+        InputStream input = null;
+        try {
+            if (pathOrUri.startsWith("content://")) {
+                input = getReactApplicationContext().getContentResolver().openInputStream(Uri.parse(pathOrUri));
+            } else {
+                String path = pathOrUri.startsWith("file://")
+                        ? Uri.parse(pathOrUri).getPath()
+                        : pathOrUri;
+                input = new FileInputStream(new File(path));
+            }
+            if (input == null) throw new IllegalStateException("Could not open selected file");
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = input.read(buffer)) != -1) bytes.write(buffer, 0, read);
+            promise.resolve(new String(bytes.toByteArray(), StandardCharsets.UTF_8));
+        } catch (Throwable error) {
+            promise.reject("E_READ", error.getMessage(), error);
+        } finally {
+            if (input != null) {
+                try { input.close(); } catch (Throwable ignored) {}
+            }
+        }
+    }
+
+    /**
+     * Copies imported calendar text into app-owned storage. Picker grants can
+     * expire after the selection activity closes, so retaining only the
+     * external path makes a calendar disappear on the next refresh/restart.
+     */
+    @ReactMethod
+    public void storeImportedCalendar(String fileName, String content, Promise promise) {
+        try {
+            String safeName = TextUtils.isEmpty(fileName) ? "calendar.ics" : fileName;
+            safeName = safeName.replaceAll("[^A-Za-z0-9._-]", "_");
+            if (!safeName.toLowerCase().endsWith(".ics")) safeName += ".ics";
+            File folder = new File(getReactApplicationContext().getFilesDir(), "sn-calendar/imports");
+            if (!folder.exists() && !folder.mkdirs()) {
+                promise.reject("E_MKDIR", "Could not create imported-calendar folder");
+                return;
+            }
+            File target = new File(folder, System.currentTimeMillis() + "-" + safeName);
+            FileOutputStream output = new FileOutputStream(target, false);
+            try {
+                output.write((content == null ? "" : content).getBytes(StandardCharsets.UTF_8));
+                output.flush();
+            } finally {
+                output.close();
+            }
+            promise.resolve(target.getAbsolutePath());
+        } catch (Throwable error) {
+            promise.reject("E_IMPORT_STORE", error.getMessage(), error);
+        }
     }
 
     /**
@@ -67,6 +213,123 @@ public class CalendarFileModule extends ReactContextBaseJavaModule {
             promise.resolve(true);
         } catch (Throwable error) {
             promise.reject("E_OPEN", error.getMessage(), error);
+        }
+    }
+
+    /**
+     * Opens a supported document in Supernote's native document reader.
+     *
+     * The SDK's FileUtils.openFilePath() targets FileManagerMainActivity and
+     * therefore only reveals the containing folder. The document reader uses
+     * the same direct file_path contract as the note editor and is the proven
+     * route used by the other document-aware Supernote plugins.
+     */
+    @ReactMethod
+    public void openDocument(String filePath, Promise promise) {
+        if (TextUtils.isEmpty(filePath)) {
+            promise.reject("E_PATH", "No path given");
+            return;
+        }
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setComponent(new ComponentName(
+                    "com.supernote.document",
+                    "com.supernote.document.MainActivity"));
+            intent.putExtra("file_path", filePath);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getReactApplicationContext().startActivity(intent);
+            promise.resolve(true);
+        } catch (Throwable error) {
+            promise.reject("E_OPEN_DOCUMENT", error.getMessage(), error);
+        }
+    }
+
+    /**
+     * Lists the files immediately inside a Resource folder.
+     *
+     * The public plugin FileUtils does not expose a working listFiles call on
+     * device. Keeping this native surface read-only and non-recursive lets the
+     * PARA browser mirror one shelf folder without becoming a storage crawler.
+     */
+    @ReactMethod
+    public void listNoteFiles(String folderPath, Promise promise) {
+        if (TextUtils.isEmpty(folderPath)) {
+            promise.reject("E_PATH", "No folder path given");
+            return;
+        }
+        try {
+            File folder = new File(folderPath);
+            if (!folder.exists()) {
+                promise.resolve(new WritableNativeArray());
+                return;
+            }
+            if (!folder.isDirectory()) {
+                promise.reject("E_NOT_DIRECTORY", "Path is not a folder: " + folderPath);
+                return;
+            }
+            File[] children = folder.listFiles();
+            if (children == null) {
+                promise.reject("E_LIST", "Could not read folder: " + folderPath);
+                return;
+            }
+            Arrays.sort(children, Comparator.comparing(File::getName, String.CASE_INSENSITIVE_ORDER));
+            WritableArray notes = new WritableNativeArray();
+            for (File child : children) {
+                // Some firmware exposes a notebook as a package-like directory
+                // even though the shelf presents it as one .note document.
+                if ((child.isFile() || child.getName().toLowerCase().endsWith(".note"))
+                        && !child.getName().startsWith(".")) {
+                    notes.pushString(child.getAbsolutePath());
+                }
+            }
+            promise.resolve(notes);
+        } catch (Throwable error) {
+            promise.reject("E_LIST", error.getMessage(), error);
+        }
+    }
+
+    /**
+     * Lists one folder level for Compass's own PARA browser. Ordinary folders
+     * remain navigable, while Supernote .note packages are exposed as files so
+     * tapping them opens the note editor rather than descending into internals.
+     */
+    @ReactMethod
+    public void listFolderEntries(String folderPath, Promise promise) {
+        if (TextUtils.isEmpty(folderPath)) {
+            promise.reject("E_PATH", "No folder path given");
+            return;
+        }
+        try {
+            File folder = new File(folderPath);
+            if (!folder.exists()) {
+                promise.resolve(new WritableNativeArray());
+                return;
+            }
+            if (!folder.isDirectory()) {
+                promise.reject("E_NOT_DIRECTORY", "Path is not a folder: " + folderPath);
+                return;
+            }
+            File[] children = folder.listFiles();
+            if (children == null) {
+                promise.reject("E_LIST", "Could not read folder: " + folderPath);
+                return;
+            }
+            Arrays.sort(children, Comparator.comparing(File::getName, String.CASE_INSENSITIVE_ORDER));
+            WritableArray entries = new WritableNativeArray();
+            for (File child : children) {
+                String name = child.getName();
+                String lower = name.toLowerCase();
+                if (name.startsWith(".") || lower.endsWith(".mark")) continue;
+
+                WritableMap entry = new WritableNativeMap();
+                entry.putString("name", name);
+                entry.putString("path", child.getAbsolutePath());
+                entry.putBoolean("isFolder", child.isDirectory() && !lower.endsWith(".note"));
+                entries.pushMap(entry);
+            }
+            promise.resolve(entries);
+        } catch (Throwable error) {
+            promise.reject("E_LIST", error.getMessage(), error);
         }
     }
 

@@ -12,7 +12,7 @@ function formatIcsDateTime(d: Date): string {
 
 /** RFC 5545 DATE form for all-day events, e.g. 20260825 */
 function formatIcsDate(d: Date): string {
-  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}`;
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
 }
 
 /**
@@ -75,11 +75,39 @@ export function generateOutboundIcsEvent(event: CalendarEvent): string {
   const dateLines = event.allDay
     ? [`DTSTART;VALUE=DATE:${formatIcsDate(event.start)}`, `DTEND;VALUE=DATE:${formatIcsDate(event.end)}`]
     : [`DTSTART:${formatIcsDateTime(event.start)}`, `DTEND:${formatIcsDateTime(event.end)}`];
+  const exceptionLine = event.exceptionDates && event.exceptionDates.length > 0
+    ? event.allDay
+      ? `EXDATE;VALUE=DATE:${event.exceptionDates.map(d => d.replace(/-/g, '')).join(',')}`
+      : `EXDATE:${event.exceptionDates.map(key => {
+          const [year, month, day] = key.split('-').map(Number);
+          const date = new Date(event.start);
+          date.setFullYear(year, month - 1, day);
+          return formatIcsDateTime(date);
+        }).join(',')}`
+    : '';
+  const organizerLine = event.organizer?.email
+    ? `ORGANIZER${event.organizer.name ? `;CN=${escapeIcsText(event.organizer.name)}` : ''}:mailto:${event.organizer.email}`
+    : '';
+  const attendeeLines = event.attendees
+    .filter(attendee => attendee.email)
+    .map(attendee =>
+      `ATTENDEE${attendee.name ? `;CN=${escapeIcsText(attendee.name)}` : ''}` +
+      `${attendee.status ? `;PARTSTAT=${attendee.status}` : ''}:mailto:${attendee.email}`
+    );
+  const alarmLines = Number.isFinite(event.alarmMinutesBefore) && (event.alarmMinutesBefore as number) >= 0
+    ? [
+        `BEGIN:VALARM`,
+        `TRIGGER:${event.alarmMinutesBefore === 0 ? 'PT0M' : `-PT${event.alarmMinutesBefore}M`}`,
+        `ACTION:DISPLAY`,
+        `DESCRIPTION:${escapeIcsText(event.summary)}`,
+        `END:VALARM`,
+      ]
+    : [];
 
   const lines = [
     `BEGIN:VCALENDAR`,
     `VERSION:2.0`,
-    `PRODID:-//Supernote Calendar Plugin//EN`,
+    `PRODID:-//Compass for Supernote//EN`,
     `CALSCALE:GREGORIAN`,
     `BEGIN:VEVENT`,
     `UID:${escapeIcsText(event.uid)}`,
@@ -88,6 +116,11 @@ export function generateOutboundIcsEvent(event: CalendarEvent): string {
     ...dateLines,
     event.location ? `LOCATION:${escapeIcsText(event.location)}` : '',
     event.description ? `DESCRIPTION:${escapeIcsText(event.description)}` : '',
+    event.rrule ? `RRULE:${event.rrule}` : '',
+    exceptionLine,
+    organizerLine,
+    ...attendeeLines,
+    ...alarmLines,
     `END:VEVENT`,
     `END:VCALENDAR`,
   ].filter(Boolean);
@@ -111,14 +144,16 @@ export function generateOutboundIcsTodo(task: CalendarEvent): string {
   // Strip the legacy display marker so Reminders shows a clean title.
   const summary = task.summary.replace(/^\[TASK\]\s*/i, '');
 
-  const dueLine = task.allDay
-    ? `DUE;VALUE=DATE:${formatIcsDate(task.start)}`
-    : `DUE:${formatIcsDateTime(task.start)}`;
+  const dueLine = task.undatedTask
+    ? ''
+    : task.allDay
+      ? `DUE;VALUE=DATE:${formatIcsDate(task.start)}`
+      : `DUE:${formatIcsDateTime(task.start)}`;
 
   const lines = [
     `BEGIN:VCALENDAR`,
     `VERSION:2.0`,
-    `PRODID:-//Supernote Calendar Plugin//EN`,
+    `PRODID:-//Compass for Supernote//EN`,
     `CALSCALE:GREGORIAN`,
     `BEGIN:VTODO`,
     `UID:${escapeIcsText(task.uid)}`,
@@ -127,6 +162,9 @@ export function generateOutboundIcsTodo(task: CalendarEvent): string {
     dueLine,
     `STATUS:${completed ? 'COMPLETED' : 'NEEDS-ACTION'}`,
     `PERCENT-COMPLETE:${completed ? 100 : 0}`,
+    task.priority && task.priority > 1
+      ? `PRIORITY:${task.priority === 4 ? 1 : task.priority === 3 ? 5 : 7}`
+      : '',
     completed ? `COMPLETED:${dtStamp}` : '',
     task.description ? `DESCRIPTION:${escapeIcsText(task.description)}` : '',
     `END:VTODO`,

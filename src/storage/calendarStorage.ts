@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { CalendarEvent, CalendarFeed, CalendarSettings, CalendarTask, MeetingNoteMapping, NoteKind, Area, EventType, Project, ItemMembership } from '../domain/types';
+import { NativeModules } from 'react-native';
+import { CalendarEvent, CalendarFeed, CalendarSettings, CalendarTask, MeetingNoteMapping, NoteKind, Area, EventType, Project, Resource, ItemMembership } from '../domain/types';
 import { isLegacyTaskEvent, taskFromLegacyEvent } from '../domain/taskFilters';
 import { normaliseTask } from '../domain/taskModel';
 import { DEFAULT_SYSTEM_TEMPLATE } from '../domain/noteTemplates';
@@ -10,13 +11,23 @@ const MAPPINGS_KEY = '@sn-calendar/mappings';
 const USER_EVENTS_KEY = '@sn-calendar/userEvents';
 const TASKS_KEY = '@sn-calendar/tasks';
 const PUSH_STATE_KEY = '@sn-calendar/caldavPushState';
+const TASK_PUSH_STATE_KEY = '@sn-calendar/caldavTaskPushState';
 const CALDAV_EVENTS_KEY = '@sn-calendar/caldavEvents';
 const EVENT_KINDS_KEY = '@sn-calendar/eventKinds';
 const AREAS_KEY = '@sn-calendar/areas';
 const PROJECTS_KEY = '@sn-calendar/projects';
+const RESOURCES_KEY = '@sn-calendar/resources';
 const MEMBERSHIP_KEY = '@sn-calendar/itemMembership';
 const PENDING_DELETES_KEY = '@sn-calendar/pendingNoteDeletes';
 const EVENT_TYPES_KEY = '@sn-calendar/eventTypes';
+const SECURE_CONNECTIONS_KEY = 'calendar-connections';
+
+type SecureStore = {
+  getSecret(key: string): Promise<string | null>;
+  setSecret(key: string, value: string): Promise<boolean>;
+};
+
+const secureStore = NativeModules.CalendarFile as SecureStore | undefined;
 
 const DEFAULT_SETTINGS: CalendarSettings = {
   feeds: [
@@ -39,6 +50,11 @@ const DEFAULT_SETTINGS: CalendarSettings = {
   caldavPassword: '',
   caldavCalendarUrl: '',
   caldavCustomUrl: '',
+  taskCaldavEnabled: false,
+  taskCaldavUsername: '',
+  taskCaldavPassword: '',
+  taskCaldavCollectionUrl: '',
+  taskCaldavServerUrl: '',
   // 8mm ruled is the built-in default for every note kind; each is independently
   // changeable, and any of them may instead hold a custom PNG path.
   meetingTemplate: DEFAULT_SYSTEM_TEMPLATE,
@@ -65,19 +81,29 @@ function makeDefaultSettings(): CalendarSettings {
   };
 }
 
+function parseStored(raw: string | null): any | undefined {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch (_error) {
+    return undefined;
+  }
+}
+
 /**
- * The CalDAV app-specific password is deliberately NOT persisted.
+ * The CalDAV app-specific password is never persisted to AsyncStorage.
  *
  * AsyncStorage is unencrypted, and its sandbox belongs to PluginHost rather
  * than to this plugin — every installed plugin shares it, so anything written
- * here is readable by all of them. Holding the password in module scope keeps
- * it off disk entirely while still surviving panel close/reopen, because the
- * PluginHost process outlives the plugin view (patterns.md Pattern 13).
+ * here is readable by all of them. The password therefore lives in encrypted
+ * native storage and is copied into module scope only while the plugin runs.
  *
- * Consequence: the password is cleared by a device reboot, a PluginHost
- * restart, or Android reclaiming the process under memory pressure.
+ * Native builds persist it with Android Keystore-backed AES-GCM storage. The
+ * module variable remains the runtime copy and the fallback for test/dev builds
+ * without the native module.
  */
 let sessionPassword = '';
+let sessionTaskPassword = '';
 
 export function setSessionPassword(password: string): void {
   sessionPassword = password || '';
@@ -89,6 +115,18 @@ export function getSessionPassword(): string {
 
 export function clearSessionPassword(): void {
   sessionPassword = '';
+}
+
+export function setSessionTaskPassword(password: string): void {
+  sessionTaskPassword = password || '';
+}
+
+export function getSessionTaskPassword(): string {
+  return sessionTaskPassword;
+}
+
+export function clearSessionTaskPassword(): void {
+  sessionTaskPassword = '';
 }
 
 /** Dates survive JSON as ISO strings; revive them or every date comparison breaks. */
@@ -105,11 +143,28 @@ function reviveArea(raw: any): Area {
 }
 
 function reviveProject(raw: any): Project {
+  const legacyPath = typeof raw.notePath === 'string' ? raw.notePath : undefined;
+  const legacySlash = legacyPath?.lastIndexOf('/') ?? -1;
   return {
     ...raw,
+    folder:
+      raw.folder ||
+      (legacyPath && legacySlash > 0 ? legacyPath.slice(0, legacySlash) : undefined),
     status: raw.status || 'active',
     dueDate: raw.dueDate ? new Date(raw.dueDate) : undefined,
     completedAt: raw.completedAt ? new Date(raw.completedAt) : undefined,
+    createdAt: raw.createdAt ? new Date(raw.createdAt) : new Date(),
+  };
+}
+
+function reviveResource(raw: any): Resource {
+  const legacyPath = typeof raw.notePath === 'string' ? raw.notePath : undefined;
+  const legacySlash = legacyPath?.lastIndexOf('/') ?? -1;
+  return {
+    ...raw,
+    folder:
+      raw.folder ||
+      (legacyPath && legacySlash > 0 ? legacyPath.slice(0, legacySlash) : undefined),
     createdAt: raw.createdAt ? new Date(raw.createdAt) : new Date(),
   };
 }
@@ -129,6 +184,7 @@ export class CalendarStorage {
   private userEvents: CalendarEvent[] = [];
   private tasks: CalendarTask[] = [];
   private pushState: CaldavPushState = emptyPushState();
+  private taskPushState: CaldavPushState = emptyPushState();
   /** Last read from CalDAV, cached so the calendar is populated on open. */
   private caldavEvents: CalendarEvent[] = [];
   /**
@@ -144,6 +200,7 @@ export class CalendarStorage {
   private areas: Area[] = [];
   private eventTypes: EventType[] = [];
   private projects: Project[] = [];
+  private resources: Resource[] = [];
   /**
    * Area and project membership keyed by noteIdentity, so one store serves
    * events, tasks and notes alike — and so membership survives a sync
@@ -160,20 +217,23 @@ export class CalendarStorage {
    */
   private pendingDeletes: string[] = [];
   private loaded = false;
+  private lastPersistenceError = '';
 
   async load(): Promise<{ settings: CalendarSettings; mappings: Record<string, MeetingNoteMapping> }> {
     try {
-      const [rawSettings, rawMappings, rawEvents, rawTasks, rawPushState, rawCaldavEvents, rawEventKinds, rawAreas, rawProjects, rawMembership, rawPendingDeletes, rawEventTypes] =
+      const [rawSettings, rawMappings, rawEvents, rawTasks, rawPushState, rawTaskPushState, rawCaldavEvents, rawEventKinds, rawAreas, rawProjects, rawResources, rawMembership, rawPendingDeletes, rawEventTypes] =
         await Promise.all([
         AsyncStorage.getItem(SETTINGS_KEY),
         AsyncStorage.getItem(MAPPINGS_KEY),
         AsyncStorage.getItem(USER_EVENTS_KEY),
         AsyncStorage.getItem(TASKS_KEY),
         AsyncStorage.getItem(PUSH_STATE_KEY),
+        AsyncStorage.getItem(TASK_PUSH_STATE_KEY),
         AsyncStorage.getItem(CALDAV_EVENTS_KEY),
         AsyncStorage.getItem(EVENT_KINDS_KEY),
         AsyncStorage.getItem(AREAS_KEY),
         AsyncStorage.getItem(PROJECTS_KEY),
+        AsyncStorage.getItem(RESOURCES_KEY),
         AsyncStorage.getItem(MEMBERSHIP_KEY),
         AsyncStorage.getItem(PENDING_DELETES_KEY),
         AsyncStorage.getItem(EVENT_TYPES_KEY),
@@ -182,42 +242,67 @@ export class CalendarStorage {
       if (rawSettings) {
         // Merge over defaults so a settings blob written by an older version
         // that lacks newer keys still yields a complete object.
-        this.settings = { ...makeDefaultSettings(), ...JSON.parse(rawSettings) };
+        this.settings = { ...makeDefaultSettings(), ...(parseStored(rawSettings) || {}) };
+      }
+      if (secureStore?.getSecret) {
+        try {
+          const secureRaw = await secureStore.getSecret(SECURE_CONNECTIONS_KEY);
+          const secure = parseStored(secureRaw);
+          if (secure) {
+            const urls = secure.feedUrls || {};
+            this.settings.feeds = this.settings.feeds.map(feed => ({ ...feed, url: urls[feed.id] }));
+            this.settings.caldavCustomUrl = secure.caldavCustomUrl || this.settings.caldavCustomUrl;
+            if (secure.caldavPassword) setSessionPassword(secure.caldavPassword);
+            this.settings.taskCaldavServerUrl = secure.taskCaldavServerUrl || this.settings.taskCaldavServerUrl;
+            if (secure.taskCaldavPassword) setSessionTaskPassword(secure.taskCaldavPassword);
+          }
+        } catch (e: any) {
+          this.lastPersistenceError = e?.message || 'Could not read encrypted calendar connections.';
+        }
       }
       if (rawMappings) {
-        this.mappings = JSON.parse(rawMappings);
+        this.mappings = parseStored(rawMappings) || {};
       }
       if (rawTasks) {
         // normaliseTask fills in a status for anything stored before statuses
         // existed, so nothing has to be migrated on disk.
-        this.tasks = (JSON.parse(rawTasks) as any[]).map(reviveTask).map(normaliseTask);
+        const parsed = parseStored(rawTasks);
+        this.tasks = Array.isArray(parsed) ? parsed.map(reviveTask).map(normaliseTask) : [];
       }
       if (rawEventTypes) {
-        this.eventTypes = (JSON.parse(rawEventTypes) as any[]).map(reviveArea) as EventType[];
+        const parsed = parseStored(rawEventTypes);
+        this.eventTypes = Array.isArray(parsed) ? parsed.map(reviveArea) as EventType[] : [];
       }
       if (rawAreas) {
-        this.areas = (JSON.parse(rawAreas) as any[]).map(reviveArea);
+        const parsed = parseStored(rawAreas);
+        this.areas = Array.isArray(parsed) ? parsed.map(reviveArea) : [];
       }
       if (rawProjects) {
-        this.projects = (JSON.parse(rawProjects) as any[]).map(reviveProject);
+        const parsed = parseStored(rawProjects);
+        this.projects = Array.isArray(parsed) ? parsed.map(reviveProject) : [];
+      }
+      if (rawResources) {
+        const parsed = parseStored(rawResources);
+        this.resources = Array.isArray(parsed) ? parsed.map(reviveResource) : [];
       }
       if (rawMembership) {
-        const parsed = JSON.parse(rawMembership);
+        const parsed = parseStored(rawMembership);
         this.membership = parsed && typeof parsed === 'object' ? parsed : {};
       }
       if (rawPendingDeletes) {
-        const parsed = JSON.parse(rawPendingDeletes);
+        const parsed = parseStored(rawPendingDeletes);
         this.pendingDeletes = Array.isArray(parsed) ? parsed.filter(v => typeof v === 'string') : [];
       }
       if (rawEventKinds) {
-        const parsed = JSON.parse(rawEventKinds);
+        const parsed = parseStored(rawEventKinds);
         this.eventKinds = parsed && typeof parsed === 'object' ? parsed : {};
       }
       if (rawCaldavEvents) {
-        this.caldavEvents = (JSON.parse(rawCaldavEvents) as any[]).map(reviveEvent);
+        const parsed = parseStored(rawCaldavEvents);
+        this.caldavEvents = Array.isArray(parsed) ? parsed.map(reviveEvent) : [];
       }
       if (rawPushState) {
-        const parsed = JSON.parse(rawPushState);
+        const parsed = parseStored(rawPushState);
         // Guard the shape: a truncated or older blob must not make every item
         // look already-pushed.
         this.pushState =
@@ -225,9 +310,17 @@ export class CalendarStorage {
             ? parsed
             : emptyPushState();
       }
+      if (rawTaskPushState) {
+        const parsed = parseStored(rawTaskPushState);
+        this.taskPushState =
+          parsed && typeof parsed.target === 'string' && parsed.records
+            ? parsed
+            : emptyPushState();
+      }
 
       if (rawEvents) {
-        const revived = (JSON.parse(rawEvents) as any[]).map(reviveEvent);
+        const parsed = parseStored(rawEvents);
+        const revived = Array.isArray(parsed) ? parsed.map(reviveEvent) : [];
 
         // Tasks used to be stored as CalendarEvents carrying isTask or a
         // "[TASK] " prefix. Lift any of those across to the dedicated task
@@ -243,23 +336,33 @@ export class CalendarStorage {
           void this.save();
         }
       }
-    } catch (e) {
-      this.settings = makeDefaultSettings();
-      this.mappings = {};
-      this.userEvents = [];
-      this.tasks = [];
-      this.pushState = emptyPushState();
-      this.caldavEvents = [];
-      this.eventKinds = {};
-      this.areas = [];
-      this.eventTypes = [];
-      this.projects = [];
-      this.membership = {};
-      this.pendingDeletes = [];
+
+      // Before task accounts were independent, a non-iCloud CalDAV account
+      // could use its VTODO collection through the event credentials. Preserve
+      // that working setup once. iCloud is deliberately excluded: its legacy
+      // VTODO collection is not the modern Reminders database shown on Apple
+      // devices, even though the server still advertises and accepts it.
+      if (
+        !this.settings.taskCaldavEnabled &&
+        this.settings.caldavProvider !== 'icloud' &&
+        this.settings.caldavTaskListUrl
+      ) {
+        this.settings.taskCaldavEnabled = true;
+        this.settings.taskCaldavUsername = this.settings.caldavAppleId || '';
+        this.settings.taskCaldavCollectionUrl = this.settings.caldavTaskListUrl;
+        this.settings.taskCaldavServerUrl = this.settings.caldavCustomUrl || '';
+        setSessionTaskPassword(sessionPassword);
+      }
+    } catch (e: any) {
+      // Preserve whatever was already loaded. One unavailable storage read must
+      // not reset every independent data set to defaults.
+      this.lastPersistenceError = e?.message || 'Could not read plugin storage.';
     }
 
-    // Never restored from disk — only ever from this session's memory.
+    // Restored from encrypted native storage when available, otherwise held
+    // only in this process's session memory.
     this.settings.caldavPassword = sessionPassword;
+    this.settings.taskCaldavPassword = sessionTaskPassword;
     this.loaded = true;
 
     return { settings: this.settings, mappings: this.mappings };
@@ -274,8 +377,31 @@ export class CalendarStorage {
       // Strip the password on the way out. updateSettings already diverts it to
       // module scope; this is the second guard, so a future call site that sets
       // it directly on the object still cannot write it to disk.
-      const { caldavPassword, ...persistable } = this.settings;
+      const { caldavPassword, taskCaldavPassword, ...settingsWithoutPassword } = this.settings;
       void caldavPassword;
+      void taskCaldavPassword;
+      const persistable = {
+        ...settingsWithoutPassword,
+        // Private calendar URLs are bearer credentials. They belong in the
+        // native encrypted store, not PluginHost-wide AsyncStorage.
+        feeds: settingsWithoutPassword.feeds.map(feed => ({ ...feed, url: undefined })),
+        caldavCustomUrl: '',
+        taskCaldavServerUrl: '',
+      };
+
+      if (secureStore?.setSecret) {
+        await secureStore.setSecret(SECURE_CONNECTIONS_KEY, JSON.stringify({
+          feedUrls: Object.fromEntries(
+            this.settings.feeds.filter(feed => feed.url).map(feed => [feed.id, feed.url])
+          ),
+          caldavCustomUrl: this.settings.caldavCustomUrl || '',
+          caldavPassword: sessionPassword,
+          taskCaldavServerUrl: this.settings.taskCaldavServerUrl || '',
+          taskCaldavPassword: sessionTaskPassword,
+        }));
+      } else if (this.settings.feeds.some(feed => feed.url)) {
+        throw new Error('Encrypted connection storage is unavailable in this build.');
+      }
 
       await Promise.all([
         AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(persistable)),
@@ -283,17 +409,30 @@ export class CalendarStorage {
         AsyncStorage.setItem(USER_EVENTS_KEY, JSON.stringify(this.userEvents)),
         AsyncStorage.setItem(TASKS_KEY, JSON.stringify(this.tasks)),
         AsyncStorage.setItem(PUSH_STATE_KEY, JSON.stringify(this.pushState)),
+        AsyncStorage.setItem(TASK_PUSH_STATE_KEY, JSON.stringify(this.taskPushState)),
         AsyncStorage.setItem(CALDAV_EVENTS_KEY, JSON.stringify(this.caldavEvents)),
         AsyncStorage.setItem(EVENT_KINDS_KEY, JSON.stringify(this.eventKinds)),
         AsyncStorage.setItem(AREAS_KEY, JSON.stringify(this.areas)),
         AsyncStorage.setItem(PROJECTS_KEY, JSON.stringify(this.projects)),
+        AsyncStorage.setItem(RESOURCES_KEY, JSON.stringify(this.resources)),
         AsyncStorage.setItem(MEMBERSHIP_KEY, JSON.stringify(this.membership)),
         AsyncStorage.setItem(PENDING_DELETES_KEY, JSON.stringify(this.pendingDeletes)),
         AsyncStorage.setItem(EVENT_TYPES_KEY, JSON.stringify(this.eventTypes)),
       ]);
-    } catch (e) {
-      // A failed write must not take down the UI; state stays correct in memory.
+      this.lastPersistenceError = '';
+    } catch (e: any) {
+      this.lastPersistenceError = e?.message || 'Could not save plugin data.';
     }
+  }
+
+  /** Forces pending in-memory state to disk and returns a user-facing error. */
+  async flush(): Promise<string> {
+    await this.save();
+    return this.lastPersistenceError;
+  }
+
+  getPersistenceError(): string {
+    return this.lastPersistenceError;
   }
 
   getSettings(): CalendarSettings {
@@ -301,13 +440,21 @@ export class CalendarStorage {
   }
 
   updateSettings(newSettings: Partial<CalendarSettings>): CalendarSettings {
-    const { caldavPassword, ...persistable } = newSettings;
+    const { caldavPassword, taskCaldavPassword, ...persistable } = newSettings;
 
     if (caldavPassword !== undefined) {
       setSessionPassword(caldavPassword);
     }
+    if (taskCaldavPassword !== undefined) {
+      setSessionTaskPassword(taskCaldavPassword);
+    }
 
-    this.settings = { ...this.settings, ...persistable, caldavPassword: sessionPassword };
+    this.settings = {
+      ...this.settings,
+      ...persistable,
+      caldavPassword: sessionPassword,
+      taskCaldavPassword: sessionTaskPassword,
+    };
     void this.save();
     return this.settings;
   }
@@ -468,6 +615,24 @@ export class CalendarStorage {
     return this.projects;
   }
 
+  getResources(): Resource[] {
+    return this.resources;
+  }
+
+  upsertResource(resource: Resource): Resource[] {
+    const idx = this.resources.findIndex(item => item.id === resource.id);
+    if (idx >= 0) this.resources[idx] = resource;
+    else this.resources.push(resource);
+    void this.save();
+    return this.resources;
+  }
+
+  removeResource(resourceId: string): Resource[] {
+    this.resources = this.resources.filter(item => item.id !== resourceId);
+    void this.save();
+    return this.resources;
+  }
+
   /** Membership for an item, keyed by noteIdentity. Never empty-checked away. */
   getMembership(identity: string): ItemMembership {
     return this.membership[identity] || {};
@@ -521,6 +686,20 @@ export class CalendarStorage {
 
   setPushState(state: CaldavPushState): void {
     this.pushState = state;
+    void this.save();
+  }
+
+  getTaskPushState(target: string): CaldavPushState {
+    return stateForTarget(this.taskPushState, target);
+  }
+
+  setTaskPushState(state: CaldavPushState): void {
+    this.taskPushState = state;
+    void this.save();
+  }
+
+  forgetTaskPush(uid: string): void {
+    this.taskPushState = forgetPush(this.taskPushState, uid);
     void this.save();
   }
 

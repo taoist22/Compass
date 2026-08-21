@@ -1,4 +1,4 @@
-import { FileUtils, PluginCommAPI, PluginFileAPI, PluginNoteAPI } from 'sn-plugin-lib';
+import { FileUtils, PluginCommAPI, PluginFileAPI } from 'sn-plugin-lib';
 import { CalendarEvent, CalendarSettings, EventType, MeetingSnapshot, NoteKind } from '../domain/types';
 import { createMeetingSnapshot, generateNoteFilename } from '../domain/meetingSnapshot';
 import {
@@ -16,6 +16,7 @@ export interface MeetingNoteResult {
   pageNum: number;
   isNewFile: boolean;
   error?: string;
+  warning?: string;
 }
 
 export class MeetingNoteService {
@@ -191,11 +192,16 @@ export class MeetingNoteService {
           template: templateValue,
         });
 
-        if (insertRes && insertRes.success) {
-          pageNum = lastPage + 1;
-        } else {
-          pageNum = lastPage;
+        if (!insertRes || insertRes.success !== true) {
+          return {
+            success: false,
+            notePath,
+            pageNum: lastPage,
+            isNewFile: false,
+            error: insertRes?.error?.message || 'Could not append a page to the recurring notebook.',
+          };
         }
+        pageNum = lastPage + 1;
       } else {
         // File does not exist -> Create new note file
         isNewFile = true;
@@ -221,27 +227,37 @@ export class MeetingNoteService {
         height: 800,
       };
 
-      try {
-        await PluginNoteAPI.insertText({
-          textContentFull: snapshot.formattedHeaderText,
-          textRect,
-          fontSize: 20,
-          textAlign: 0,
-          textFrameWidthType: 0,
-          textFrameStyle: 0,
-          textEditable: 0,
-        });
-      } catch (err) {
-        // Fallback to createElement if insertText fails
-        const elRes: any = await PluginCommAPI.createElement(500);
-        if (elRes && elRes.success && elRes.data) {
-          const el = elRes.data;
-          if (el.textBox) {
-            el.textBox.textContentFull = snapshot.formattedHeaderText;
-            el.textBox.textRect = textRect;
-            await PluginFileAPI.insertElements(notePath, pageNum, [el]);
-          }
-        }
+      // insertText only targets the note currently open in the editor. At this
+      // point the new file/page is not open yet, so use the file API that names
+      // the destination explicitly.
+      const elRes: any = await PluginCommAPI.createElement(500);
+      const textElement = elRes?.success && elRes.data?.textBox ? elRes.data : null;
+      if (!textElement) {
+        return {
+          success: false,
+          notePath,
+          pageNum,
+          isNewFile,
+          error: elRes?.error?.message || 'Could not create the meeting snapshot header.',
+        };
+      }
+      textElement.textBox.textContentFull = snapshot.formattedHeaderText;
+      textElement.textBox.textRect = textRect;
+      textElement.textBox.fontSize = 20;
+      textElement.textBox.textAlign = 0;
+      textElement.textBox.textFrameWidthType = 0;
+      textElement.textBox.textFrameStyle = 0;
+      textElement.textBox.textEditable = 0;
+
+      const insertTextRes: any = await PluginFileAPI.insertElements(notePath, pageNum, [textElement]);
+      if (!insertTextRes || insertTextRes.success !== true) {
+        return {
+          success: false,
+          notePath,
+          pageNum,
+          isNewFile,
+          error: insertTextRes?.error?.message || 'Could not write the meeting snapshot header.',
+        };
       }
 
       // Record mapping
@@ -255,6 +271,7 @@ export class MeetingNoteService {
         lastPageNum: pageNum,
         lastCreatedIso: new Date().toISOString(),
       });
+      const persistenceError = await calendarStorage.flush();
 
       // Opening is the caller's job. openFilePath only reaches the file
       // manager, which is what made a successful creation look like nothing
@@ -266,6 +283,9 @@ export class MeetingNoteService {
         notePath,
         pageNum,
         isNewFile,
+        warning: persistenceError
+          ? `The note was created, but its calendar link could not be saved: ${persistenceError}`
+          : undefined,
       };
     } catch (err: any) {
       return {

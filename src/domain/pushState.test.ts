@@ -50,6 +50,7 @@ describe('CalDAV push state', () => {
     ['location', { location: 'Suite 300' }],
     ['description', { description: 'Bring paperwork' }],
     ['completion', { completed: true }],
+    ['alarm', { alarmMinutesBefore: 15 }],
   ])('editing the %s marks the item dirty again', (_label, change) => {
     const state = recordPush(emptyPushState(COLLECTION), makeEvent());
     expect(needsPush(makeEvent(change as Partial<CalendarEvent>), state)).toBe(true);

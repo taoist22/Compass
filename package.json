@@ -1,7 +1,7 @@
 {
-  "name": "Calendar",
+  "name": "Compass",
   "version": "0.1.0",
-  "description": "Calendar agenda view and meeting note snapshot creator.",
+  "description": "Plan time, organize work, and connect it with notes.",
   "author": "taoist22",
   "private": true,
   "scripts": {

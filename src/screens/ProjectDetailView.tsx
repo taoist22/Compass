@@ -3,6 +3,8 @@ import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 
 import { Area, CalendarTask, Project } from '../domain/types';
 import { isDone, statusGlyph, taskStatus } from '../domain/taskModel';
 import { projectOverdue, projectProgress, ProjectLookup } from '../domain/taskListView';
+import { ParaFilesPanel } from './ParaFilesPanel';
+import { ParaFolderEntry } from '../supernote/exportService';
 
 interface ProjectDetailViewProps {
   project: Project;
@@ -19,8 +21,15 @@ interface ProjectDetailViewProps {
   /** A project is renamed, finished and deleted here, where it lives. */
   onRename: (name: string) => void;
   onToggleStatus: () => void;
+  onArchive: () => void;
+  /** Repairs a PARA classification without deleting and recreating files. */
+  onConvertToArea: () => void;
   onDelete: () => void;
-  onOpenNotebook: () => void;
+  folder: string;
+  onListEntries: (folder: string) => Promise<ParaFolderEntry[]>;
+  onNewNote: (name: string, folder: string) => Promise<void>;
+  onChooseFolder: (folder: string) => Promise<void>;
+  onOpenFile: (path: string) => void;
   onOpenNote: (path: string) => void;
   onAddTask: () => void;
   onToggleTask: (task: CalendarTask) => void;
@@ -45,8 +54,14 @@ export function ProjectDetailView({
   onCycleArea,
   onRename,
   onToggleStatus,
+  onArchive,
+  onConvertToArea,
   onDelete,
-  onOpenNotebook,
+  folder,
+  onListEntries,
+  onNewNote,
+  onChooseFolder,
+  onOpenFile,
   onOpenNote,
   onAddTask,
   onToggleTask,
@@ -60,6 +75,7 @@ export function ProjectDetailView({
   const [renaming, setRenaming] = React.useState<boolean>(false);
   const [draftName, setDraftName] = React.useState<string>(project.name);
   const [confirmingDelete, setConfirmingDelete] = React.useState<boolean>(false);
+  const [confirmingConversion, setConfirmingConversion] = React.useState<boolean>(false);
 
   const commitRename = () => {
     const next = draftName.trim();
@@ -140,6 +156,12 @@ export function ProjectDetailView({
               {project.status === 'active' ? 'Finish' : 'Reopen'}
             </Text>
           </TouchableOpacity>
+          <TouchableOpacity style={styles.headBtn} onPress={onArchive}>
+            <Text allowFontScaling={false} style={styles.headBtnText}>Archive</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.headBtn} onPress={() => setConfirmingConversion(true)}>
+            <Text allowFontScaling={false} style={styles.headBtnText}>Move to Areas</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.headBtn} onPress={() => setConfirmingDelete(true)}>
             <Text allowFontScaling={false} style={styles.headBtnText}>
               Delete
@@ -169,18 +191,38 @@ export function ProjectDetailView({
         </View>
       )}
 
-      <ScrollView style={styles.body}>
-        <Text allowFontScaling={false} style={styles.sectionHeading}>
-          📝 Associated Notebooks
-        </Text>
-
-        <TouchableOpacity style={styles.noteRow} onPress={onOpenNotebook}>
-          <Text allowFontScaling={false} style={styles.noteLabel} numberOfLines={1}>
-            {project.notePath
-              ? `📂 Project Notebook: ${project.notePath.split('/').pop()}`
-              : '📝 Create the project notebook'}
+      {confirmingConversion && (
+        <View style={styles.confirmRow}>
+          <Text allowFontScaling={false} style={styles.confirmText}>
+            Convert “{project.name}” to an ongoing Area? Its folder and filed items will be kept, but project due date and completion status will be removed.
           </Text>
-        </TouchableOpacity>
+          <View style={styles.metaActions}>
+            <TouchableOpacity style={styles.headBtn} onPress={onConvertToArea}>
+              <Text allowFontScaling={false} style={styles.headBtnText}>Convert to Area</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.headBtn} onPress={() => setConfirmingConversion(false)}>
+              <Text allowFontScaling={false} style={styles.headBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      <ScrollView style={styles.body} keyboardShouldPersistTaps="always">
+        <Text allowFontScaling={false} style={styles.sectionHeading}>
+          📁 Project Files
+        </Text>
+        <ParaFilesPanel
+          itemKey={project.id}
+          folder={folder}
+          onListEntries={onListEntries}
+          onOpenFile={onOpenFile}
+          onNewNote={onNewNote}
+          onChooseFolder={onChooseFolder}
+        />
+
+        <Text allowFontScaling={false} style={styles.sectionHeading}>
+          📝 Associated Meeting Notes
+        </Text>
 
         {/* Notes from this project's events. Empty until events are filed
             under it, which is what the ledger is: a record of what was said. */}

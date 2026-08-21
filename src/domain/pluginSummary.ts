@@ -1,3 +1,3 @@
 export function getPluginSummary(): string {
-  return 'Calendar agenda view and meeting note snapshot creator.';
+  return 'Compass planning, PARA, calendar, task, and linked-note workspace.';
 }

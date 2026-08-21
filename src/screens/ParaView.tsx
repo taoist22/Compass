@@ -1,8 +1,10 @@
 import React from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { Area, CalendarTask, Project } from '../domain/types';
+import { Area, CalendarTask, Project, Resource } from '../domain/types';
 import { isDone, statusGlyph, taskStatus } from '../domain/taskModel';
 import { ICON_CHOICES } from '../domain/noteTemplates';
+import { ParaFilesPanel } from './ParaFilesPanel';
+import { ParaFolderEntry } from '../supernote/exportService';
 import {
   activeProjects,
   archivedProjects,
@@ -14,25 +16,37 @@ import {
 } from '../domain/taskListView';
 
 interface ParaViewProps {
+  /** Opens a just-converted Project at its new location instead of Projects. */
+  initialAreaId?: string | null;
+  onInitialAreaShown?: () => void;
   areas: Area[];
   projects: Project[];
+  resources: Resource[];
   tasks: CalendarTask[];
   projectOf: (uid: string) => string | undefined;
-  /** null means "all areas". */
-  selectedAreaId: string | null;
-  onSelectArea: (areaId: string | null) => void;
-  showArchive: boolean;
-  onToggleArchive: () => void;
-  onNewProject: (name: string) => void;
+  onNewProject: (name: string, areaId?: string) => void;
   onNewArea: (name: string) => void;
+  onNewResource: (name: string) => void;
   /** Editing an area happens on the area, not in a sheet about all of them. */
   onRenameArea: (areaId: string, name: string, icon?: string) => void;
   onDeleteArea: (areaId: string) => void;
+  onArchiveArea: (area: Area, archiveProjects: boolean) => void;
+  onRestoreArea: (area: Area) => void;
   /** Tasks filed under an area, so deleting one can say what it detaches. */
   areaTaskCount: (areaId: string) => number;
   onOpenProject: (project: Project) => void;
-  onProjectNote: (project: Project) => void;
   onSetProjectDue: (project: Project) => void;
+  onArchiveProject: (project: Project) => void;
+  onRestoreProject: (project: Project) => void;
+  onBrowseFiles: (kind: 'project' | 'area' | 'resource', item: Project | Area | Resource) => void;
+  folderFor: (kind: 'project' | 'area' | 'resource', item: Project | Area | Resource) => string;
+  onListEntries: (kind: 'project' | 'area' | 'resource', item: Project | Area | Resource, folder: string) => Promise<ParaFolderEntry[]>;
+  onOpenFile: (path: string) => void;
+  onNewNote: (kind: 'project' | 'area' | 'resource', item: Project | Area | Resource, name: string, folder: string) => Promise<void>;
+  onChooseFolder: (kind: 'project' | 'area' | 'resource', item: Project | Area | Resource, folder: string) => Promise<void>;
+  onUpdateResource: (resource: Resource) => void;
+  onArchiveResource: (resource: Resource) => void;
+  onRestoreResource: (resource: Resource) => void;
   onToggleTask: (task: CalendarTask) => void;
   onEditTask: (task: CalendarTask) => void;
   onAddTaskToProject: (project: Project) => void;
@@ -48,22 +62,34 @@ interface ParaViewProps {
  * how far along, when due, what is in them.
  */
 export function ParaView({
+  initialAreaId,
+  onInitialAreaShown,
   areas,
   projects,
+  resources,
   tasks,
   projectOf,
-  selectedAreaId,
-  onSelectArea,
-  showArchive,
-  onToggleArchive,
   onNewProject,
   onNewArea,
+  onNewResource,
   onRenameArea,
   onDeleteArea,
+  onArchiveArea,
+  onRestoreArea,
   areaTaskCount,
   onOpenProject,
-  onProjectNote,
   onSetProjectDue,
+  onArchiveProject,
+  onRestoreProject,
+  onBrowseFiles,
+  folderFor,
+  onListEntries,
+  onOpenFile,
+  onNewNote,
+  onChooseFolder,
+  onUpdateResource,
+  onArchiveResource,
+  onRestoreResource,
   onToggleTask,
   onEditTask,
   onAddTaskToProject,
@@ -73,29 +99,73 @@ export function ParaView({
     nameOf: (id: string) => projects.find(p => p.id === id)?.name || 'Project',
   };
 
-  const counts = areaProjectCounts(areas, projects);
-  const totalActive = activeProjects(projects).length;
+  const activeAreas = areas.filter(area => !area.archived);
+  const counts = areaProjectCounts(activeAreas, projects);
+  type ParaSection = 'projects' | 'areas' | 'resources' | 'archive';
+  const [section, setSection] = React.useState<ParaSection>(initialAreaId ? 'areas' : 'projects');
+  const [selectedItemId, setSelectedItemId] = React.useState<string | null>(initialAreaId || null);
+  React.useEffect(() => {
+    if (initialAreaId) {
+      onInitialAreaShown?.();
+    }
+    // This is a one-time handoff. Clearing the parent prop must not move the
+    // user away from the Area that was just revealed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [expanded, setExpanded] = React.useState<Record<ParaSection, boolean>>({
+    projects: true,
+    areas: true,
+    resources: true,
+    archive: false,
+  });
 
-  const shown = showArchive
-    ? archivedProjects(projects)
-    : activeProjects(projects).filter(p => !selectedAreaId || p.areaId === selectedAreaId);
-
-  const grouped = projectsByArea(shown, areas);
+  const selectedAreaId = section === 'areas' ? selectedItemId : null;
+  const selectedProjectId = section === 'projects' ? selectedItemId : null;
+  const selectedResourceId = section === 'resources' ? selectedItemId : null;
+  const shown = activeProjects(projects).filter(
+    project =>
+      (!selectedAreaId || project.areaId === selectedAreaId) &&
+      (!selectedProjectId || project.id === selectedProjectId)
+  );
+  const grouped = projectsByArea(shown, activeAreas);
 
   const tasksOf = (projectId: string) => tasks.filter(t => projectOf(t.uid) === projectId);
-  const selectedArea = areas.find(a => a.id === selectedAreaId);
+  const selectedArea = activeAreas.find(a => a.id === selectedAreaId);
+  const selectedProject = projects.find(project => project.id === selectedProjectId);
   const [editingAreaId, setEditingAreaId] = React.useState<string | null>(null);
   const [editName, setEditName] = React.useState<string>('');
   const [iconOpen, setIconOpen] = React.useState<boolean>(false);
   const [confirmingAreaId, setConfirmingAreaId] = React.useState<string | null>(null);
+  const [confirmingArchiveAreaId, setConfirmingArchiveAreaId] = React.useState<string | null>(null);
 
   const closeAreaEditor = () => {
     setEditingAreaId(null);
     setIconOpen(false);
     setConfirmingAreaId(null);
+    setConfirmingArchiveAreaId(null);
   };
-  const [adding, setAdding] = React.useState<'project' | 'area' | null>(null);
+  const [adding, setAdding] = React.useState<'project' | 'area' | 'resource' | null>(null);
   const [newName, setNewName] = React.useState<string>('');
+  const [editingResourceId, setEditingResourceId] = React.useState<string | null>(null);
+  const [resourceName, setResourceName] = React.useState<string>('');
+  const [resourceDescription, setResourceDescription] = React.useState<string>('');
+  const [resourceIcon, setResourceIcon] = React.useState<string>('');
+
+  const showProjects = section === 'projects';
+  const showAreas = section === 'areas';
+  const showResources = section === 'resources';
+  const showArchive = section === 'archive';
+  const selectedResource = resources.find(resource => resource.id === selectedResourceId);
+
+  const selectSection = (next: ParaSection) => {
+    setSection(next);
+    setSelectedItemId(null);
+  };
+  const toggleSection = (next: ParaSection) => {
+    setExpanded(current => ({ ...current, [next]: !current[next] }));
+    selectSection(next);
+  };
+
 
   const areaIconFor = (areaId: string | null) => {
     const icon = areaId ? areas.find(a => a.id === areaId)?.icon : undefined;
@@ -106,7 +176,7 @@ export function ParaView({
     <View style={styles.root}>
       <View style={styles.topBar}>
         <Text allowFontScaling={false} style={styles.topTitle}>
-          📁 Projects &amp; Areas
+          📁 PARA Workspace
         </Text>
         <View style={styles.topActions}>
           {/* "+ New" used to open the manage sheet, which is not what it says.
@@ -120,6 +190,9 @@ export function ParaView({
             <Text allowFontScaling={false} style={styles.topBtnText}>
               + Area
             </Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.topBtn} onPress={() => setAdding('resource')}>
+            <Text allowFontScaling={false} style={styles.topBtnText}>+ Resource</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -135,6 +208,8 @@ export function ParaView({
             placeholder={
               adding === 'area'
                 ? 'New area name'
+                : adding === 'resource'
+                ? 'New resource name'
                 : // Says where it will land, because a project quietly filed
                   // under nothing is the thing that goes missing.
                   selectedArea
@@ -148,7 +223,11 @@ export function ParaView({
             style={styles.topBtn}
             onPress={() => {
               const name = newName.trim();
-              if (name) (adding === 'project' ? onNewProject : onNewArea)(name);
+              if (name) {
+                if (adding === 'project') onNewProject(name, selectedArea?.id);
+                else if (adding === 'area') onNewArea(name);
+                else onNewResource(name);
+              }
               setNewName('');
               setAdding(null);
             }}
@@ -173,76 +252,166 @@ export function ParaView({
 
       <View style={styles.columns}>
         <View style={styles.leftPane}>
-          <Text allowFontScaling={false} style={styles.paneHeading}>
-            🌐 Areas of Responsibility
-          </Text>
-
-          <ScrollView style={styles.paneScroll}>
+          <Text allowFontScaling={false} style={styles.paneHeading}>PARA</Text>
+          <ScrollView style={styles.paneScroll} keyboardShouldPersistTaps="always">
             <TouchableOpacity
-              style={[styles.areaRow, selectedAreaId === null && !showArchive && styles.areaRowActive]}
-              onPress={() => onSelectArea(null)}
+              style={[styles.areaRow, showProjects && !selectedItemId && styles.areaRowActive]}
+              onPress={() => toggleSection('projects')}
             >
-              <Text
-                allowFontScaling={false}
-                style={[
-                  styles.areaText,
-                  selectedAreaId === null && !showArchive && styles.areaTextActive,
-                ]}
-              >
-                All Areas ({totalActive})
+              <Text allowFontScaling={false} style={[styles.areaText, showProjects && !selectedItemId && styles.areaTextActive]}>
+                {expanded.projects ? '▾' : '▸'} 🚀 Projects ({activeProjects(projects).length})
               </Text>
             </TouchableOpacity>
+            {expanded.projects && activeProjects(projects).map(project => (
+              <TouchableOpacity
+                key={project.id}
+                style={[styles.treeRow, showProjects && selectedProjectId === project.id && styles.treeRowActive]}
+                onPress={() => {
+                  setSection('projects');
+                  setSelectedItemId(project.id);
+                }}
+              >
+                <Text
+                  allowFontScaling={false}
+                  style={[styles.treeRowText, showProjects && selectedProjectId === project.id && styles.areaTextActive]}
+                  numberOfLines={1}
+                >
+                  └ {project.name}
+                </Text>
+              </TouchableOpacity>
+            ))}
 
-            {counts.map(({ area, count }) => {
-              const active = selectedAreaId === area.id && !showArchive;
-              const editing = editingAreaId === area.id;
+            <TouchableOpacity
+              style={[styles.areaRow, showAreas && !selectedItemId && styles.areaRowActive]}
+              onPress={() => toggleSection('areas')}
+            >
+              <Text allowFontScaling={false} style={[styles.areaText, showAreas && !selectedItemId && styles.areaTextActive]}>
+                {expanded.areas ? '▾' : '▸'} 🌐 Areas ({activeAreas.length})
+              </Text>
+            </TouchableOpacity>
+            {expanded.areas && counts.map(({ area, count }) => {
+              const active = showAreas && selectedAreaId === area.id;
+              return (
+                <TouchableOpacity
+                  key={area.id}
+                  style={[styles.treeRow, active && styles.treeRowActive]}
+                  onPress={() => {
+                    setSection('areas');
+                    setSelectedItemId(area.id);
+                    closeAreaEditor();
+                  }}
+                >
+                  <Text allowFontScaling={false} style={[styles.treeRowText, active && styles.areaTextActive]} numberOfLines={1}>
+                    └ {area.icon ? `${area.icon} ` : ''}{area.name} ({count})
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
 
-              if (confirmingAreaId === area.id) {
-                // Confirmed on the row rather than in a dialog, so you can see
-                // which area you are about to delete while deciding.
-                const owed = areaTaskCount(area.id);
-                return (
-                  <View key={area.id} style={styles.areaConfirm}>
-                    <Text allowFontScaling={false} style={styles.areaConfirmText}>
-                      Delete "{area.name}"? Its {owed} task{owed === 1 ? '' : 's'} and any
-                      projects are kept, just unfiled.
-                    </Text>
+            <TouchableOpacity
+              style={[styles.areaRow, showResources && !selectedItemId && styles.areaRowActive]}
+              onPress={() => toggleSection('resources')}
+            >
+              <Text allowFontScaling={false} style={[styles.areaText, showResources && !selectedItemId && styles.areaTextActive]}>
+                {expanded.resources ? '▾' : '▸'} 📚 Resources ({resources.filter(item => !item.archived).length})
+              </Text>
+            </TouchableOpacity>
+            {expanded.resources && resources.filter(item => !item.archived).map(resource => {
+              const active = showResources && selectedResourceId === resource.id;
+              return (
+                <TouchableOpacity
+                  key={resource.id}
+                  style={[styles.treeRow, active && styles.treeRowActive]}
+                  onPress={() => {
+                    setSection('resources');
+                    setSelectedItemId(resource.id);
+                  }}
+                >
+                  <Text allowFontScaling={false} style={[styles.treeRowText, active && styles.areaTextActive]} numberOfLines={1}>
+                    └ {resource.icon ? `${resource.icon} ` : ''}{resource.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+
+            <TouchableOpacity
+              style={[styles.areaRow, showArchive && !selectedItemId && styles.areaRowActive]}
+              onPress={() => toggleSection('archive')}
+            >
+              <Text allowFontScaling={false} style={[styles.areaText, showArchive && !selectedItemId && styles.areaTextActive]}>
+                {expanded.archive ? '▾' : '▸'} 📦 Archive
+              </Text>
+            </TouchableOpacity>
+            {expanded.archive && (['projects', 'areas', 'resources'] as const).map(kind => {
+              const count = kind === 'projects'
+                ? archivedProjects(projects).length
+                : kind === 'areas'
+                ? areas.filter(area => area.archived).length
+                : resources.filter(resource => resource.archived).length;
+              const active = showArchive && selectedItemId === kind;
+              const label = kind.charAt(0).toUpperCase() + kind.slice(1);
+              return (
+                <TouchableOpacity
+                  key={kind}
+                  style={[styles.treeRow, active && styles.treeRowActive]}
+                  onPress={() => {
+                    setSection('archive');
+                    setSelectedItemId(kind);
+                  }}
+                >
+                  <Text allowFontScaling={false} style={[styles.treeRowText, active && styles.areaTextActive]}>
+                    └ {label} ({count})
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+
+        <View style={styles.rightPane}>
+          <Text allowFontScaling={false} style={styles.paneHeading}>
+            {showArchive
+              ? selectedItemId
+                ? `📦 Archive · ${selectedItemId.charAt(0).toUpperCase() + selectedItemId.slice(1)}`
+                : '📦 Archive'
+              : showResources
+              ? selectedResource ? `📚 ${selectedResource.name}` : '📚 Resources'
+              : showAreas
+              ? selectedArea ? `🌐 ${selectedArea.name}` : '🌐 Areas'
+              : selectedProject ? `🚀 ${selectedProject.name}` : '🚀 Projects'}
+          </Text>
+
+          <ScrollView style={styles.paneScroll} keyboardShouldPersistTaps="always">
+            {showAreas && !selectedArea && activeAreas.length === 0 && (
+              <Text allowFontScaling={false} style={styles.empty}>
+                No active Areas. Areas are ongoing parts of life or work that do not have a finish line.
+              </Text>
+            )}
+
+            {showAreas && !selectedArea && counts.map(({ area, count }) => (
+              <TouchableOpacity
+                key={area.id}
+                style={styles.projectCard}
+                onPress={() => setSelectedItemId(area.id)}
+              >
+                <View style={styles.projectHead}>
+                  <Text allowFontScaling={false} style={styles.projectName}>
+                    {area.icon ? `${area.icon} ` : ''}{area.name}
+                  </Text>
+                  <Text allowFontScaling={false} style={styles.projectMeta}>
+                    {count} active project{count === 1 ? '' : 's'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+
+            {showAreas && selectedArea && (
+              <View style={styles.projectCard}>
+                {editingAreaId === selectedArea.id ? (
+                  <>
                     <View style={styles.areaEditRow}>
-                      <TouchableOpacity
-                        style={styles.rowBtn}
-                        onPress={() => {
-                          onDeleteArea(area.id);
-                          closeAreaEditor();
-                        }}
-                      >
-                        <Text allowFontScaling={false} style={styles.rowBtnText}>
-                          Delete
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.rowBtn}
-                        onPress={() => setConfirmingAreaId(null)}
-                      >
-                        <Text allowFontScaling={false} style={styles.rowBtnText}>
-                          Cancel
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                );
-              }
-
-              if (editing) {
-                return (
-                  <View key={area.id} style={styles.areaEditing}>
-                    <View style={styles.areaEditRow}>
-                      <TouchableOpacity
-                        style={styles.iconBtn}
-                        onPress={() => setIconOpen(open => !open)}
-                      >
-                        <Text allowFontScaling={false} style={styles.iconBtnText}>
-                          {area.icon || '+'}
-                        </Text>
+                      <TouchableOpacity style={styles.iconBtn} onPress={() => setIconOpen(open => !open)}>
+                        <Text allowFontScaling={false} style={styles.iconBtnText}>{selectedArea.icon || '+'}</Text>
                       </TouchableOpacity>
                       <TextInput
                         style={styles.areaInput}
@@ -251,7 +420,6 @@ export function ParaView({
                         autoCorrect={false}
                       />
                     </View>
-
                     {iconOpen && (
                       <View style={styles.iconStrip}>
                         {ICON_CHOICES.map(icon => (
@@ -259,127 +427,133 @@ export function ParaView({
                             key={icon}
                             style={styles.iconChoice}
                             onPress={() => {
-                              onRenameArea(area.id, editName.trim() || area.name, icon);
+                              onRenameArea(selectedArea.id, editName.trim() || selectedArea.name, icon);
                               setIconOpen(false);
                             }}
                           >
-                            <Text allowFontScaling={false} style={styles.iconChoiceText}>
-                              {icon}
-                            </Text>
+                            <Text allowFontScaling={false} style={styles.iconChoiceText}>{icon}</Text>
                           </TouchableOpacity>
                         ))}
-                        <TouchableOpacity
-                          style={styles.iconChoice}
-                          onPress={() => {
-                            onRenameArea(area.id, editName.trim() || area.name, '');
-                            setIconOpen(false);
-                          }}
-                        >
-                          <Text allowFontScaling={false} style={styles.iconChoiceText}>
-                            —
-                          </Text>
-                        </TouchableOpacity>
                       </View>
                     )}
-
                     <View style={styles.areaEditRow}>
                       <TouchableOpacity
                         style={styles.rowBtn}
                         onPress={() => {
                           const next = editName.trim();
-                          if (next && next !== area.name) onRenameArea(area.id, next, area.icon);
+                          if (next) onRenameArea(selectedArea.id, next, selectedArea.icon);
                           closeAreaEditor();
                         }}
                       >
-                        <Text allowFontScaling={false} style={styles.rowBtnText}>
-                          Done
-                        </Text>
+                        <Text allowFontScaling={false} style={styles.rowBtnText}>Save</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.rowBtn}
-                        onPress={() => setConfirmingAreaId(area.id)}
-                      >
-                        <Text allowFontScaling={false} style={styles.rowBtnText}>
-                          Delete
-                        </Text>
+                      <TouchableOpacity style={styles.rowBtn} onPress={() => {
+                        setEditingAreaId(null);
+                        setConfirmingAreaId(selectedArea.id);
+                      }}>
+                        <Text allowFontScaling={false} style={styles.rowBtnText}>Delete</Text>
                       </TouchableOpacity>
                     </View>
-                  </View>
-                );
-              }
-
-              return (
-                <View
-                  key={area.id}
-                  style={[styles.areaRow, active && styles.areaRowActive]}
-                >
-                  {/* Empty areas still listed: vanishing would make one look
-                      deleted rather than merely idle. */}
-                  <TouchableOpacity style={styles.areaTap} onPress={() => onSelectArea(area.id)}>
-                    <Text
-                      allowFontScaling={false}
-                      numberOfLines={1}
-                      style={[styles.areaText, active && styles.areaTextActive]}
-                    >
-                      {area.icon ? `${area.icon} ` : ''}
-                      {area.name} ({count})
+                  </>
+                ) : confirmingAreaId === selectedArea.id ? (
+                  <>
+                    <Text allowFontScaling={false} style={styles.areaConfirmText}>
+                      Delete “{selectedArea.name}”? Its {areaTaskCount(selectedArea.id)} task(s) and projects will be kept but unfiled.
                     </Text>
-                  </TouchableOpacity>
-
-                  {/* On every row. Gating this on the selected row hid it
-                      completely whenever All Areas was chosen, which is the
-                      default — a control you cannot find is not built. */}
-                  <TouchableOpacity
-                    onPress={() => {
-                      setEditingAreaId(area.id);
-                      setEditName(area.name);
-                    }}
-                  >
-                    <Text
-                      allowFontScaling={false}
-                      style={[styles.areaEditLink, active && styles.areaTextActive]}
-                    >
-                      Edit
+                    <View style={styles.areaEditRow}>
+                      <TouchableOpacity style={styles.rowBtn} onPress={() => {
+                        onDeleteArea(selectedArea.id);
+                        setSelectedItemId(null);
+                        closeAreaEditor();
+                      }}>
+                        <Text allowFontScaling={false} style={styles.rowBtnText}>Delete Area</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.rowBtn} onPress={() => setConfirmingAreaId(null)}>
+                        <Text allowFontScaling={false} style={styles.rowBtnText}>Cancel</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : confirmingArchiveAreaId === selectedArea.id ? (
+                  <>
+                    <Text allowFontScaling={false} style={styles.areaConfirmText}>
+                      What should happen to the active Projects in “{selectedArea.name}”?
                     </Text>
-                  </TouchableOpacity>
+                    <View style={styles.areaEditRow}>
+                      <TouchableOpacity style={styles.rowBtn} onPress={() => {
+                        onArchiveArea(selectedArea, false);
+                        setSelectedItemId(null);
+                        closeAreaEditor();
+                      }}>
+                        <Text allowFontScaling={false} style={styles.rowBtnText}>Keep Projects Active</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.rowBtn} onPress={() => {
+                        onArchiveArea(selectedArea, true);
+                        setSelectedItemId(null);
+                        closeAreaEditor();
+                      }}>
+                        <Text allowFontScaling={false} style={styles.rowBtnText}>Archive Projects Too</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.rowBtn} onPress={() => setConfirmingArchiveAreaId(null)}>
+                        <Text allowFontScaling={false} style={styles.rowBtnText}>Cancel</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    <View style={styles.projectHead}>
+                      <Text allowFontScaling={false} style={styles.projectName}>
+                        {selectedArea.icon ? `${selectedArea.icon} ` : ''}{selectedArea.name}
+                      </Text>
+                      <TouchableOpacity style={styles.projectDueBtn} onPress={() => {
+                        setEditingAreaId(selectedArea.id);
+                        setEditName(selectedArea.name);
+                      }}>
+                        <Text allowFontScaling={false} style={styles.projectDueText}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.projectDueBtn} onPress={() => setConfirmingArchiveAreaId(selectedArea.id)}>
+                        <Text allowFontScaling={false} style={styles.projectDueText}>Archive</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <Text allowFontScaling={false} style={styles.projectMeta}>
+                      Ongoing Area · {shown.length} active project{shown.length === 1 ? '' : 's'}
+                    </Text>
+                  </>
+                )}
+                {editingAreaId !== selectedArea.id &&
+                  confirmingAreaId !== selectedArea.id &&
+                  confirmingArchiveAreaId !== selectedArea.id && (
+                    <ParaFilesPanel
+                      itemKey={selectedArea.id}
+                      folder={folderFor('area', selectedArea)}
+                      onListEntries={folder => onListEntries('area', selectedArea, folder)}
+                      onOpenFile={onOpenFile}
+                      onNewNote={(name, folder) => onNewNote('area', selectedArea, name, folder)}
+                      onChooseFolder={folder => onChooseFolder('area', selectedArea, folder)}
+                    />
+                  )}
+              </View>
+            )}
+
+            {showAreas && selectedArea && shown.map(project => (
+              <TouchableOpacity key={project.id} style={styles.projectCard} onPress={() => onOpenProject(project)}>
+                <View style={styles.projectHead}>
+                  <Text allowFontScaling={false} style={styles.projectName}>{project.name}</Text>
+                  <Text allowFontScaling={false} style={styles.projectMeta}>
+                    {projectProgress(tasks, project.id, lookup).percent}%
+                  </Text>
                 </View>
-              );
-            })}
-          </ScrollView>
+              </TouchableOpacity>
+            ))}
 
-          <Text allowFontScaling={false} style={styles.paneHeading}>
-            📦 Archive
-          </Text>
-          <TouchableOpacity
-            style={[styles.areaRow, showArchive && styles.areaRowActive]}
-            onPress={onToggleArchive}
-          >
-            <Text
-              allowFontScaling={false}
-              style={[styles.areaText, showArchive && styles.areaTextActive]}
-            >
-              {showArchive ? 'Back to active' : 'View completed / archived'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.rightPane}>
-          <Text allowFontScaling={false} style={styles.paneHeading}>
-            {showArchive ? '📦 Completed & Archived' : '🚀 Active Projects'}
-          </Text>
-
-          <ScrollView style={styles.paneScroll}>
-            {grouped.length === 0 && (
+            {showProjects && grouped.length === 0 && (
               <Text allowFontScaling={false} style={styles.empty}>
-                {showArchive
-                  ? 'Nothing finished yet.'
-                  : selectedAreaId
+                {selectedAreaId
                   ? 'No active projects in this area.'
                   : 'No active projects. An area never finishes; a project does.'}
               </Text>
             )}
 
-            {grouped.map(group => (
+            {showProjects && grouped.map(group => (
               <View key={group.areaId || '__none'}>
                 <Text allowFontScaling={false} style={styles.groupHeading}>
                   {areaIconFor(group.areaId)}
@@ -426,13 +600,11 @@ export function ParaView({
                           {progressBar(progress.percent)} {progress.done}/{progress.total} tasks (
                           {progress.percent}%)
                         </Text>
-                        <TouchableOpacity
-                          style={styles.projectNoteBtn}
-                          onPress={() => onProjectNote(project)}
-                        >
-                          <Text allowFontScaling={false} style={styles.projectNoteText}>
-                            {project.notePath ? '📂 Note' : '📝 Note'}
-                          </Text>
+                        <TouchableOpacity style={styles.projectNoteBtn} onPress={() => {
+                          onArchiveProject(project);
+                          if (selectedProjectId === project.id) setSelectedItemId(null);
+                        }}>
+                          <Text allowFontScaling={false} style={styles.projectNoteText}>Archive</Text>
                         </TouchableOpacity>
                       </View>
 
@@ -466,9 +638,203 @@ export function ParaView({
                           {'   + Add task to project…'}
                         </Text>
                       </TouchableOpacity>
+                      {selectedProjectId === project.id && (
+                        <ParaFilesPanel
+                          itemKey={project.id}
+                          folder={folderFor('project', project)}
+                          onListEntries={folder => onListEntries('project', project, folder)}
+                          onOpenFile={onOpenFile}
+                          onNewNote={(name, folder) => onNewNote('project', project, name, folder)}
+                          onChooseFolder={folder => onChooseFolder('project', project, folder)}
+                        />
+                      )}
                     </View>
                   );
                 })}
+              </View>
+            ))}
+
+            {showResources && resources.filter(item => !item.archived).length === 0 && (
+              <Text allowFontScaling={false} style={styles.empty}>
+                No active resources. Resources are reference topics with folders of files, not work to complete.
+              </Text>
+            )}
+            {showResources && resources
+              .filter(item => !item.archived && (!selectedResourceId || item.id === selectedResourceId))
+              .map(resource => {
+              const editing = editingResourceId === resource.id;
+              if (!selectedResourceId) {
+                return (
+                  <TouchableOpacity
+                    key={resource.id}
+                    style={styles.projectCard}
+                    onPress={() => setSelectedItemId(resource.id)}
+                  >
+                    <View style={styles.projectHead}>
+                      <Text allowFontScaling={false} style={styles.projectName}>
+                        {resource.icon ? `${resource.icon} ` : '📚 '}{resource.name}
+                      </Text>
+                      <Text allowFontScaling={false} style={styles.projectMeta} numberOfLines={1}>
+                        📁 {resource.folder ? resource.folder.split('/').pop() : 'New folder'}
+                      </Text>
+                    </View>
+                    {resource.description ? (
+                      <Text allowFontScaling={false} style={styles.projectMeta}>{resource.description}</Text>
+                    ) : null}
+                  </TouchableOpacity>
+                );
+              }
+              return (
+              <View key={resource.id} style={styles.projectCard}>
+                {editing ? (
+                  <>
+                    <TextInput
+                      style={styles.areaInput}
+                      value={resourceName}
+                      onChangeText={setResourceName}
+                      placeholder="Resource name"
+                      placeholderTextColor="#707070"
+                    />
+                    <TextInput
+                      style={[styles.areaInput, styles.resourceDescriptionInput]}
+                      value={resourceDescription}
+                      onChangeText={setResourceDescription}
+                      placeholder="What reference material belongs here?"
+                      placeholderTextColor="#707070"
+                      multiline
+                    />
+                    <View style={styles.iconStrip}>
+                      {ICON_CHOICES.map(icon => (
+                        <TouchableOpacity key={icon} style={styles.iconChoice} onPress={() => setResourceIcon(icon)}>
+                          <Text allowFontScaling={false} style={styles.iconChoiceText}>{resourceIcon === icon ? `✓${icon}` : icon}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <TouchableOpacity
+                      style={styles.projectNoteBtn}
+                      onPress={() => {
+                        const name = resourceName.trim();
+                        if (name) onUpdateResource({
+                          ...resource,
+                          name,
+                          description: resourceDescription.trim() || undefined,
+                          icon: resourceIcon || undefined,
+                        });
+                        setEditingResourceId(null);
+                      }}
+                    >
+                      <Text allowFontScaling={false} style={styles.projectNoteText}>Save Resource</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <>
+                <View style={styles.projectHead}>
+                  <Text allowFontScaling={false} style={styles.projectName} numberOfLines={1}>
+                    {resource.icon ? `${resource.icon} ` : '📚 '}{resource.name}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.projectDueBtn}
+                    onPress={() => {
+                      setEditingResourceId(resource.id);
+                      setResourceName(resource.name);
+                      setResourceDescription(resource.description || '');
+                      setResourceIcon(resource.icon || '');
+                    }}
+                  >
+                    <Text allowFontScaling={false} style={styles.projectDueText}>Edit</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.projectDueBtn} onPress={() => {
+                    onArchiveResource(resource);
+                    setSelectedItemId(null);
+                  }}>
+                    <Text allowFontScaling={false} style={styles.projectDueText}>Archive</Text>
+                  </TouchableOpacity>
+                </View>
+                {resource.description ? (
+                  <Text allowFontScaling={false} style={styles.projectMeta}>{resource.description}</Text>
+                ) : null}
+                <ParaFilesPanel
+                  itemKey={resource.id}
+                  folder={folderFor('resource', resource)}
+                  onListEntries={folder => onListEntries('resource', resource, folder)}
+                  onOpenFile={onOpenFile}
+                  onNewNote={(name, folder) => onNewNote('resource', resource, name, folder)}
+                  onChooseFolder={folder => onChooseFolder('resource', resource, folder)}
+                />
+                  </>
+                )}
+              </View>
+              );
+            })}
+
+            {showArchive &&
+              !selectedItemId &&
+              archivedProjects(projects).length === 0 &&
+              areas.filter(area => area.archived).length === 0 &&
+              resources.filter(resource => resource.archived).length === 0 && (
+                <Text allowFontScaling={false} style={styles.empty}>Nothing is archived or completed yet.</Text>
+              )}
+
+            {showArchive && selectedItemId === 'projects' && archivedProjects(projects).length === 0 && (
+              <Text allowFontScaling={false} style={styles.empty}>No archived or finished Projects.</Text>
+            )}
+            {showArchive && (!selectedItemId || selectedItemId === 'projects') && archivedProjects(projects).length > 0 && (
+              <Text allowFontScaling={false} style={styles.groupHeading}>Projects</Text>
+            )}
+            {showArchive && (!selectedItemId || selectedItemId === 'projects') && archivedProjects(projects).map(project => (
+              <View key={project.id} style={styles.projectCard}>
+                <View style={styles.projectHead}>
+                  <Text allowFontScaling={false} style={styles.projectName} numberOfLines={1}>{project.name}</Text>
+                  <Text allowFontScaling={false} style={styles.projectMeta}>
+                    {project.status === 'done' ? 'Finished' : 'Archived'}
+                  </Text>
+                  <TouchableOpacity style={styles.projectNoteBtn} onPress={() => onBrowseFiles('project', project)}>
+                    <Text allowFontScaling={false} style={styles.projectNoteText}>📂 Files</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.projectDueBtn} onPress={() => onRestoreProject(project)}>
+                    <Text allowFontScaling={false} style={styles.projectDueText}>Restore</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+
+            {showArchive && selectedItemId === 'areas' && areas.filter(area => area.archived).length === 0 && (
+              <Text allowFontScaling={false} style={styles.empty}>No archived Areas.</Text>
+            )}
+            {showArchive && (!selectedItemId || selectedItemId === 'areas') && areas.filter(area => area.archived).length > 0 && (
+              <Text allowFontScaling={false} style={styles.groupHeading}>Areas</Text>
+            )}
+            {showArchive && (!selectedItemId || selectedItemId === 'areas') && areas.filter(area => area.archived).map(area => (
+              <View key={area.id} style={styles.projectCard}>
+                <View style={styles.projectHead}>
+                  <Text allowFontScaling={false} style={styles.projectName}>{area.icon ? `${area.icon} ` : ''}{area.name}</Text>
+                  <TouchableOpacity style={styles.projectNoteBtn} onPress={() => onBrowseFiles('area', area)}>
+                    <Text allowFontScaling={false} style={styles.projectNoteText}>📂 Files</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.projectDueBtn} onPress={() => onRestoreArea(area)}>
+                    <Text allowFontScaling={false} style={styles.projectDueText}>Restore</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+
+            {showArchive && selectedItemId === 'resources' && resources.filter(resource => resource.archived).length === 0 && (
+              <Text allowFontScaling={false} style={styles.empty}>No archived Resources.</Text>
+            )}
+            {showArchive && (!selectedItemId || selectedItemId === 'resources') && resources.filter(resource => resource.archived).length > 0 && (
+              <Text allowFontScaling={false} style={styles.groupHeading}>Resources</Text>
+            )}
+            {showArchive && (!selectedItemId || selectedItemId === 'resources') && resources.filter(resource => resource.archived).map(resource => (
+              <View key={resource.id} style={styles.projectCard}>
+                <View style={styles.projectHead}>
+                  <Text allowFontScaling={false} style={styles.projectName}>{resource.icon ? `${resource.icon} ` : '📚 '}{resource.name}</Text>
+                  <TouchableOpacity style={styles.projectNoteBtn} onPress={() => onBrowseFiles('resource', resource)}>
+                    <Text allowFontScaling={false} style={styles.projectNoteText}>📂 Files</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.projectDueBtn} onPress={() => onRestoreResource(resource)}>
+                    <Text allowFontScaling={false} style={styles.projectDueText}>Restore</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             ))}
           </ScrollView>
@@ -533,6 +899,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#000000',
   },
+  resourceDescriptionInput: { minHeight: 52, textAlignVertical: 'top', marginTop: 5 },
   iconBtn: {
     borderWidth: 1,
     borderColor: '#000000',
@@ -617,6 +984,15 @@ const styles = StyleSheet.create({
   areaRowActive: { backgroundColor: '#000000' },
   areaText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
   areaTextActive: { color: '#ffffff' },
+  treeRow: {
+    marginLeft: 12,
+    paddingVertical: 5,
+    paddingHorizontal: 7,
+    marginBottom: 2,
+    borderRadius: 4,
+  },
+  treeRowActive: { backgroundColor: '#000000' },
+  treeRowText: { fontSize: 11, color: '#202020' },
   groupHeading: {
     fontSize: 11,
     fontWeight: 'bold',

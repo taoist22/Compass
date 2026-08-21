@@ -104,6 +104,61 @@ describe('CaldavService', () => {
     expect(res.calendarUrl).toContain('/123456789/calendars/');
   });
 
+  test('task-target discovery succeeds for a VTODO-only CalDAV account', async () => {
+    const principal = `<multistatus xmlns="DAV:"><response><propstat><prop>
+      <current-user-principal><href>/u/principal/</href></current-user-principal>
+    </prop></propstat></response></multistatus>`;
+    const home = `<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><response><propstat><prop>
+      <C:calendar-home-set><href>https://tasks.example.com/u/calendars/</href></C:calendar-home-set>
+    </prop></propstat></response></multistatus>`;
+    const lists = `<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><response>
+      <href>/u/calendars/todos/</href><propstat><prop>
+      <resourcetype><collection/><C:calendar/></resourcetype><displayname>Shared Tasks</displayname>
+      <C:supported-calendar-component-set><C:comp name="VTODO"/></C:supported-calendar-component-set>
+      </prop></propstat></response></multistatus>`;
+    let call = 0;
+    (globalThis as any).fetch = jest.fn().mockImplementation(() =>
+      Promise.resolve({ status: 207, text: async () => [principal, home, lists][call++] })
+    );
+
+    const res = await caldavService.discoverIcloudCalendarUrl({
+      provider: 'custom', appleId: 'u', appPassword: 'p', customUrl: 'https://tasks.example.com/'
+    }, 'tasks');
+
+    expect(res.success).toBe(true);
+    expect(res.calendarUrl).toBeUndefined();
+    expect(res.taskListUrl).toBe('https://tasks.example.com/u/calendars/todos/');
+  });
+
+  test('iCloud event discovery does not activate its legacy VTODO collection', async () => {
+    const principal = `<multistatus xmlns="DAV:"><response><propstat><prop>
+      <current-user-principal><href>/u/principal/</href></current-user-principal>
+    </prop></propstat></response></multistatus>`;
+    const home = `<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><response><propstat><prop>
+      <C:calendar-home-set><href>https://p.test/u/calendars/</href></C:calendar-home-set>
+    </prop></propstat></response></multistatus>`;
+    const lists = `<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+      <response><href>/u/calendars/events/</href><propstat><prop><resourcetype><collection/><C:calendar/></resourcetype>
+      <displayname>Calendar</displayname><C:supported-calendar-component-set><C:comp name="VEVENT"/></C:supported-calendar-component-set>
+      </prop></propstat></response>
+      <response><href>/u/calendars/legacy-tasks/</href><propstat><prop><resourcetype><collection/><C:calendar/></resourcetype>
+      <displayname>Reminders</displayname><C:supported-calendar-component-set><C:comp name="VTODO"/></C:supported-calendar-component-set>
+      </prop></propstat></response></multistatus>`;
+    let call = 0;
+    (globalThis as any).fetch = jest.fn().mockImplementation(() =>
+      Promise.resolve({ status: 207, text: async () => [principal, home, lists][call++] })
+    );
+
+    const res = await caldavService.discoverIcloudCalendarUrl({
+      provider: 'icloud', appleId: 'u', appPassword: 'p'
+    });
+
+    expect(res.success).toBe(true);
+    expect(res.calendarUrl).toContain('/events/');
+    expect(res.taskListUrl).toBeUndefined();
+    expect(res.message).toContain('legacy VTODO');
+  });
+
   test('pushIcloudEvent sends HTTP PUT with VEVENT payload', async () => {
     (globalThis as any).fetch = jest.fn().mockResolvedValue({
       status: 201,
@@ -149,6 +204,36 @@ describe('CaldavService', () => {
       expect.stringContaining('evt-test-100.ics'),
       expect.objectContaining({ method: 'DELETE' })
     );
+  });
+
+  test('updates and deletes discovered resources with ETag conflict protection', async () => {
+    (globalThis as any).fetch = jest.fn().mockResolvedValue({
+      status: 204,
+      text: async () => '',
+      headers: { get: () => '"v3"' },
+    } as any);
+    const resource = 'https://caldav.example.test/cal/opaque-name.ics';
+    const event: CalendarEvent = {
+      uid: 'uid-does-not-match-file', summary: 'Protected',
+      start: new Date(), end: new Date(Date.now() + 3600000), allDay: false,
+      attendees: [], caldavUrl: resource, etag: '"v2"',
+    };
+
+    const pushed = await caldavService.pushIcloudEvent(event, {
+      appleId: 'user', appPassword: 'pass', calendarUrl: 'https://caldav.example.test/cal/',
+    });
+    expect(pushed.etag).toBe('"v3"');
+    expect((globalThis as any).fetch).toHaveBeenLastCalledWith(resource, expect.objectContaining({
+      headers: expect.objectContaining({ 'If-Match': '"v2"' }),
+    }));
+
+    await caldavService.deleteIcloudEvent(event.uid, {
+      appleId: 'user', appPassword: 'pass', calendarUrl: 'https://caldav.example.test/cal/',
+    }, false, { url: resource, etag: '"v3"' });
+    expect((globalThis as any).fetch).toHaveBeenLastCalledWith(resource, expect.objectContaining({
+      method: 'DELETE',
+      headers: expect.objectContaining({ 'If-Match': '"v3"' }),
+    }));
   });
 
   test('pushIcloudEvent and deleteIcloudEvent handle HTTP server errors and network failures', async () => {
@@ -434,7 +519,7 @@ describe('CaldavService', () => {
     expect(init.body).not.toContain('VEVENT');
   });
 
-  test('pushIcloudEvent fails clearly when the account has no Reminders list', async () => {
+  test('pushIcloudEvent fails clearly when no separate VTODO list is selected', async () => {
     (globalThis as any).fetch = jest.fn();
 
     const res = await caldavService.pushIcloudEvent(
@@ -451,7 +536,7 @@ describe('CaldavService', () => {
     );
 
     expect(res.success).toBe(false);
-    expect(res.message).toContain('No Reminders list');
+    expect(res.message).toContain('No VTODO task list');
     // Must not silently fall back to the calendar and create a stray event.
     expect((globalThis as any).fetch).not.toHaveBeenCalled();
   });

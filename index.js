@@ -1,40 +1,8 @@
 import {AppRegistry, Image} from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import App from './App';
 import {name as appName} from './app.json';
 import {PluginManager} from 'sn-plugin-lib';
 import {LASSO_BUTTON_ID, TOOLBAR_BUTTON_ID} from './src/domain/buttonIds';
-
-// ─── TEMPORARY BACKGROUND-EXECUTION PROBE ────────────────────────────────────
-// Answers three questions that decide the reminder architecture:
-//   1. Does PluginHost run a plugin's index.js at device boot, or only when a
-//      NOTE/DOC is opened?  -> compare loadedAt against when you last rebooted.
-//   2. Does a module-scope setInterval keep ticking with no panel open, and
-//      through sleep?       -> tick count vs elapsed wall-clock time.
-//   3. Is AsyncStorage shared across plugins?
-//                           -> sn-lasso-diagnostic reads these same keys.
-// Remove once answered. Deliberately in module scope: a component-level timer
-// dies with the panel and would prove nothing.
-const PROBE_LOADED_AT = '@sn-probe/calendar-loaded-at';
-const PROBE_TICKS = '@sn-probe/calendar-ticks';
-const PROBE_LAST_TICK = '@sn-probe/calendar-last-tick';
-const PROBE_INTERVAL_MS = 60 * 1000;
-
-AsyncStorage.setItem(PROBE_LOADED_AT, new Date().toISOString()).catch(() => {});
-AsyncStorage.setItem(PROBE_TICKS, '0').catch(() => {});
-
-setInterval(() => {
-  AsyncStorage.getItem(PROBE_TICKS)
-    .then(raw => {
-      const next = String((parseInt(raw || '0', 10) || 0) + 1);
-      return Promise.all([
-        AsyncStorage.setItem(PROBE_TICKS, next),
-        AsyncStorage.setItem(PROBE_LAST_TICK, new Date().toISOString()),
-      ]);
-    })
-    .catch(() => {});
-}, PROBE_INTERVAL_MS);
-// ─── END PROBE ───────────────────────────────────────────────────────────────
 
 const BUTTON_TYPE_TOOLBAR = 1;
 const BUTTON_TYPE_LASSO = 2;
@@ -52,9 +20,9 @@ PluginManager.init();
 // Both buttons register at startup, not from inside a React component — a
 // component-scoped registration only exists while the plugin panel is open,
 // so the lasso button would never be there when you actually need it.
-PluginManager.registerButton(BUTTON_TYPE_TOOLBAR, ['NOTE'], {
+PluginManager.registerButton(BUTTON_TYPE_TOOLBAR, ['NOTE', 'DOC'], {
   id: TOOLBAR_BUTTON_ID,
-  name: 'Calendar',
+  name: 'Compass',
   icon: Image.resolveAssetSource(require('./assets/icon.png')).uri,
   showType: SHOW_TYPE_WITH_UI,
 });

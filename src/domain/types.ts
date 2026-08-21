@@ -1,5 +1,5 @@
 /**
- * 'para' is the Tasks/Projects/Areas browser. It is a peer of the calendar
+ * 'para' is the Projects/Areas/Resources/Archive workspace. It is a peer of the calendar
  * views rather than a modal: it sat in the view switcher but opened an
  * overlay, which is what made it feel bolted on.
  */
@@ -30,6 +30,9 @@ export interface Area {
   name: string;
   /** Shown beside the name; one or two characters. */
   icon?: string;
+  /** Folder of notes and reference files supporting this ongoing Area. */
+  folder?: string;
+  template?: string;
   createdAt: Date;
   /** PARA's Archive: kept for reference, hidden from active pickers. */
   archived?: boolean;
@@ -53,14 +56,26 @@ export interface Project {
   template?: string;
   createdAt: Date;
   completedAt?: Date;
-  /**
-   * The project's own notebook.
-   *
-   * Stored on the Project rather than in a uid-keyed store, unlike event
-   * membership: projects are local entities that no sync rebuilds, so there is
-   * nothing to survive.
-   */
+  /** Legacy single-notebook field; its containing folder is migrated on load. */
   notePath?: string;
+}
+
+/**
+ * Reference material that supports future work but has no finish line.
+ * A Resource is intentionally not a Project: it has no due date, progress, or
+ * tasks. Its folder of reference notes is the useful payload.
+ */
+export interface Resource {
+  id: string;
+  name: string;
+  icon?: string;
+  description?: string;
+  folder?: string;
+  template?: string;
+  /** Legacy version-9 field, retained while single notebooks migrate to folders. */
+  notePath?: string;
+  createdAt: Date;
+  archived?: boolean;
 }
 
 /**
@@ -123,6 +138,8 @@ export interface CalendarTask {
   title: string;
   /** Undefined means no date — the task sits in the "No date" section. */
   dueDate?: Date;
+  /** True when the due value is a date without a specific clock time. */
+  allDay?: boolean;
   /**
    * Denormalised mirror of `status === 'done'`.
    *
@@ -152,6 +169,8 @@ export interface CalendarTask {
   notes?: string;
   /** Manual ordering within a section; lower sorts first. */
   order?: number;
+  caldavUrl?: string;
+  etag?: string;
 }
 
 export interface CalendarEvent {
@@ -176,11 +195,25 @@ export interface CalendarEvent {
    */
   isTask?: boolean;
   completed?: boolean;
+  priority?: TaskPriority;
+  /** A VTODO without DUE; start/end are compatibility placeholders only. */
+  undatedTask?: boolean;
   rrule?: string;
   recurringSeriesId?: string;
   exceptionDates?: string[];
+  /** IANA zone carried by DTSTART, e.g. Pacific/Honolulu. */
+  timeZone?: string;
+  /** Original instance replaced by a RECURRENCE-ID override. */
+  recurrenceId?: Date;
+  /** CalDAV resource metadata used for conflict-safe updates. */
+  caldavUrl?: string;
+  etag?: string;
   calendarName?: string;
   calendarColor?: string;
+  /** Origin controls whether changes can be written back. */
+  sourceKind?: 'feed' | 'caldav' | 'local';
+  /** Optional display alert written as a VEVENT VALARM. */
+  alarmMinutesBefore?: number;
 }
 
 export interface MeetingSnapshot {
@@ -221,13 +254,23 @@ export interface CalendarSettings {
   caldavAppleId?: string;
   caldavPassword?: string;
   caldavCalendarUrl?: string;
-  /** VTODO-capable collection (Apple Reminders); separate from the calendar. */
+  /** @deprecated Legacy same-account VTODO collection. Kept only for migration. */
   caldavTaskListUrl?: string;
   caldavCustomUrl?: string;
+  /** Optional independent CalDAV account used only for VTODO task sync. */
+  taskCaldavEnabled?: boolean;
+  taskCaldavUsername?: string;
+  taskCaldavPassword?: string;
+  taskCaldavCollectionUrl?: string;
+  taskCaldavServerUrl?: string;
   /** Tie-breaker for ambiguous all-numeric dates; 'auto' uses device region. */
   dateOrder?: 'MDY' | 'DMY' | 'auto';
   /** Mirror tasks onto the calendar as all-day events. Off by default. */
   pushTasksAsEvents?: boolean;
+  /** ISO timestamp of the last fully successful manual synchronization. */
+  lastSuccessfulSync?: string;
+  /** Feed event or series identities hidden only on this device. */
+  hiddenFeedEventIds?: string[];
   /** Where the user's daily journal notes live. */
   dailyNoteFolder?: string;
   /** Filename pattern for daily notes; [literals] in brackets. */

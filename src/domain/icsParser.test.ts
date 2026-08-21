@@ -80,7 +80,7 @@ END:VCALENDAR`;
     expect(evt2.summary).toBe('(No Title)');
   });
 
-  test('expandEventsForDate expands daily, weekly, monthly recurring events', () => {
+  test('expandEventsForDate expands daily and weekly recurring events', () => {
     const icsData = `BEGIN:VCALENDAR
 BEGIN:VEVENT
 UID:rec-2002
@@ -107,6 +107,23 @@ END:VCALENDAR`;
     expect(expanded[1].summary).toBe('Weekly Standup');
   });
 
+  test('expands a simple monthly rule on the same calendar day', () => {
+    const events = parseIcsContent(`BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:monthly-1
+SUMMARY:Monthly review
+DTSTART:20260821T090000
+DTEND:20260821T100000
+RRULE:FREQ=MONTHLY
+END:VEVENT
+END:VCALENDAR`);
+
+    expect(expandEventsForDate(events, new Date(2026, 7, 21))).toHaveLength(1);
+    expect(expandEventsForDate(events, new Date(2026, 8, 20))).toHaveLength(0);
+    expect(expandEventsForDate(events, new Date(2026, 8, 21))).toHaveLength(1);
+    expect(expandEventsForDate(events, new Date(2026, 9, 21))).toHaveLength(1);
+  });
+
   test('expandEventsForDate respects exceptionDates for single occurrence deletion', () => {
     const icsData = `BEGIN:VCALENDAR
 BEGIN:VEVENT
@@ -121,12 +138,100 @@ END:VCALENDAR`;
     const events = parseIcsContent(icsData);
     events[0].exceptionDates = ['2026-08-16'];
 
-    const aug16 = new Date('2026-08-16T00:00:00Z');
+    const aug16 = new Date(2026, 7, 16);
     const expandedAug16 = expandEventsForDate(events, aug16);
     expect(expandedAug16.length).toBe(0);
 
-    const aug17 = new Date('2026-08-17T00:00:00Z');
+    const aug17 = new Date(2026, 7, 17);
     const expandedAug17 = expandEventsForDate(events, aug17);
     expect(expandedAug17.length).toBe(1);
+  });
+
+  test('honours INTERVAL, BYDAY, COUNT and UNTIL recurrence fields', () => {
+    const everyOtherMonWed = parseIcsContent(`BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:class-1
+SUMMARY:Class
+DTSTART:20260803T090000
+DTEND:20260803T100000
+RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE;COUNT=4
+END:VEVENT
+END:VCALENDAR`);
+
+    expect(expandEventsForDate(everyOtherMonWed, new Date(2026, 7, 3))).toHaveLength(1);
+    expect(expandEventsForDate(everyOtherMonWed, new Date(2026, 7, 5))).toHaveLength(1);
+    expect(expandEventsForDate(everyOtherMonWed, new Date(2026, 7, 10))).toHaveLength(0);
+    expect(expandEventsForDate(everyOtherMonWed, new Date(2026, 7, 17))).toHaveLength(1);
+    expect(expandEventsForDate(everyOtherMonWed, new Date(2026, 7, 19))).toHaveLength(1);
+    expect(expandEventsForDate(everyOtherMonWed, new Date(2026, 7, 31))).toHaveLength(0);
+
+    const until = parseIcsContent(`BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:daily-until
+SUMMARY:Short run
+DTSTART:20260801T090000
+DTEND:20260801T100000
+RRULE:FREQ=DAILY;UNTIL=20260803T235959
+END:VEVENT
+END:VCALENDAR`);
+    expect(expandEventsForDate(until, new Date(2026, 7, 3))).toHaveLength(1);
+    expect(expandEventsForDate(until, new Date(2026, 7, 4))).toHaveLength(0);
+  });
+
+  test('folds EXDATE and RECURRENCE-ID replacements into a recurring series', () => {
+    const events = parseIcsContent(`BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:sync-1
+SUMMARY:Daily sync
+DTSTART:20260801T090000
+DTEND:20260801T100000
+RRULE:FREQ=DAILY
+EXDATE:20260802T090000
+END:VEVENT
+BEGIN:VEVENT
+UID:sync-1
+RECURRENCE-ID:20260803T090000
+SUMMARY:Moved sync
+DTSTART:20260803T130000
+DTEND:20260803T140000
+END:VEVENT
+END:VCALENDAR`);
+
+    expect(expandEventsForDate(events, new Date(2026, 7, 2))).toHaveLength(0);
+    const aug3 = expandEventsForDate(events, new Date(2026, 7, 3));
+    expect(aug3).toHaveLength(1);
+    expect(aug3[0].summary).toBe('Moved sync');
+    expect(aug3[0].start.getHours()).toBe(13);
+  });
+
+  test('converts a TZID wall-clock time into the correct instant', () => {
+    const parsed = parseIcsDate('DTSTART;TZID=America/New_York:20260820T100000');
+    expect(parsed.date.toISOString()).toBe('2026-08-20T14:00:00.000Z');
+  });
+
+  test('drops malformed events instead of placing them at the current time', () => {
+    const events = parseIcsContent(`BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:bad-date
+SUMMARY:Broken
+DTSTART:not-a-date
+END:VEVENT
+END:VCALENDAR`);
+    expect(events).toHaveLength(0);
+  });
+
+  test('shows overnight and multi-day events on each overlapping day', () => {
+    const events = parseIcsContent(`BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:trip
+SUMMARY:Trip
+DTSTART:20260820T220000
+DTEND:20260822T080000
+END:VEVENT
+END:VCALENDAR`);
+    expect(expandEventsForDate(events, new Date(2026, 7, 20))).toHaveLength(1);
+    expect(expandEventsForDate(events, new Date(2026, 7, 21))).toHaveLength(1);
+    expect(expandEventsForDate(events, new Date(2026, 7, 22))).toHaveLength(1);
+    expect(expandEventsForDate(events, new Date(2026, 7, 23))).toHaveLength(0);
   });
 });

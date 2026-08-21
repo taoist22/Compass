@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Dimensions,
   Modal,
+  NativeModules,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -22,6 +23,7 @@ import {
   Project,
   ProjectStatus,
   ProfileThemeMode,
+  Resource,
   TaskPriority,
   TaskStatus,
 } from '../domain/types';
@@ -42,7 +44,7 @@ import {
   templateSettingKey,
 } from '../domain/noteTemplates';
 import { expandEventsForDate, parseIcsContent } from '../domain/icsParser';
-import { filterEvents } from '../domain/eventFilters';
+import { feedEventHideIdentity, filterEvents } from '../domain/eventFilters';
 import { meetingNoteService } from '../supernote/meetingNoteService';
 import { resolveArea, resolveAreaId } from '../domain/membership';
 import { calendarStorage } from '../storage/calendarStorage';
@@ -53,9 +55,11 @@ import {
   prunePushState,
   recordPullSnapshot,
   recordPush,
+  knownServerUids,
   selectItemsToPush,
   selectRemovedUids,
 } from '../domain/pushState';
+import { taskFromCaldavItem, taskToCaldavItem } from '../domain/taskSync';
 import { LASSO_BUTTON_ID, LASSO_PRESS_EVENT } from '../domain/buttonIds';
 import { parseCapturedText, resolveDateOrder, ParsedCapture } from '../domain/captureParser';
 import { captureLassoText } from '../supernote/lassoCapture';
@@ -64,6 +68,15 @@ import { TaskListModal } from './TaskListModal';
 import { ParaView } from './ParaView';
 import { ProjectDetailView } from './ProjectDetailView';
 import { activeProjects, projectProgress } from '../domain/taskListView';
+import { fetchCalendarFeed, normaliseFeedUrl, refreshCalendarFeeds } from '../domain/feedService';
+import { isIcsCalendarContent, parseCalendarSetupFile } from '../domain/calendarImport';
+
+type CalendarFileBridge = {
+  readTextFile(pathOrUri: string): Promise<string>;
+  storeImportedCalendar(fileName: string, content: string): Promise<string>;
+};
+
+const CalendarFile = NativeModules.CalendarFile as CalendarFileBridge | undefined;
 
 /** Progress as solid blocks; a drawn bar smears at these widths on e-ink. */
 function blockBar(percent: number): string {
@@ -74,8 +87,10 @@ function blockBar(percent: number): string {
 import { DayScheduleGrid } from './DayScheduleGrid';
 import { hourLabel } from '../domain/dayGrid';
 import { ItemCreationModal } from './ItemCreationModal';
+import { EventDetailsModal } from './EventDetailsModal';
 import { DatePickerModal } from './DatePickerModal';
-import { openNoteInEditor } from '../supernote/exportService';
+import { listParaFolderEntries, openNoteInEditor, openResourceFile } from '../supernote/exportService';
+import { firstPickedFilePath, parentFolderFromPicker } from '../domain/fileSelection';
 
 type SettingsTab = 'sync' | 'notes' | 'app' | 'help';
 
@@ -95,7 +110,7 @@ const STRIP_TASK_LIMIT = 4;
  * Developer tooling that must not ship publicly. Set to false and the probe
  * button and its output disappear; nothing else depends on it.
  */
-const SHOW_DEV_PROBE = true;
+const SHOW_DEV_PROBE = false;
 
 /**
  * Beat between deleting a file and opening a note.
@@ -108,6 +123,36 @@ const DELETE_BEFORE_OPEN_DELAY_MS = 200;
 
 const CALDAV_WINDOW_PAST_DAYS = 30;
 const CALDAV_WINDOW_FUTURE_DAYS = 365;
+
+async function readCalendarText(pathOrUri: string): Promise<string> {
+  if (CalendarFile?.readTextFile) return CalendarFile.readTextFile(pathOrUri);
+  const response = await fetch(pathOrUri.startsWith('file://') ? pathOrUri : `file://${pathOrUri}`);
+  return response.text();
+}
+
+function countPendingSyncItems(): number {
+  const settings = calendarStorage.getSettings();
+  let count = 0;
+  if (
+    settings.caldavEnabled && settings.caldavCalendarUrl &&
+    settings.caldavAppleId && settings.caldavPassword
+  ) {
+    count += selectItemsToPush(
+      calendarStorage.getUserEvents(),
+      calendarStorage.getPushState(settings.caldavCalendarUrl)
+    ).length;
+  }
+  if (
+    settings.taskCaldavEnabled && settings.taskCaldavCollectionUrl &&
+    settings.taskCaldavUsername && settings.taskCaldavPassword
+  ) {
+    count += selectItemsToPush(
+      calendarStorage.getTasks().map(taskToCaldavItem),
+      calendarStorage.getTaskPushState(settings.taskCaldavCollectionUrl)
+    ).length;
+  }
+  return count;
+}
 
 export function AgendaScreen(): React.JSX.Element {
   const [viewMode, setViewMode] = useState<CalendarViewMode>('month');
@@ -139,6 +184,10 @@ export function AgendaScreen(): React.JSX.Element {
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('sync');
   const [statusMsg, setStatusMsg] = useState<string>('');
+  const [syncPhase, setSyncPhase] = useState<'idle' | 'syncing' | 'success' | 'partial' | 'error'>('idle');
+  const [lastSuccessfulSync, setLastSuccessfulSync] = useState<string>('');
+  const [syncDetails, setSyncDetails] = useState<string[]>([]);
+  const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
 
   // Settings & CalDAV States
   const [hideAllDay, setHideAllDay] = useState<boolean>(false);
@@ -149,6 +198,11 @@ export function AgendaScreen(): React.JSX.Element {
   const [caldavPassword, setCaldavPassword] = useState<string>('');
   const [caldavUrl, setCaldavUrl] = useState<string>('');
   const [caldavTaskListUrl, setCaldavTaskListUrl] = useState<string>('');
+  const [taskCaldavEnabled, setTaskCaldavEnabled] = useState<boolean>(false);
+  const [taskCaldavServerUrl, setTaskCaldavServerUrl] = useState<string>('');
+  const [taskCaldavUsername, setTaskCaldavUsername] = useState<string>('');
+  const [taskCaldavPassword, setTaskCaldavPassword] = useState<string>('');
+  const [taskCaldavCollectionUrl, setTaskCaldavCollectionUrl] = useState<string>('');
   // Text captured from a lasso selection, prefilled into the creation modal.
   const [lassoDraftTitle, setLassoDraftTitle] = useState<string>('');
   // Parsed date/time from a lasso capture, used to prefill the modal.
@@ -178,13 +232,14 @@ export function AgendaScreen(): React.JSX.Element {
   const [showTaskList, setShowTaskList] = useState<boolean>(false);
   const [areas, setAreas] = useState<Area[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [resources, setResources] = useState<Resource[]>([]);
   const [eventTypes, setEventTypes] = useState<EventType[]>([]);
-  const [paraAreaId, setParaAreaId] = useState<string | null>(null);
-  const [paraShowArchive, setParaShowArchive] = useState<boolean>(false);
   /** Project whose due date is being picked, if any. */
   const [projectDueTarget, setProjectDueTarget] = useState<Project | null>(null);
   /** Project open in the detail view; null shows the browser. */
   const [openProject, setOpenProject] = useState<Project | null>(null);
+  /** Area to reveal after correcting a Project's PARA classification. */
+  const [paraFocusAreaId, setParaFocusAreaId] = useState<string | null>(null);
   /** Project a new task should be filed under, when adding from inside one. */
   const [pendingProjectId, setPendingProjectId] = useState<string | undefined>(undefined);
   /** Bumped when membership changes, so the list and pickers re-read. */
@@ -199,6 +254,7 @@ export function AgendaScreen(): React.JSX.Element {
   // Event opened in the detail modal, where the low-frequency actions live.
   // Non-null while the modal is editing an existing item rather than creating.
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  const [detailEvent, setDetailEvent] = useState<CalendarEvent | null>(null);
   const [caldavCustomUrl, setCaldavCustomUrl] = useState<string>('');
 
   // Bound, not discarded: this is the token the note-existence checks depend
@@ -227,6 +283,11 @@ export function AgendaScreen(): React.JSX.Element {
     setCaldavPassword(settings.caldavPassword || '');
     setCaldavUrl(settings.caldavCalendarUrl || '');
     setCaldavTaskListUrl(settings.caldavTaskListUrl || '');
+    setTaskCaldavEnabled(Boolean(settings.taskCaldavEnabled));
+    setTaskCaldavServerUrl(settings.taskCaldavServerUrl || '');
+    setTaskCaldavUsername(settings.taskCaldavUsername || '');
+    setTaskCaldavPassword(settings.taskCaldavPassword || '');
+    setTaskCaldavCollectionUrl(settings.taskCaldavCollectionUrl || '');
     setPushTasksAsEvents(Boolean(settings.pushTasksAsEvents));
     setDefaultView(settings.defaultViewMode || 'month');
     setScheduleStartHour(settings.scheduleStartHour ?? 8);
@@ -234,12 +295,15 @@ export function AgendaScreen(): React.JSX.Element {
     setDailyNoteFolder(settings.dailyNoteFolder || '/storage/emulated/0/Note/Daily Notes');
     setDailyNoteFormat(settings.dailyNoteFormat || 'YYYY-MM-DD');
     setCaldavCustomUrl(settings.caldavCustomUrl || '');
+    setLastSuccessfulSync(settings.lastSuccessfulSync || '');
 
     // Load persisted user events
     setTasks([...calendarStorage.getTasks()]);
     setAreas([...calendarStorage.getAreas()]);
     setProjects([...calendarStorage.getProjects()]);
+    setResources([...calendarStorage.getResources()]);
     setEventTypes([...calendarStorage.getEventTypes()]);
+    setPendingSyncCount(countPendingSyncItems());
 
     const savedUserEvts = calendarStorage.getUserEvents();
     // The cached CalDAV read goes on screen immediately. Without it the
@@ -303,9 +367,10 @@ export function AgendaScreen(): React.JSX.Element {
 
       await refreshFeeds();
       // Same job the subscribed feed used to do for iCloud: populate the
-      // calendar on open. Silent because a cold start has no stored password,
-      // and the cached read is already on screen.
+      // calendar on open. Silent because encrypted credentials may be absent or
+      // locked, and the cached read is already on screen.
       await handlePullCaldavEvents({ silent: true });
+      await handlePullCaldavTasks({ silent: true });
     };
 
     void init();
@@ -422,8 +487,6 @@ export function AgendaScreen(): React.JSX.Element {
     const ownUids = new Set(calendarStorage.getUserEvents().map(e => e.uid));
     const stale = new Set([...feedUidsRef.current].filter(uid => !ownUids.has(uid)));
     feedUidsRef.current = new Set(fetched.map(e => e.uid).filter(Boolean));
-    setHasSubscribedFeeds(fetched.length > 0);
-
     setAllParsedEvents(prev => [...prev.filter(e => !stale.has(e.uid)), ...fetched]);
   };
 
@@ -432,11 +495,13 @@ export function AgendaScreen(): React.JSX.Element {
    * plugin, since Google CalDAV needs OAuth; this runs on open and again
    * whenever Sync Now is pressed.
    */
-  const refreshFeeds = async () => {
+  const refreshFeeds = async (): Promise<{ configured: number; successful: number; failed: number; events: number }> => {
 
     const settings = calendarStorage.getSettings();
     const savedFeeds = settings.feeds || [];
-    const fetched: CalendarEvent[] = [];
+    let fetched: CalendarEvent[] = [];
+    let successfulFeeds = 0;
+    let failedFeeds = 0;
 
     // Reflects configuration, not the outcome: a feed that fails to load today
     // is still a reason to offer Sync Now.
@@ -444,15 +509,50 @@ export function AgendaScreen(): React.JSX.Element {
       setHasSubscribedFeeds(true);
     }
 
-    for (const feed of savedFeeds) {
-      if (feed.url && feed.enabled && !feed.id.startsWith('default-') && feed.id !== 'primary-cal') {
-        try {
-          const res = await fetch(feed.url);
-          const text = await res.text();
-          const evts = parseIcsContent(text, feed.name || 'Saved Feed');
-          fetched.push(...evts);
-        } catch (e) {}
+    const configuredFeeds = savedFeeds.filter(
+      feed => feed.url && feed.enabled && !feed.id.startsWith('default-') && feed.id !== 'primary-cal'
+    );
+    const localFeeds = savedFeeds.filter(feed => feed.localPath && feed.enabled);
+
+    const feedResult = await refreshCalendarFeeds(configuredFeeds);
+    fetched = feedResult.events;
+    successfulFeeds = feedResult.successful;
+    failedFeeds = feedResult.failed;
+
+    for (const feed of localFeeds) {
+      try {
+        const path = feed.localPath as string;
+        const text = await readCalendarText(path);
+        if (!/BEGIN:VCALENDAR/i.test(text)) throw new Error('Not an iCalendar file');
+        fetched.push(...parseIcsContent(text, feed.name || 'Imported Calendar').map(event => ({
+          ...event,
+          sourceKind: 'feed' as const,
+        })));
+        successfulFeeds++;
+      } catch (_error) {
+        failedFeeds++;
       }
+    }
+
+    if (configuredFeeds.length + localFeeds.length > 0) {
+      // An empty but successful calendar is authoritative and must clear the
+      // previous batch. Only retain cached events when every request failed.
+      if (successfulFeeds > 0) applyFeedBatch(fetched);
+      setHasSubscribedFeeds(true);
+      if (successfulFeeds === 0) {
+        setStatusMsg(`Could not refresh ${failedFeeds} subscribed feed(s); showing cached events.`);
+      } else {
+        setStatusMsg(
+          `Refreshed ${fetched.length} event(s) from ${successfulFeeds} feed(s)` +
+          (failedFeeds ? ` — ${failedFeeds} failed.` : '.')
+        );
+      }
+      return {
+        configured: configuredFeeds.length + localFeeds.length,
+        successful: successfulFeeds,
+        failed: failedFeeds,
+        events: fetched.length,
+      };
     }
 
     if (fetched.length > 0) {
@@ -461,24 +561,18 @@ export function AgendaScreen(): React.JSX.Element {
     } else {
       try {
         const localFilePath = 'file:///storage/emulated/0/Document/feeds.txt';
-        const res = await fetch(localFilePath);
-        const content = await res.text();
-        const lines = content.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const content = await readCalendarText(localFilePath);
+        const setup = parseCalendarSetupFile(content);
 
         const collected: CalendarEvent[] = [];
         let failedCount = 0;
 
-        for (const line of lines) {
-          if (line.startsWith('http://') || line.startsWith('https://') || line.startsWith('webcal://')) {
-            // Per-URL try: a single bad feed must not abort the ones after it.
-            try {
-              const httpsUrl = line.replace(/^webcal:\/\//i, 'https://');
-              const feedRes = await fetch(httpsUrl);
-              const feedText = await feedRes.text();
-              collected.push(...parseIcsContent(feedText, 'feeds.txt'));
-            } catch (feedErr) {
-              failedCount++;
-            }
+        for (const definition of setup.feeds) {
+          // Per-URL try: a single bad feed must not abort the ones after it.
+          try {
+            collected.push(...await fetchCalendarFeed(definition.url, definition.name));
+          } catch (feedErr) {
+            failedCount++;
           }
         }
 
@@ -493,8 +587,15 @@ export function AgendaScreen(): React.JSX.Element {
         } else if (failedCount > 0) {
           setStatusMsg(`feeds.txt: all ${failedCount} URL(s) failed to load. Check the URLs.`);
         }
+        return {
+          configured: setup.feeds.length,
+          successful: Math.max(0, setup.feeds.length - failedCount),
+          failed: failedCount + setup.invalidLines,
+          events: collected.length,
+        };
       } catch (e) {}
     }
+    return { configured: 0, successful: 0, failed: 0, events: fetched.length };
   };
 
   /**
@@ -512,7 +613,16 @@ export function AgendaScreen(): React.JSX.Element {
     const settings = calendarStorage.getSettings();
     const collectionUrl = settings.caldavCalendarUrl;
 
-    if (!settings.caldavEnabled || !collectionUrl || !settings.caldavAppleId || !settings.caldavPassword) {
+    const eventReady = Boolean(
+      settings.caldavEnabled && collectionUrl && settings.caldavAppleId && settings.caldavPassword
+    );
+    const taskReady = Boolean(
+      settings.taskCaldavEnabled &&
+      settings.taskCaldavCollectionUrl &&
+      settings.taskCaldavUsername &&
+      settings.taskCaldavPassword
+    );
+    if (!eventReady && !taskReady) {
       return { pushed: 0, attempted: 0, error: '' };
     }
 
@@ -521,30 +631,76 @@ export function AgendaScreen(): React.JSX.Element {
     // Upload only what is new or edited since the last successful push.
     // Re-pushing everything used to resurrect items deleted on the phone,
     // because a server-side delete leaves the local copy untouched.
-    let pushState = calendarStorage.getPushState(collectionUrl);
-    const pending = selectItemsToPush(allUserEvts, pushState);
+    let pushState = calendarStorage.getPushState(collectionUrl || '');
+    const pending = eventReady ? selectItemsToPush(allUserEvts, pushState) : [];
 
     let pushed = 0;
     let error = '';
     for (const evt of pending) {
       const pushRes = await caldavService.pushIcloudEvent(evt, {
         provider: settings.caldavProvider as CaldavProviderType,
-        appleId: settings.caldavAppleId,
+        appleId: settings.caldavAppleId as string,
         appPassword: settings.caldavPassword,
         calendarUrl: collectionUrl,
-        taskListUrl: settings.caldavTaskListUrl,
       });
       if (pushRes.success) {
         pushed++;
+        const synced = {
+          ...evt,
+          caldavUrl: pushRes.caldavUrl || evt.caldavUrl,
+          etag: pushRes.etag || evt.etag,
+        };
+        calendarStorage.addUserEvent(synced);
         // Recorded only on success, so a failed item retries next sync.
-        pushState = recordPush(pushState, evt);
+        pushState = recordPush(pushState, synced);
       } else {
         error = pushRes.message;
       }
     }
 
-    pushState = prunePushState(pushState, allUserEvts.map(e => e.uid));
-    calendarStorage.setPushState(pushState);
+    if (eventReady) {
+      pushState = prunePushState(pushState, allUserEvts.map(e => e.uid));
+      calendarStorage.setPushState(pushState);
+    }
+
+    // Tasks live in their own store and their own VTODO-capable collection.
+    // Keeping a separate push state prevents switching targets from invalidating
+    // event bookkeeping or silently leaving tasks unsynchronised.
+    if (taskReady && settings.taskCaldavCollectionUrl) {
+      const taskItems = calendarStorage.getTasks().map(taskToCaldavItem);
+      let taskState = calendarStorage.getTaskPushState(settings.taskCaldavCollectionUrl);
+      const pendingTasks = selectItemsToPush(taskItems, taskState);
+      for (const item of pendingTasks) {
+        const taskRes = await caldavService.pushIcloudEvent(item, {
+          provider: 'custom',
+          appleId: settings.taskCaldavUsername as string,
+          appPassword: settings.taskCaldavPassword,
+          taskListUrl: settings.taskCaldavCollectionUrl,
+        });
+        if (taskRes.success) {
+          pushed++;
+          const task = calendarStorage.getTasks().find(candidate => candidate.uid === item.uid);
+          const synced = {
+            ...item,
+            caldavUrl: taskRes.caldavUrl || item.caldavUrl,
+            etag: taskRes.etag || item.etag,
+          };
+          if (task) {
+            calendarStorage.upsertTask({
+              ...task,
+              caldavUrl: synced.caldavUrl,
+              etag: synced.etag,
+            });
+          }
+          taskState = recordPush(taskState, synced);
+        } else {
+          error = taskRes.message;
+        }
+      }
+      taskState = prunePushState(taskState, taskItems.map(item => item.uid));
+      calendarStorage.setTaskPushState(taskState);
+      pending.push(...pendingTasks);
+    }
 
     return { pushed, attempted: pending.length, error };
   };
@@ -598,9 +754,8 @@ export function AgendaScreen(): React.JSX.Element {
 
     if (res.success) {
       const resolvedUrl = res.calendarUrl || caldavService.resolveProviderInitialUrl(caldavProvider, caldavCustomUrl);
-      const resolvedTaskUrl = res.taskListUrl || '';
       setCaldavUrl(resolvedUrl);
-      setCaldavTaskListUrl(resolvedTaskUrl);
+      setCaldavTaskListUrl('');
       setCaldavEnabled(true);
 
       calendarStorage.updateSettings({
@@ -609,14 +764,17 @@ export function AgendaScreen(): React.JSX.Element {
         caldavAppleId: caldavAppleId.trim(),
         caldavPassword: caldavPassword.trim(),
         caldavCalendarUrl: resolvedUrl,
-        caldavTaskListUrl: resolvedTaskUrl,
+        // Event accounts no longer double as task accounts. In particular,
+        // iCloud's advertised legacy VTODO collection is not the modern
+        // Reminders database visible on current Apple devices.
+        caldavTaskListUrl: '',
         caldavCustomUrl: caldavCustomUrl.trim(),
       });
 
       const push = await pushPendingItems();
 
-      // res.message names the chosen calendar AND the Reminders list; it used
-      // to be thrown away here, which hid whether tasks had a destination.
+      // Preserve discovery details, including the explicit iCloud legacy-task
+      // warning, rather than replacing them with a generic success message.
       if (push.pushed > 0) {
         setStatusMsg(`${res.message} Synced ${push.pushed} of ${push.attempted} changed items.`);
       } else if (push.attempted > 0) {
@@ -627,6 +785,64 @@ export function AgendaScreen(): React.JSX.Element {
     } else {
       setStatusMsg(`CalDAV Connection Failed: ${res.message}`);
     }
+  };
+
+  const handleTestTaskCaldavConnection = async () => {
+    const serverUrl = taskCaldavServerUrl.trim();
+    const username = taskCaldavUsername.trim();
+    const password = taskCaldavPassword.trim();
+    if (!serverUrl || !username || !password) {
+      setStatusMsg('Enter the task server URL, username, and password first.');
+      return;
+    }
+    if (/\.icloud\.com(?:\/|$)/i.test(serverUrl)) {
+      setStatusMsg(
+        'Modern Apple Reminders is not exposed through iCloud CalDAV. Use a separate VTODO-capable CalDAV account.'
+      );
+      return;
+    }
+
+    setStatusMsg('Discovering VTODO task lists...');
+    const res = await caldavService.discoverIcloudCalendarUrl(
+      {
+        provider: 'custom',
+        appleId: username,
+        appPassword: password,
+        customUrl: serverUrl,
+      },
+      'tasks'
+    );
+    if (!res.success || !res.taskListUrl) {
+      setStatusMsg(
+        res.success
+          ? 'Connected, but this account exposed no VTODO task list.'
+          : `Task CalDAV connection failed: ${res.message}`
+      );
+      return;
+    }
+
+    setTaskCaldavEnabled(true);
+    setTaskCaldavCollectionUrl(res.taskListUrl);
+    calendarStorage.updateSettings({
+      taskCaldavEnabled: true,
+      taskCaldavUsername: username,
+      taskCaldavPassword: password,
+      taskCaldavServerUrl: serverUrl,
+      taskCaldavCollectionUrl: res.taskListUrl,
+    });
+    setStatusMsg('Task account connected. Tap Sync Now when you are ready to upload local tasks.');
+  };
+
+  const handleDisconnectTaskCaldav = () => {
+    setTaskCaldavEnabled(false);
+    setTaskCaldavCollectionUrl('');
+    setTaskCaldavPassword('');
+    calendarStorage.updateSettings({
+      taskCaldavEnabled: false,
+      taskCaldavPassword: '',
+      taskCaldavCollectionUrl: '',
+    });
+    setStatusMsg('External task synchronization disconnected. Local tasks were kept.');
   };
 
   /**
@@ -640,17 +856,18 @@ export function AgendaScreen(): React.JSX.Element {
    * Uses the collection already saved by Test Connection, so a routine sync
    * costs one request instead of re-running principal discovery.
    */
-  const handlePullCaldavEvents = async (options: { silent?: boolean } = {}) => {
+  const handlePullCaldavEvents = async (
+    options: { silent?: boolean } = {}
+  ): Promise<{ configured: boolean; success: boolean; count: number; error?: string }> => {
     const { silent = false } = options;
     const settings = calendarStorage.getSettings();
     const collectionUrl = settings.caldavCalendarUrl;
 
     if (!settings.caldavEnabled || !collectionUrl || !settings.caldavAppleId || !settings.caldavPassword) {
-      // The password is never written to disk, so a cold start has no
-      // credentials until Test Connection runs again. On the automatic pull
-      // that is ordinary, not an error worth interrupting the user over.
+      // Encrypted credentials may be unavailable after a reinstall or keystore
+      // reset. On the automatic pull that is not worth interrupting the user.
       if (!silent) setStatusMsg('Connect a CalDAV account first (Calendar & Sync).');
-      return;
+      return { configured: false, success: false, count: 0 };
     }
 
     if (!silent) setStatusMsg('Reading events from CalDAV...');
@@ -674,7 +891,7 @@ export function AgendaScreen(): React.JSX.Element {
 
     if (error) {
       if (!silent) setStatusMsg(`CalDAV read failed: ${error}`);
-      return;
+      return { configured: true, success: false, count: 0, error };
     }
 
     // Items the plugin pushed itself come back as ordinary VEVENTs carrying
@@ -748,6 +965,58 @@ export function AgendaScreen(): React.JSX.Element {
     );
     if (removed.length > 0) parts.push(`Removed ${removed.length} deleted elsewhere.`);
     if (!silent) setStatusMsg(parts.join(' '));
+    return { configured: true, success: true, count: incoming.length };
+  };
+
+  /** Pulls VTODO tasks from the independently configured task account. */
+  const handlePullCaldavTasks = async (
+    options: { silent?: boolean } = {}
+  ): Promise<{ configured: boolean; success: boolean; count: number; error?: string }> => {
+    const { silent = false } = options;
+    const settings = calendarStorage.getSettings();
+    const collectionUrl = settings.taskCaldavCollectionUrl;
+    if (
+      !settings.taskCaldavEnabled ||
+      !collectionUrl ||
+      !settings.taskCaldavUsername ||
+      !settings.taskCaldavPassword
+    ) {
+      return { configured: false, success: false, count: 0 };
+    }
+
+    const remote = await caldavService.fetchTasks(collectionUrl, {
+      provider: 'custom',
+      appleId: settings.taskCaldavUsername,
+      appPassword: settings.taskCaldavPassword,
+      taskListUrl: collectionUrl,
+    });
+    if (remote.error) {
+      if (!silent) setStatusMsg(`Task read failed: ${remote.error}`);
+      return { configured: true, success: false, count: 0, error: remote.error };
+    }
+
+    const taskState = calendarStorage.getTaskPushState(collectionUrl);
+    const remoteUids = new Set(remote.tasks.map(item => item.uid));
+    for (const item of remote.tasks) {
+      const existing = calendarStorage.getTasks().find(task => task.uid === item.uid);
+      if (!existing || selectItemsToPush([taskToCaldavItem(existing)], taskState).length === 0) {
+        calendarStorage.upsertTask(taskFromCaldavItem(item, existing));
+      }
+    }
+    for (const uid of knownServerUids(taskState)) {
+      if (remoteUids.has(uid)) continue;
+      const existing = calendarStorage.getTasks().find(task => task.uid === uid);
+      if (existing && selectItemsToPush([taskToCaldavItem(existing)], taskState).length === 0) {
+        calendarStorage.removeTask(uid);
+      }
+    }
+    const liveTaskUids = calendarStorage.getTasks().map(task => task.uid);
+    calendarStorage.setTaskPushState(
+      prunePushState(recordPullSnapshot(taskState, [...remoteUids]), liveTaskUids)
+    );
+    setTasks([...calendarStorage.getTasks()]);
+    if (!silent) setStatusMsg(`Read ${remote.tasks.length} task(s) from the external task account.`);
+    return { configured: true, success: true, count: remote.tasks.length };
   };
 
   /**
@@ -764,7 +1033,9 @@ export function AgendaScreen(): React.JSX.Element {
    */
   const handleSyncNow = async () => {
     setStatusMsg('Syncing...');
-    await refreshFeeds();
+    setSyncPhase('syncing');
+    setSyncDetails([]);
+    const feed = await refreshFeeds();
 
     const settings = calendarStorage.getSettings();
     const caldavReady =
@@ -772,20 +1043,59 @@ export function AgendaScreen(): React.JSX.Element {
       settings.caldavCalendarUrl &&
       settings.caldavAppleId &&
       settings.caldavPassword;
+    const taskCaldavReady =
+      settings.taskCaldavEnabled &&
+      settings.taskCaldavCollectionUrl &&
+      settings.taskCaldavUsername &&
+      settings.taskCaldavPassword;
 
-    if (!caldavReady) {
+    if (!caldavReady && !taskCaldavReady) {
       // Feed-only setups are a complete configuration, not a broken one.
       if (settings.caldavEnabled && !settings.caldavPassword) {
         setStatusMsg('Feeds refreshed. Re-enter your CalDAV password to sync that account.');
+      }
+      const now = new Date().toISOString();
+      const details = feed.configured > 0
+        ? [`Feeds: ${feed.successful}/${feed.configured} refreshed · ${feed.events} events`]
+        : ['No synchronization sources configured.'];
+      setSyncDetails(details);
+      setSyncPhase(feed.failed > 0 ? 'partial' : feed.configured > 0 ? 'success' : 'idle');
+      setPendingSyncCount(countPendingSyncItems());
+      if (feed.failed === 0 && feed.configured > 0) {
+        setLastSuccessfulSync(now);
+        calendarStorage.updateSettings({ lastSuccessfulSync: now });
       }
       return;
     }
 
     const push = await pushPendingItems();
-    await handlePullCaldavEvents();
+    const eventPull = caldavReady ? await handlePullCaldavEvents({ silent: true }) : null;
+    const taskPull = taskCaldavReady ? await handlePullCaldavTasks({ silent: true }) : null;
+    const details: string[] = [];
+    if (feed.configured > 0) {
+      details.push(`Feeds: ${feed.successful}/${feed.configured} refreshed · ${feed.events} events`);
+    }
+    details.push(`Uploads: ${push.pushed}/${push.attempted} changed items`);
+    if (eventPull) details.push(`Event calendar: ${eventPull.success ? `${eventPull.count} read` : `failed — ${eventPull.error}`}`);
+    if (taskPull) details.push(`Task account: ${taskPull.success ? `${taskPull.count} read` : `failed — ${taskPull.error}`}`);
 
-    if (push.attempted > 0 && push.pushed === 0) {
-      setStatusMsg(`Sync error while uploading: ${push.error}`);
+    const failed = feed.failed > 0 || push.pushed < push.attempted ||
+      eventPull?.success === false || taskPull?.success === false;
+    const succeeded = feed.successful > 0 || push.pushed > 0 || push.attempted === 0 ||
+      eventPull?.success === true || taskPull?.success === true;
+    const phase = failed ? (succeeded ? 'partial' : 'error') : 'success';
+    const pending = countPendingSyncItems();
+    setSyncDetails(details);
+    setSyncPhase(phase);
+    setPendingSyncCount(pending);
+
+    if (!failed) {
+      const now = new Date().toISOString();
+      setLastSuccessfulSync(now);
+      calendarStorage.updateSettings({ lastSuccessfulSync: now });
+      setStatusMsg(`Sync complete. ${pending > 0 ? `${pending} item(s) still pending.` : 'Everything is up to date.'}`);
+    } else {
+      setStatusMsg(`Sync ${phase === 'partial' ? 'completed with warnings' : 'failed'}. Open Calendar & Sync for details.`);
     }
   };
 
@@ -835,8 +1145,7 @@ export function AgendaScreen(): React.JSX.Element {
 
       let content = '';
       try {
-        const fileRes = await fetch(chosenPath.startsWith('file://') ? chosenPath : `file://${chosenPath}`);
-        content = await fileRes.text();
+        content = await readCalendarText(chosenPath);
       } catch (readErr: any) {
         setStatusMsg(`Could not read ${chosenPath}: ${readErr?.message || 'read failed'}`);
         return;
@@ -851,26 +1160,51 @@ export function AgendaScreen(): React.JSX.Element {
 
       // An .ics holds calendar data directly; a .txt holds URLs to subscribe
       // to. Sniff the content rather than trusting the extension.
-      if (content.includes('BEGIN:VCALENDAR') || content.includes('BEGIN:VEVENT')) {
-        const evts = parseIcsContent(content, fileName);
+      if (isIcsCalendarContent(content)) {
+        const evts = parseIcsContent(content, fileName).map(event => ({
+          ...event,
+          sourceKind: 'feed' as const,
+        }));
         if (evts.length === 0) {
           setStatusMsg(`${fileName} looks like a calendar but no events parsed out of it.`);
           return;
         }
+        let retainedPath = chosenPath;
+        if (CalendarFile?.storeImportedCalendar) {
+          retainedPath = await CalendarFile.storeImportedCalendar(fileName, content);
+        }
+        const existingLocal = calendarStorage.getSettings().feeds.some(
+          feed => feed.localPath === retainedPath || feed.name === fileName
+        );
+        if (!existingLocal) {
+          calendarStorage.addFeed({
+            id: `file-${Date.now()}`,
+            name: fileName,
+            localPath: retainedPath,
+            enabled: true,
+            lastFetched: new Date().toISOString(),
+          });
+        }
+        feedUidsRef.current = new Set([
+          ...feedUidsRef.current,
+          ...evts.map(event => event.uid).filter(Boolean),
+        ]);
         setAllParsedEvents(prev => [...prev, ...evts]);
+        setHasSubscribedFeeds(true);
         jumpToNextUpcomingEventFromToday(evts);
-        setStatusMsg(`Loaded ${evts.length} events from ${fileName}.`);
+        setStatusMsg(
+          `Imported ${evts.length} events from ${fileName} and retained a private plugin copy.`
+        );
         return;
       }
 
-      const urls = content
-        .trim()
-        .split(/\r?\n/)
-        .map(l => l.trim())
-        .filter(l => /^(https?|webcal):\/\//i.test(l));
+      const setup = parseCalendarSetupFile(content);
 
-      if (urls.length === 0) {
-        setStatusMsg(`No calendar data and no http(s)://  or webcal:// URLs found in ${fileName}.`);
+      if (setup.feeds.length === 0) {
+        setStatusMsg(
+          `No calendar data or valid HTTPS/webcal feed lines found in ${fileName}` +
+          (setup.invalidLines ? ` (${setup.invalidLines} invalid line(s)).` : '.')
+        );
         return;
       }
 
@@ -879,24 +1213,20 @@ export function AgendaScreen(): React.JSX.Element {
       let failed = 0;
       const imported: CalendarEvent[] = [];
 
-      for (const rawUrl of urls) {
-        const httpsUrl = rawUrl.replace(/^webcal:\/\//i, 'https://');
-
-        if (existing.some(f => f.url === httpsUrl)) {
+      for (const definition of setup.feeds) {
+        if (existing.some(f => f.url === definition.url)) {
           continue;
         }
 
         // Validate by fetching before saving, so a bad URL never becomes a
         // stored feed that fails silently on every future startup.
         try {
-          const feedRes = await fetch(httpsUrl);
-          const feedText = await feedRes.text();
-          const evts = parseIcsContent(feedText, `Imported ${added + 1}`);
+          const evts = await fetchCalendarFeed(definition.url, definition.name);
 
           calendarStorage.addFeed({
             id: `feed-import-${Date.now()}-${added}`,
-            name: `Imported ${added + 1}`,
-            url: httpsUrl,
+            name: definition.name,
+            url: definition.url,
             enabled: true,
             lastFetched: new Date().toISOString(),
           });
@@ -914,8 +1244,12 @@ export function AgendaScreen(): React.JSX.Element {
       setRefreshState(n => n + 1);
 
       if (added > 0) {
+        setHasSubscribedFeeds(true);
         setStatusMsg(
-          `Imported ${added} feed(s), ${imported.length} events${failed > 0 ? ` — ${failed} URL(s) failed` : ''}.`
+          `Imported ${added} named feed(s), ${imported.length} events` +
+          `${failed > 0 ? ` — ${failed} URL(s) failed` : ''}` +
+          `${setup.invalidLines > 0 ? ` — ${setup.invalidLines} invalid line(s) skipped` : ''}. ` +
+          `Remove the plaintext setup file after confirming the feeds.`
         );
       } else if (failed > 0) {
         setStatusMsg(`All ${failed} URL(s) failed to load. Check the URLs in that file.`);
@@ -1058,16 +1392,13 @@ export function AgendaScreen(): React.JSX.Element {
         needSelectFolder: noteFolderFor(kind),
       });
 
-      if (!result || !Array.isArray(result) || result.length === 0 || typeof result[0] !== 'string') {
+      const chosen = parentFolderFromPicker(result);
+      if (!chosen) {
         setStatusMsg('No file chosen — folder unchanged.');
         return;
       }
 
-      const picked = result[0];
-      const slash = picked.lastIndexOf('/');
-      const chosen = slash > 0 ? picked.slice(0, slash) : '';
-
-      if (!chosen || chosen === '/storage/emulated/0') {
+      if (chosen === '/storage/emulated/0') {
         setStatusMsg('Could not determine a usable folder from that file.');
         return;
       }
@@ -1112,6 +1443,29 @@ export function AgendaScreen(): React.JSX.Element {
       });
       if (result && Array.isArray(result) && result.length > 0 && typeof result[0] === 'string') {
         setNoteTemplate(kind, result[0]);
+      }
+    } catch (e: any) {
+      setStatusMsg(`Template picker error: ${e?.message || 'Picker closed'}`);
+    }
+  };
+
+  const handleChooseCustomTypeTemplate = async (type: EventType) => {
+    try {
+      if (!RattaFileSelector?.selectFile) {
+        setStatusMsg('Native file picker unavailable on this device.');
+        return;
+      }
+      const result: any = await RattaFileSelector.selectFile({
+        selectType: 0,
+        maxNum: 1,
+        title: `Select ${type.name} Background Template PNG`,
+        rightButtonText: 'Select',
+        suffixList: ['png'],
+      });
+      const path = Array.isArray(result) && typeof result[0] === 'string' ? result[0] : undefined;
+      if (path) {
+        handleUpdateEventType({ ...type, template: path });
+        setTypeTemplatePicker(null);
       }
     } catch (e: any) {
       setStatusMsg(`Template picker error: ${e?.message || 'Picker closed'}`);
@@ -1182,13 +1536,14 @@ export function AgendaScreen(): React.JSX.Element {
 
       // Open it the way daily notes do — through the native intent. The service
       // used to call openFilePath, which drops you in the file manager.
-      const opened = await openNoteInEditor(result.notePath);
-      // The panel sits in front of the note app, so without this the note
-      // opens behind the calendar and looks like nothing happened.
+      // Open the page just created. Omitting pageNum reopens the notebook on
+      // its last-used page, which is often the previous meeting occurrence.
+      await prepareForNativeFileOpen();
+      const opened = await openNoteInEditor(result.notePath, result.pageNum);
       if (opened.success) closePanel();
       setStatusMsg(
         opened.success
-          ? `${actionText} ${result.notePath.split('/').pop()}`
+          ? `${actionText} ${result.notePath.split('/').pop()}${result.warning ? ` — ${result.warning}` : ''}`
           : `${actionText} ${result.notePath.split('/').pop()} — could not open it: ${opened.message}`
       );
     } else {
@@ -1369,6 +1724,7 @@ export function AgendaScreen(): React.JSX.Element {
     setDailyNoteExists(true);
     setDailyNoteDates(prev => new Set(prev).add(dateKey(selectedDate)));
 
+    await prepareForNativeFileOpen();
     const opened = await openNoteInEditor(path);
     setStatusMsg(opened.success ? `Created and opened ${fileName}.note` : opened.message);
     if (opened.success) closePanel();
@@ -1381,9 +1737,9 @@ export function AgendaScreen(): React.JSX.Element {
   const todayTaskSections = sectionTasksForDay(tasks, new Date());
 
   /**
-   * Optionally mirrors a task onto the calendar as an all-day event. Apple
-   * Reminders is unreachable over CalDAV, so an event is the only way to get a
-   * task onto a phone — off by default for people who keep tasks elsewhere.
+   * Optionally mirrors a task onto the event calendar. This is independent of
+   * VTODO synchronization and is the direct Apple-visible fallback when no
+   * separate task account is configured.
    * Completion is reflected with a ✓ in the title, matching the in-app check.
    */
   const pushTaskAsEvent = async (task: CalendarTask) => {
@@ -1393,7 +1749,9 @@ export function AgendaScreen(): React.JSX.Element {
     if (!task.dueDate) return;
 
     const start = new Date(task.dueDate);
-    start.setHours(9, 0, 0, 0);
+    // A date-only task needs a clock time for Apple Calendar to deliver an
+    // alert. Timed tasks retain their chosen due time.
+    if (task.allDay !== false) start.setHours(9, 0, 0, 0);
 
     await caldavService.pushIcloudEvent(
       {
@@ -1402,7 +1760,8 @@ export function AgendaScreen(): React.JSX.Element {
         description: task.notes,
         start,
         end: new Date(start.getTime() + 30 * 60 * 1000),
-        allDay: true,
+        allDay: false,
+        alarmMinutesBefore: 0,
         attendees: [],
       },
       {
@@ -1415,6 +1774,31 @@ export function AgendaScreen(): React.JSX.Element {
     );
   };
 
+  const pushTaskToCaldav = async (task: CalendarTask): Promise<string> => {
+    const settings = calendarStorage.getSettings();
+    if (!settings.taskCaldavEnabled || !settings.taskCaldavCollectionUrl ||
+        !settings.taskCaldavUsername || !settings.taskCaldavPassword) return '';
+    const item = taskToCaldavItem(task);
+    const res = await caldavService.pushIcloudEvent(item, {
+      provider: 'custom',
+      appleId: settings.taskCaldavUsername,
+      appPassword: settings.taskCaldavPassword,
+      taskListUrl: settings.taskCaldavCollectionUrl,
+    });
+    if (res.success) {
+      calendarStorage.upsertTask({
+        ...task,
+        caldavUrl: res.caldavUrl || task.caldavUrl,
+        etag: res.etag || task.etag,
+      });
+      calendarStorage.setTaskPushState(
+        recordPush(calendarStorage.getTaskPushState(settings.taskCaldavCollectionUrl), item)
+      );
+      return '';
+    }
+    return res.message;
+  };
+
   /**
    * Tap always settles the common case in one press: anything not done becomes
    * done, and a done task reopens. Reaching In Progress by tapping would cost
@@ -1425,7 +1809,9 @@ export function AgendaScreen(): React.JSX.Element {
     calendarStorage.upsertTask(next);
     setTasks([...calendarStorage.getTasks()]);
     setStatusMsg(next.completed ? `Done: "${next.title}"` : `Reopened: "${next.title}"`);
+    const taskSyncError = await pushTaskToCaldav(next);
     await pushTaskAsEvent(next);
+    if (taskSyncError) setStatusMsg(`Updated "${next.title}" locally. CalDAV: ${taskSyncError}`);
   };
 
   /**
@@ -1447,7 +1833,7 @@ export function AgendaScreen(): React.JSX.Element {
       end: due ?? new Date(),
       // An undated task opens as all-day; giving it a date is what moves it
       // out of the No Date section.
-      allDay: !due || true,
+      allDay: !due || task.allDay !== false,
       attendees: [],
     });
     setLassoDraftTitle('');
@@ -1457,18 +1843,63 @@ export function AgendaScreen(): React.JSX.Element {
     setShowItemCreationModal(true);
   };
 
-  const handleDeleteTask = (task: CalendarTask) => {
+  const handleDeleteTask = async (task: CalendarTask) => {
+    const settings = calendarStorage.getSettings();
+    let remoteError = '';
+    if (settings.taskCaldavEnabled && settings.taskCaldavCollectionUrl &&
+        settings.taskCaldavUsername && settings.taskCaldavPassword) {
+      const result = await caldavService.deleteIcloudEvent(task.uid, {
+        provider: 'custom',
+        appleId: settings.taskCaldavUsername,
+        appPassword: settings.taskCaldavPassword,
+        taskListUrl: settings.taskCaldavCollectionUrl,
+      }, true, { url: task.caldavUrl, etag: task.etag });
+      if (!result.success) remoteError = result.message;
+    }
+    if (settings.pushTasksAsEvents && settings.caldavEnabled && settings.caldavCalendarUrl &&
+        settings.caldavAppleId && settings.caldavPassword) {
+      await caldavService.deleteIcloudEvent(task.uid, {
+        provider: settings.caldavProvider as CaldavProviderType,
+        appleId: settings.caldavAppleId,
+        appPassword: settings.caldavPassword,
+        calendarUrl: settings.caldavCalendarUrl,
+      });
+    }
+    if (remoteError) {
+      setStatusMsg(`Could not delete task "${task.title}" from CalDAV: ${remoteError}`);
+      return;
+    }
     calendarStorage.removeTask(task.uid);
+    calendarStorage.forgetTaskPush(task.uid);
     setTasks([...calendarStorage.getTasks()]);
-    setStatusMsg(`Deleted task "${task.title}".`);
+    setStatusMsg(remoteError
+      ? `Deleted task "${task.title}" locally. CalDAV: ${remoteError}`
+      : `Deleted task "${task.title}".`);
   };
 
-  const handleEditItem = (event: CalendarEvent) => {
+  const eventIsEditable = (event: CalendarEvent): boolean => {
+    const identity = noteIdentity(event);
+    return calendarStorage.getUserEvents().some(item => item.uid === identity) ||
+      calendarStorage.getCaldavEvents().some(item => item.uid === identity);
+  };
+
+  const handleOpenEventDetails = (event: CalendarEvent) => {
+    setDetailEvent(event);
+  };
+
+  const handleBeginEditEvent = (event: CalendarEvent) => {
+    if (!eventIsEditable(event)) return;
+    setDetailEvent(null);
     // Editing an event must not leave a task from a previous open behind.
     setEditingTask(null);
-    // The event argument used to be dropped here, so "Edit" opened a blank
-    // create form and saving minted a new uid — the original never changed.
-    setEditingEvent(event);
+    // An expanded occurrence has a synthetic uid. Editing that object would
+    // create a detached duplicate; edit the stored master so changes apply to
+    // the series and overwrite the original CalDAV resource in place.
+    const identity = noteIdentity(event);
+    const master = calendarStorage.getUserEvents().find(item => item.uid === identity) ||
+      calendarStorage.getCaldavEvents().find(item => item.uid === identity) ||
+      allParsedEvents.find(item => item.uid === identity);
+    setEditingEvent(master || event);
     setLassoDraftTitle('');
     setLassoDraftParsed(null);
     setCreationType(isTaskItem(event) ? 'task' : 'event');
@@ -1574,12 +2005,9 @@ export function AgendaScreen(): React.JSX.Element {
     }
   };
 
-  const removeEventEverywhere = (event: CalendarEvent) => {
-    setAllParsedEvents(prev => prev.filter(e => e.uid !== event.uid));
-    calendarStorage.removeUserEvent(event.uid);
-
+  const removeEventEverywhere = async (event: CalendarEvent): Promise<string> => {
     if (caldavEnabled && caldavAppleId && caldavPassword) {
-      caldavService.deleteIcloudEvent(
+      const removed = await caldavService.deleteIcloudEvent(
         event.uid,
         {
           provider: caldavProvider,
@@ -1588,9 +2016,17 @@ export function AgendaScreen(): React.JSX.Element {
           calendarUrl: caldavUrl,
           taskListUrl: caldavTaskListUrl,
         },
-        isTaskItem(event)
+        isTaskItem(event),
+        { url: event.caldavUrl, etag: event.etag }
       );
+      if (!removed.success) return removed.message;
     }
+    setAllParsedEvents(prev => prev.filter(e => e.uid !== event.uid));
+    calendarStorage.removeUserEvent(event.uid);
+    calendarStorage.setCaldavEvents(
+      calendarStorage.getCaldavEvents().filter(item => item.uid !== event.uid)
+    );
+    return '';
   };
 
   const handleConfirmDeleteWithNote = async (choice: 'both' | 'event' | 'note') => {
@@ -1600,8 +2036,10 @@ export function AgendaScreen(): React.JSX.Element {
     if (!event) return;
 
     if (choice === 'event') {
-      removeEventEverywhere(event);
-      setStatusMsg(`Deleted "${event.summary}". Its note was kept.`);
+      const error = await removeEventEverywhere(event);
+      setStatusMsg(error
+        ? `Could not delete "${event.summary}" from CalDAV: ${error}`
+        : `Deleted "${event.summary}". Its note was kept.`);
       return;
     }
 
@@ -1618,9 +2056,12 @@ export function AgendaScreen(): React.JSX.Element {
       return;
     }
 
+    const remoteError = await removeEventEverywhere(event);
+    if (remoteError) {
+      setStatusMsg(`Nothing was deleted because CalDAV rejected the event deletion: ${remoteError}`);
+      return;
+    }
     const removedNote = await deleteNoteForEvent(event);
-
-    removeEventEverywhere(event);
     // A failed delete used to report identically to a chosen keep, so a locked
     // file looked like the user's own decision.
     setStatusMsg(
@@ -1630,7 +2071,14 @@ export function AgendaScreen(): React.JSX.Element {
     );
   };
 
-  const handleDeleteItem = (event: CalendarEvent) => {
+  const handleDeleteItem = async (event: CalendarEvent) => {
+    const identity = noteIdentity(event);
+    const editable = calendarStorage.getUserEvents().some(item => item.uid === identity) ||
+      calendarStorage.getCaldavEvents().some(item => item.uid === identity);
+    if (!editable) {
+      setStatusMsg('Subscribed iCalendar feeds are read-only and cannot be deleted here.');
+      return;
+    }
     // A note is the one thing here that cannot be recreated, so its presence
     // is checked rather than assumed and the user is asked by name.
     const notePath = calendarStorage.getMapping(noteIdentity(event))?.notePath;
@@ -1644,61 +2092,63 @@ export function AgendaScreen(): React.JSX.Element {
       setPendingDeleteEvent(event);
       setShowDeleteModal(true);
     } else {
-      setAllParsedEvents(prev => prev.filter(e => e.uid !== event.uid));
-      calendarStorage.removeUserEvent(event.uid);
-      setStatusMsg(`Deleted event "${event.summary}".`);
-
-      if (caldavEnabled && caldavAppleId && caldavPassword) {
-        // Must match the collection it was PUT into, or the DELETE hits the
-        // wrong list and the item survives on the server.
-        caldavService.deleteIcloudEvent(
-          event.uid,
-          {
-            provider: caldavProvider,
-            appleId: caldavAppleId,
-            appPassword: caldavPassword,
-            calendarUrl: caldavUrl,
-            taskListUrl: caldavTaskListUrl,
-          },
-          isTaskItem(event)
-        );
-      }
+      const error = await removeEventEverywhere(event);
+      setStatusMsg(error
+        ? `Could not delete "${event.summary}" from CalDAV: ${error}`
+        : `Deleted event "${event.summary}".`);
     }
   };
 
-  const handleDeleteSingleOccurrence = () => {
+  const handleDeleteSingleOccurrence = async () => {
     if (!pendingDeleteEvent) return;
-    const dateStr = selectedDate.toISOString().slice(0, 10);
-
-    setAllParsedEvents(prev =>
-      prev.map(evt => {
-        if (evt.uid === pendingDeleteEvent.uid || evt.uid === pendingDeleteEvent.recurringSeriesId) {
-          const currentExceptions = evt.exceptionDates || [];
-          return {
-            ...evt,
-            exceptionDates: [...currentExceptions, dateStr],
-          };
+    const event = pendingDeleteEvent;
+    const targetId = noteIdentity(event);
+    const dateStr = dateKey(selectedDate);
+    const storedLocal = calendarStorage.getUserEvents().find(evt => evt.uid === targetId);
+    const storedRemote = calendarStorage.getCaldavEvents().find(evt => evt.uid === targetId);
+    const master = allParsedEvents.find(evt => evt.uid === targetId) || storedLocal || storedRemote;
+    if (master) {
+      const serverBacked = Boolean(storedRemote || master.caldavUrl);
+      const updated = {
+        ...master,
+        exceptionDates: [...new Set([...(master.exceptionDates || []), dateStr])],
+      };
+      if (serverBacked && caldavEnabled && caldavAppleId && caldavPassword) {
+        const pushed = await caldavService.pushIcloudEvent(updated, {
+          provider: caldavProvider,
+          appleId: caldavAppleId,
+          appPassword: caldavPassword,
+          calendarUrl: caldavUrl,
+          taskListUrl: caldavTaskListUrl,
+        });
+        if (!pushed.success) {
+          setStatusMsg(`Could not delete this occurrence: ${pushed.message}`);
+          setShowDeleteModal(false);
+          setPendingDeleteEvent(null);
+          return;
         }
-        return evt;
-      })
-    );
-
-    setStatusMsg(`Deleted occurrence for ${selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.`);
+      }
+      setAllParsedEvents(prev => prev.map(evt => evt.uid === targetId ? updated : evt));
+      if (storedLocal) calendarStorage.addUserEvent(updated);
+      if (storedRemote) {
+        calendarStorage.setCaldavEvents(
+          calendarStorage.getCaldavEvents().map(evt => evt.uid === targetId ? updated : evt)
+        );
+      }
+      setStatusMsg(serverBacked
+        ? 'Deleted this occurrence and synced the exception.'
+        : `Deleted occurrence for ${selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.`);
+    }
     setShowDeleteModal(false);
     setPendingDeleteEvent(null);
   };
 
-  const handleDeleteEntireSeries = () => {
+  const handleDeleteEntireSeries = async () => {
     if (!pendingDeleteEvent) return;
     const targetId = pendingDeleteEvent.recurringSeriesId || pendingDeleteEvent.uid;
 
-    setAllParsedEvents(prev =>
-      prev.filter(evt => evt.uid !== targetId && evt.recurringSeriesId !== targetId && !evt.uid.startsWith(targetId))
-    );
-    calendarStorage.removeUserEvent(targetId);
-
     if (caldavEnabled && caldavAppleId && caldavPassword) {
-      caldavService.deleteIcloudEvent(
+      const removed = await caldavService.deleteIcloudEvent(
         targetId,
         {
           provider: caldavProvider,
@@ -1707,9 +2157,24 @@ export function AgendaScreen(): React.JSX.Element {
           calendarUrl: caldavUrl,
           taskListUrl: caldavTaskListUrl,
         },
-        isTaskItem(pendingDeleteEvent)
+        isTaskItem(pendingDeleteEvent),
+        { url: pendingDeleteEvent.caldavUrl, etag: pendingDeleteEvent.etag }
       );
+      if (!removed.success) {
+        setStatusMsg(`Could not delete the series from CalDAV: ${removed.message}`);
+        setShowDeleteModal(false);
+        setPendingDeleteEvent(null);
+        return;
+      }
     }
+
+    setAllParsedEvents(prev =>
+      prev.filter(evt => evt.uid !== targetId && evt.recurringSeriesId !== targetId && !evt.uid.startsWith(targetId))
+    );
+    calendarStorage.removeUserEvent(targetId);
+    calendarStorage.setCaldavEvents(
+      calendarStorage.getCaldavEvents().filter(evt => evt.uid !== targetId)
+    );
 
     setStatusMsg(`Deleted entire recurring series "${pendingDeleteEvent.summary}".`);
     setShowDeleteModal(false);
@@ -1742,6 +2207,7 @@ export function AgendaScreen(): React.JSX.Element {
         title: newEvent.summary.replace(/^\[TASK\]\s*/i, '').trim(),
         // An all-day task carries a due date; a timed one keeps the time too.
         dueDate: newEvent.start ? new Date(newEvent.start) : undefined,
+        allDay: newEvent.allDay,
         completed: existing?.completed ?? false,
         completedAt: existing?.completedAt,
         parentId: existing?.parentId,
@@ -1785,6 +2251,13 @@ export function AgendaScreen(): React.JSX.Element {
         taskListUrl: caldavTaskListUrl,
       });
       if (syncRes.success) {
+        const syncedEvent = {
+          ...newEvent,
+          caldavUrl: syncRes.caldavUrl || newEvent.caldavUrl,
+          etag: syncRes.etag || newEvent.etag,
+        };
+        calendarStorage.addUserEvent(syncedEvent);
+        setAllParsedEvents(prev => prev.map(event => event.uid === syncedEvent.uid ? syncedEvent : event));
         // Already on the server, so the next sync has nothing to do for it.
         calendarStorage.setPushState(
           recordPush(calendarStorage.getPushState(caldavUrl), newEvent)
@@ -1802,6 +2275,39 @@ export function AgendaScreen(): React.JSX.Element {
         PluginManager.closePluginView();
       } catch (e) {}
     }
+  };
+
+  const handleCopyFeedEvent = async (event: CalendarEvent) => {
+    setDetailEvent(null);
+    const copy: CalendarEvent = {
+      ...event,
+      uid: `evt-user-${Date.now()}`,
+      // Copy the occurrence the user can see, not an invisible relationship
+      // to a read-only recurring master in the subscription.
+      rrule: undefined,
+      recurringSeriesId: undefined,
+      recurrenceId: undefined,
+      exceptionDates: undefined,
+      caldavUrl: undefined,
+      etag: undefined,
+      sourceKind: 'local',
+      calendarName: 'Local Calendar',
+    };
+    await handleCreateNewEvent(copy, 'primary-cal');
+    setStatusMsg(`Created an editable copy of "${event.summary}". The Google event was unchanged.`);
+  };
+
+  const handleHideFeedEvent = (event: CalendarEvent) => {
+    const identity = feedEventHideIdentity(event);
+    const settings = calendarStorage.getSettings();
+    calendarStorage.updateSettings({
+      hiddenFeedEventIds: [...new Set([...(settings.hiddenFeedEventIds || []), identity])],
+    });
+    setDetailEvent(null);
+    // Filtering reads settings synchronously; a new array reruns the filter
+    // effect without discarding any cached source data.
+    setAllParsedEvents(previous => [...previous]);
+    setStatusMsg(`Hidden "${event.summary}" on this Supernote. The Google event was unchanged.`);
   };
 
   const areaOfTask = (uid: string): string | undefined => {
@@ -1847,6 +2353,77 @@ export function AgendaScreen(): React.JSX.Element {
     setProjects([...calendarStorage.getProjects()]);
   };
 
+  const handleArchiveProject = (project: Project) => {
+    calendarStorage.upsertProject({ ...project, status: 'archived' });
+    setProjects([...calendarStorage.getProjects()]);
+    if (openProject?.id === project.id) setOpenProject(null);
+    setStatusMsg(`Archived project "${project.name}".`);
+  };
+
+  const handleRestoreProject = (project: Project) => {
+    const area = project.areaId
+      ? calendarStorage.getAreas().find(candidate => candidate.id === project.areaId)
+      : undefined;
+    if (area?.archived) {
+      calendarStorage.upsertArea({ ...area, archived: false });
+      setAreas([...calendarStorage.getAreas()]);
+    }
+    calendarStorage.upsertProject({ ...project, status: 'active', completedAt: undefined });
+    setProjects([...calendarStorage.getProjects()]);
+    setStatusMsg(`Restored project "${project.name}".`);
+  };
+
+  const handleArchiveArea = (area: Area, archiveProjects: boolean) => {
+    calendarStorage.upsertArea({ ...area, archived: true });
+    // The user chooses what happens to active work. Keeping it active detaches
+    // it from the retired Area; archiving it is an explicit separate choice.
+    for (const project of calendarStorage.getProjects()) {
+      if (project.areaId === area.id && project.status === 'active') {
+        calendarStorage.upsertProject({
+          ...project,
+          areaId: archiveProjects ? project.areaId : undefined,
+          status: archiveProjects ? 'archived' : 'active',
+        });
+      }
+    }
+    setAreas([...calendarStorage.getAreas()]);
+    setProjects([...calendarStorage.getProjects()]);
+    setStatusMsg(
+      archiveProjects
+        ? `Archived area "${area.name}" and its active projects.`
+        : `Archived area "${area.name}"; its projects remain active and unfiled.`
+    );
+  };
+
+  const handleRestoreArea = (area: Area) => {
+    calendarStorage.upsertArea({ ...area, archived: false });
+    setAreas([...calendarStorage.getAreas()]);
+    setStatusMsg(`Restored area "${area.name}". Restore any projects you still need separately.`);
+  };
+
+  const handleCreateResource = (name: string): string => {
+    const resource: Resource = {
+      id: `resource-${Date.now()}`,
+      name,
+      createdAt: new Date(),
+    };
+    calendarStorage.upsertResource(resource);
+    setResources([...calendarStorage.getResources()]);
+    return resource.id;
+  };
+
+  const handleArchiveResource = (resource: Resource) => {
+    calendarStorage.upsertResource({ ...resource, archived: true });
+    setResources([...calendarStorage.getResources()]);
+    setStatusMsg(`Archived resource "${resource.name}".`);
+  };
+
+  const handleRestoreResource = (resource: Resource) => {
+    calendarStorage.upsertResource({ ...resource, archived: false });
+    setResources([...calendarStorage.getResources()]);
+    setStatusMsg(`Restored resource "${resource.name}".`);
+  };
+
   const handleCycleProjectArea = (projectId: string) => {
     const existing = calendarStorage.getProjects().find(p => p.id === projectId);
     if (!existing) return;
@@ -1873,6 +2450,51 @@ export function AgendaScreen(): React.JSX.Element {
     calendarStorage.removeArea(areaId);
     setAreas([...calendarStorage.getAreas()]);
     setMembershipRevision(n => n + 1);
+  };
+
+  /** Corrects an item created under Projects when it is really an Area. */
+  const handleConvertProjectToArea = (project: Project) => {
+    const existingArea = calendarStorage.getAreas().find(
+      area => area.name.trim().toLocaleLowerCase() === project.name.trim().toLocaleLowerCase()
+    );
+    const area: Area = existingArea
+      ? {
+          ...existingArea,
+          archived: false,
+          folder: existingArea.folder || project.folder,
+          template: existingArea.template || project.template,
+        }
+      : {
+          id: `area-${Date.now()}`,
+          name: project.name,
+          folder: project.folder,
+          template: project.template,
+          createdAt: project.createdAt,
+        };
+    // Always upsert: an archived same-name Area is restored rather than used
+    // as an invisible destination.
+    calendarStorage.upsertArea(area);
+
+    // Tasks, events and notes filed directly under the old Project become
+    // Area items. Their content and files are untouched.
+    for (const [identity, membership] of Object.entries(calendarStorage.getAllMemberships())) {
+      if (membership.projectId === project.id) {
+        calendarStorage.setMembership(identity, {
+          ...membership,
+          projectId: undefined,
+          areaId: area.id,
+        });
+      }
+    }
+    calendarStorage.removeProject(project.id);
+    setAreas([...calendarStorage.getAreas()]);
+    setProjects([...calendarStorage.getProjects()]);
+    setMembershipRevision(value => value + 1);
+    setParaFocusAreaId(area.id);
+    setOpenProject(null);
+    setStatusMsg(existingArea
+      ? `Moved “${project.name}” into the existing Area and kept its items.`
+      : `Converted “${project.name}” from a Project to an Area.`);
   };
 
   /** Area label for a task row, e.g. "[Home]". Empty when unfiled. */
@@ -1946,10 +2568,7 @@ export function AgendaScreen(): React.JSX.Element {
         rightButtonText: 'Use folder',
         needSelectFolder: type.folder || '/storage/emulated/0/Note',
       });
-      if (!result || !Array.isArray(result) || typeof result[0] !== 'string') return;
-
-      const slash = result[0].lastIndexOf('/');
-      const folder = slash > 0 ? result[0].slice(0, slash) : '';
+      const folder = parentFolderFromPicker(result);
       if (!folder || folder === '/storage/emulated/0') {
         setStatusMsg('Could not determine a usable folder from that file.');
         return;
@@ -1962,17 +2581,11 @@ export function AgendaScreen(): React.JSX.Element {
   };
 
   /**
-   * Opens the project's notebook, creating it on first use.
-   *
-   * Filed in the project's own folder with its template when it has them —
-   * the notes are what make a project a container rather than a labelled list.
-   */
-  /**
    * Notes written for this project's events — the meeting ledger.
    *
    * Read from the note mappings rather than the filesystem: the mapping is
-   * what records that a note was made for a given event, and listFiles does
-   * not exist on this device anyway.
+   * what records that a note was made for a given event, including notes filed
+   * outside the Project's own folder.
    */
   const linkedNotesForProject = (project: Project): Array<{ label: string; path: string }> => {
     void membershipRevision;
@@ -1989,32 +2602,140 @@ export function AgendaScreen(): React.JSX.Element {
     return out;
   };
 
-  const handleProjectNote = async (project: Project) => {
-    if (project.notePath) {
-      await handleOpenExistingNote(project.notePath);
-      return;
-    }
+  type ParaFolderKind = 'project' | 'area' | 'resource';
+  type ParaFolderItem = Project | Area | Resource;
 
+  const paraFolder = (kind: ParaFolderKind, item: ParaFolderItem): string => {
+    if (item.folder) return item.folder.replace(/\/+$/, '');
+    if (kind !== 'area') {
+      const legacyPath = (item as Project | Resource).notePath;
+      if (legacyPath) {
+        const slash = legacyPath.lastIndexOf('/');
+        if (slash > 0) return legacyPath.slice(0, slash);
+      }
+    }
+    const safeName = item.name
+      .replace(/[/\\?%*:|"<>]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim() || 'Untitled';
+    const section = kind === 'project' ? 'Projects' : kind === 'area' ? 'Areas' : 'Resources';
+    return `/storage/emulated/0/Note/Compass/${section}/${safeName}`;
+  };
+
+  const persistParaFolder = (kind: ParaFolderKind, item: ParaFolderItem, folder: string) => {
+    if (kind === 'project') {
+      calendarStorage.upsertProject({ ...(item as Project), folder });
+      setProjects([...calendarStorage.getProjects()]);
+      setOpenProject(current => current?.id === item.id ? { ...current, folder } : current);
+    } else if (kind === 'area') {
+      calendarStorage.upsertArea({ ...(item as Area), folder });
+      setAreas([...calendarStorage.getAreas()]);
+    } else {
+      calendarStorage.upsertResource({ ...(item as Resource), folder, notePath: undefined });
+      setResources([...calendarStorage.getResources()]);
+    }
+  };
+
+  const handleNewParaNote = async (
+    kind: ParaFolderKind,
+    item: ParaFolderItem,
+    noteName: string,
+    targetFolder?: string
+  ) => {
     const settings = calendarStorage.getSettings();
-    setStatusMsg(`Creating notebook for ${project.name}...`);
-
-    const res = await meetingNoteService.createProjectNote(
-      project.name,
-      project.folder || settings.notesDirectory || '/storage/emulated/0/Note',
-      project.template || settings.meetingTemplate || ''
+    const folder = targetFolder || paraFolder(kind, item);
+    const safeNoteName = noteName
+      .replace(/[/\\?%*:|"<>]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim() || 'Note';
+    const proposedPath = `${folder}/${safeNoteName}.note`;
+    try {
+      if (await FileUtils.exists(proposedPath)) {
+        setStatusMsg(`${safeNoteName}.note already exists in ${item.name}. Choose another name.`);
+        return;
+      }
+    } catch (e) {
+      // Let createNote report the authoritative device result.
+    }
+    const result = await meetingNoteService.createProjectNote(
+      safeNoteName,
+      folder,
+      item.template || settings.meetingTemplate || ''
     );
-
-    if (!res.success || !res.notePath) {
-      setStatusMsg(`Could not create the notebook: ${res.error || 'unknown error'}`);
+    if (!result.success || !result.notePath) {
+      setStatusMsg(`Could not create the note: ${result.error || 'unknown error'}`);
       return;
     }
-
-    calendarStorage.upsertProject({ ...project, notePath: res.notePath });
-    setProjects([...calendarStorage.getProjects()]);
-
-    const opened = await openNoteInEditor(res.notePath);
-    setStatusMsg(opened.success ? `Opened ${project.name}.note` : opened.message);
+    persistParaFolder(kind, item, folder);
+    await prepareForNativeFileOpen();
+    const opened = await openNoteInEditor(result.notePath);
+    setStatusMsg(opened.success ? `Opened ${safeNoteName}.note` : opened.message);
     if (opened.success) closePanel();
+  };
+
+  const handleChooseParaFolder = async (
+    kind: ParaFolderKind,
+    item: ParaFolderItem,
+    folder: string
+  ) => {
+    try {
+      if (folder === '/storage/emulated/0') {
+        setStatusMsg('Choose a folder inside device storage, not the storage root itself.');
+        return;
+      }
+      await meetingNoteService.ensureDirectory(folder);
+      persistParaFolder(kind, item, folder);
+      setStatusMsg(`${item.name} now uses ${folder}.`);
+    } catch (e: any) {
+      setStatusMsg(`Folder picker error: ${e?.message || 'Picker closed'}`);
+    }
+  };
+
+  const handleListParaEntries = async (
+    kind: ParaFolderKind,
+    item: ParaFolderItem,
+    folder: string
+  ) => {
+    // Creating the assigned default makes a brand-new PARA item immediately
+    // usable. Navigated children already exist, so this is harmless for them.
+    await meetingNoteService.ensureDirectory(folder);
+    return listParaFolderEntries(folder);
+  };
+
+  const handleBrowseParaFiles = async (kind: ParaFolderKind, item: ParaFolderItem) => {
+    try {
+      if (!RattaFileSelector?.selectFile) {
+        setStatusMsg('Native file picker unavailable on this device.');
+        return;
+      }
+      const folder = paraFolder(kind, item);
+      await meetingNoteService.ensureDirectory(folder);
+      const result: any = await RattaFileSelector.selectFile({
+        selectType: 0,
+        maxNum: 1,
+        title: `Open a file from ${item.name}`,
+        rightButtonText: 'Open File',
+        needSelectFolder: folder,
+      });
+      const pickedPath = firstPickedFilePath(result);
+      if (!pickedPath) {
+        setStatusMsg('No note selected.');
+        return;
+      }
+      await prepareForNativeFileOpen();
+      const opened = await openResourceFile(pickedPath);
+      setStatusMsg(opened.message);
+      if (opened.success) closePanel();
+    } catch (e: any) {
+      setStatusMsg(`Could not browse files: ${e?.message || 'Picker closed'}`);
+    }
+  };
+
+  const handleOpenResourceFile = async (path: string) => {
+    await prepareForNativeFileOpen();
+    const result = await openResourceFile(path);
+    setStatusMsg(result.message);
+    if (result.success) closePanel();
   };
 
   const handleCreateEventType = (name: string): string => {
@@ -2063,6 +2784,7 @@ export function AgendaScreen(): React.JSX.Element {
     uid?: string;
     title: string;
     dueDate?: Date;
+    allDay?: boolean;
     notes?: string;
     status?: TaskStatus;
     priority?: TaskPriority;
@@ -2076,12 +2798,15 @@ export function AgendaScreen(): React.JSX.Element {
       title: input.title,
       // Undefined stays undefined — that is what puts it in No Date.
       dueDate: input.dueDate,
+      allDay: input.allDay,
       completed: existing?.completed ?? false,
       completedAt: existing?.completedAt,
       parentId: existing?.parentId,
       createdAt: existing?.createdAt ?? new Date(),
       notes: input.notes,
       priority: input.priority && input.priority > 1 ? input.priority : undefined,
+      caldavUrl: existing?.caldavUrl,
+      etag: existing?.etag,
     };
 
     // withStatus rather than assigning the field: completed and completedAt
@@ -2098,7 +2823,10 @@ export function AgendaScreen(): React.JSX.Element {
     setMembershipRevision(n => n + 1);
     setTasks([...calendarStorage.getTasks()]);
     setStatusMsg(`${existing ? 'Updated' : 'Added'} task "${task.title}".`);
-    void pushTaskAsEvent(task);
+    void pushTaskToCaldav(withState).then(error => {
+      if (error) setStatusMsg(`${existing ? 'Updated' : 'Added'} task locally. CalDAV: ${error}`);
+    });
+    void pushTaskAsEvent(withState);
 
     if (lassoDraftParsed !== null) {
       setLassoDraftParsed(null);
@@ -2121,6 +2849,27 @@ export function AgendaScreen(): React.JSX.Element {
     } catch (e) {}
   };
 
+  /**
+   * Removes any source-note selection/recognizer state before changing files.
+   *
+   * The note app can create a transient lasso state even when the user did not
+   * deliberately draw a lasso. Launching another note while that source editor
+   * is still active lets the host carry those strokes into the destination.
+   * Clear it while Compass still owns the foreground, let the note host settle,
+   * then launch the destination. The caller closes Compass only after Android
+   * has accepted that launch, so the previous note cannot flash in front.
+   */
+  const prepareForNativeFileOpen = async () => {
+    try {
+      await PluginCommAPI.cancelRecognize();
+    } catch (e) {}
+    try {
+      // SDK: 2 = completely remove the lasso box without deleting its ink.
+      await PluginCommAPI.setLassoBoxState(2);
+    } catch (e) {}
+    await new Promise<void>(resolve => setTimeout(resolve, 180));
+  };
+
   const handleOpenExistingNote = async (notePath: string) => {
     setShowDateActionSheet(false);
     // Catches anything unlinked and then abandoned: the user is navigating
@@ -2129,6 +2878,7 @@ export function AgendaScreen(): React.JSX.Element {
     if (removed > 0) {
       await new Promise<void>(resolve => setTimeout(() => resolve(), DELETE_BEFORE_OPEN_DELAY_MS));
     }
+    await prepareForNativeFileOpen();
     const res = await openNoteInEditor(notePath);
     setStatusMsg(res.message);
     if (res.success) closePanel();
@@ -2136,17 +2886,20 @@ export function AgendaScreen(): React.JSX.Element {
 
   const handleFetchFeedUrl = async () => {
     if (!newFeedUrl.trim()) return;
-    setStatusMsg(`Fetching feed from ${newFeedUrl}...`);
+    const feedUrl = normaliseFeedUrl(newFeedUrl);
+    if (!feedUrl) {
+      setStatusMsg('Calendar subscriptions must use HTTPS (webcal:// is accepted and upgraded).');
+      return;
+    }
+    setStatusMsg('Fetching calendar feed securely...');
     try {
-      const res = await fetch(newFeedUrl.trim());
-      const text = await res.text();
-      const newEvts = parseIcsContent(text, 'Subscribed Calendar');
+      const newEvts = await fetchCalendarFeed(feedUrl, 'Subscribed Calendar');
       setAllParsedEvents(prev => [...prev, ...newEvts]);
       jumpToNextUpcomingEventFromToday(newEvts);
       calendarStorage.addFeed({
         id: `url-${Date.now()}`,
         name: 'iCal Feed',
-        url: newFeedUrl.trim(),
+        url: feedUrl,
         enabled: true,
       });
       setNewFeedUrl('');
@@ -2187,7 +2940,7 @@ export function AgendaScreen(): React.JSX.Element {
       {/* Top Header Bar */}
       <View style={styles.headerBar}>
         <View style={styles.titleWithSwitcher}>
-          <Text allowFontScaling={false} style={styles.appTitle}>Calendar</Text>
+          <Text allowFontScaling={false} style={styles.appTitle}>Compass</Text>
           <View style={styles.viewSwitcherBar}>
             <TouchableOpacity
               style={[styles.switcherBtn, viewMode === 'month' && styles.switcherBtnActive]}
@@ -2217,14 +2970,14 @@ export function AgendaScreen(): React.JSX.Element {
               <Text allowFontScaling={false}
                 style={[styles.switcherBtnText, viewMode === 'para' && styles.switcherBtnTextActive]}
               >
-                📁 Tasks/PARA
+                📁 PARA
               </Text>
             </TouchableOpacity>
           </View>
         </View>
 
         <View style={styles.headerBtnGroup}>
-          {(caldavEnabled || hasSubscribedFeeds) && (
+          {(caldavEnabled || taskCaldavEnabled || hasSubscribedFeeds) && (
             <TouchableOpacity style={styles.syncNowBtn} onPress={handleSyncNow}>
               <Text allowFontScaling={false} style={styles.syncNowBtnText}>🔄 Sync Now</Text>
             </TouchableOpacity>
@@ -2388,11 +3141,16 @@ export function AgendaScreen(): React.JSX.Element {
           <TouchableOpacity
             style={styles.modalOverlay}
             activeOpacity={1}
-            onPress={() => setTemplatePickerKind(null)}
+            onPress={() => {
+              setTemplatePickerKind(null);
+              setTypeTemplatePicker(null);
+            }}
           >
             <View style={styles.actionSheetContentCompact}>
               <Text allowFontScaling={false} style={styles.actionSheetTitle}>
-                {templatePickerKind === 'daily'
+                {typeTemplatePicker
+                  ? typeTemplatePicker.name
+                  : templatePickerKind === 'daily'
                   ? 'Daily'
                   : templatePickerKind === 'class'
                   ? 'Class'
@@ -2408,8 +3166,9 @@ export function AgendaScreen(): React.JSX.Element {
                 )}
 
                 {systemTemplates.map(tpl => {
-                  const active =
-                    templatePickerKind !== null && noteTemplateFor(templatePickerKind) === tpl.name;
+                  const active = typeTemplatePicker
+                    ? typeTemplatePicker.template === tpl.name
+                    : templatePickerKind !== null && noteTemplateFor(templatePickerKind) === tpl.name;
                   return (
                     <TouchableOpacity
                       key={tpl.name}
@@ -2436,12 +3195,21 @@ export function AgendaScreen(): React.JSX.Element {
 
               <TouchableOpacity
                 style={styles.pickerOpenBtn}
-                onPress={() => templatePickerKind && handleChooseCustomTemplate(templatePickerKind)}
+                onPress={() => {
+                  if (typeTemplatePicker) {
+                    void handleChooseCustomTypeTemplate(typeTemplatePicker);
+                  } else if (templatePickerKind) {
+                    void handleChooseCustomTemplate(templatePickerKind);
+                  }
+                }}
               >
                 <Text allowFontScaling={false} style={styles.pickerOpenBtnText}>🎨 Custom PNG...</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => setTemplatePickerKind(null)}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => {
+                setTemplatePickerKind(null);
+                setTypeTemplatePicker(null);
+              }}>
                 <Text allowFontScaling={false} style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
             </View>
@@ -2482,8 +3250,31 @@ export function AgendaScreen(): React.JSX.Element {
 
           {settingsTab === 'sync' && (
             <>
-          <Text allowFontScaling={false} style={styles.sectionTitle}>Universal CalDAV Two-Way Sync</Text>
-          <Text allowFontScaling={false} style={styles.bodyText}>Select your Calendar Provider:</Text>
+          {(syncPhase !== 'idle' || lastSuccessfulSync) && (
+            <View style={styles.hintBox}>
+              <Text allowFontScaling={false} style={styles.checkSettingLabel}>
+                Sync status: {syncPhase === 'syncing' ? 'Syncing…' :
+                  syncPhase === 'success' ? 'Up to date' :
+                  syncPhase === 'partial' ? 'Completed with warnings' :
+                  syncPhase === 'error' ? 'Failed' : 'Not run this session'}
+              </Text>
+              {lastSuccessfulSync !== '' && (
+                <Text allowFontScaling={false} style={styles.checkSettingHint}>
+                  Last fully successful: {new Date(lastSuccessfulSync).toLocaleString()}
+                </Text>
+              )}
+              <Text allowFontScaling={false} style={styles.checkSettingHint}>
+                Pending uploads: {pendingSyncCount}
+              </Text>
+              {syncDetails.map((detail, index) => (
+                <Text key={`${detail}-${index}`} allowFontScaling={false} style={styles.checkSettingHint}>
+                  {detail}
+                </Text>
+              ))}
+            </View>
+          )}
+          <Text allowFontScaling={false} style={styles.sectionTitle}>Calendar CalDAV Two-Way Sync</Text>
+          <Text allowFontScaling={false} style={styles.bodyText}>Select your event calendar provider:</Text>
 
           {/* Provider Preset Selector Row */}
           <View style={styles.providerGrid}>
@@ -2570,19 +3361,93 @@ export function AgendaScreen(): React.JSX.Element {
               <Text allowFontScaling={false} style={styles.caldavTargetText}>
                 Events → {caldavUrl ? decodeURIComponent(caldavUrl.replace(/\/$/, '').split('/').pop() || '?') : 'not set'}
               </Text>
-              <Text allowFontScaling={false} style={styles.caldavTargetText}>
-                Reminders →{' '}
-                {caldavTaskListUrl
-                  ? decodeURIComponent(caldavTaskListUrl.replace(/\/$/, '').split('/').pop() || '?')
-                  : 'NOT SET — run Connect & Test'}
+              {caldavProvider === 'icloud' && (
+                <Text allowFontScaling={false} style={styles.caldavTargetText}>
+                  Tasks stay local unless a separate task account is connected below.
+                </Text>
+              )}
+            </View>
+          )}
+
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Optional Task CalDAV Account</Text>
+          <Text allowFontScaling={false} style={styles.bodyText}>
+            Modern iCloud Reminders does not expose its lists through iCloud CalDAV. To show
+            Supernote tasks in Apple's Reminders app, use a separate CalDAV service that supports
+            VTODO, then add that same account to your Apple device. This does not move existing
+            iCloud reminders.
+          </Text>
+
+          <View style={styles.inputRow}>
+            <TextInput
+              style={styles.textInput}
+              value={taskCaldavServerUrl}
+              onChangeText={setTaskCaldavServerUrl}
+              placeholder="Task CalDAV server URL"
+              placeholderTextColor="#707070"
+              autoCapitalize="none"
+            />
+          </View>
+          <View style={styles.inputRow}>
+            <TextInput
+              style={styles.textInput}
+              value={taskCaldavUsername}
+              onChangeText={setTaskCaldavUsername}
+              placeholder="Task account username"
+              placeholderTextColor="#707070"
+              autoCapitalize="none"
+            />
+          </View>
+          <View style={styles.inputRow}>
+            <TextInput
+              style={styles.textInput}
+              value={taskCaldavPassword}
+              onChangeText={setTaskCaldavPassword}
+              placeholder="Task account password"
+              placeholderTextColor="#707070"
+              secureTextEntry
+              autoCapitalize="none"
+            />
+          </View>
+          <TouchableOpacity style={styles.connectCaldavBtn} onPress={handleTestTaskCaldavConnection}>
+            <Text allowFontScaling={false} style={styles.connectCaldavBtnText}>
+              Connect &amp; Find VTODO List
+            </Text>
+          </TouchableOpacity>
+
+          {taskCaldavEnabled && (
+            <View style={styles.caldavActiveBadge}>
+              <Text allowFontScaling={false} style={styles.caldavActiveBadgeText}>
+                ✓ External task synchronization active
               </Text>
+              <Text allowFontScaling={false} style={styles.caldavTargetText}>
+                Tasks → {decodeURIComponent(taskCaldavCollectionUrl.replace(/\/$/, '').split('/').pop() || '?')}
+              </Text>
+              <TouchableOpacity style={styles.cancelBtn} onPress={handleDisconnectTaskCaldav}>
+                <Text allowFontScaling={false} style={styles.cancelBtnText}>Disconnect Task Account</Text>
+              </TouchableOpacity>
             </View>
           )}
 
           <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Add a Calendar</Text>
           <TouchableOpacity style={styles.pickerOpenBtn} onPress={handleImportFeedsFromTxt}>
-            <Text allowFontScaling={false} style={styles.pickerOpenBtnText}>📂 Import from File (.txt or .ics)...</Text>
+            <Text allowFontScaling={false} style={styles.pickerOpenBtnText}>📂 Import Setup or Calendar File...</Text>
           </TouchableOpacity>
+          <Text allowFontScaling={false} style={styles.checkSettingHint}>
+            Setup file: one HTTPS/webcal address per line, or Name|Address. Imported .ics files are copied into private plugin storage.
+          </Text>
+          {(calendarStorage.getSettings().hiddenFeedEventIds || []).length > 0 && (
+            <TouchableOpacity
+              style={styles.cancelBtn}
+              onPress={() => {
+                const count = calendarStorage.getSettings().hiddenFeedEventIds?.length || 0;
+                calendarStorage.updateSettings({ hiddenFeedEventIds: [] });
+                setAllParsedEvents(previous => [...previous]);
+                setStatusMsg(`Restored ${count} hidden subscribed event(s).`);
+              }}
+            >
+              <Text allowFontScaling={false} style={styles.cancelBtnText}>Show Hidden Feed Events</Text>
+            </TouchableOpacity>
+          )}
           <View style={styles.inputRow}>
             <TextInput
               style={styles.textInput}
@@ -2963,9 +3828,10 @@ export function AgendaScreen(): React.JSX.Element {
             <View style={styles.checkSettingBody}>
               <Text allowFontScaling={false} style={styles.checkSettingLabel}>Push tasks to my calendar as events</Text>
               <Text allowFontScaling={false} style={styles.checkSettingHint}>
-                Apple Reminders can't be reached by any third-party app, so an all-day event is the
-                only way to see tasks on your phone. Completed tasks get a ✓ in the title. Undated
-                tasks are never pushed — there's no day to put them on.
+                This is the simplest way to make dated Supernote tasks visible on Apple devices.
+                It creates calendar events with an alert at the task's due time, not Apple
+                Reminders. Date-only tasks alert at 9:00 AM; completed tasks get a ✓ in the title;
+                undated tasks cannot be mirrored onto a day.
               </Text>
             </View>
           </TouchableOpacity>
@@ -3045,13 +3911,13 @@ export function AgendaScreen(): React.JSX.Element {
                 <Text allowFontScaling={false} style={styles.actionSheetTitle}>Delete Recurring Event</Text>
                 <Text allowFontScaling={false} style={styles.bodyTextCenter}>"{pendingDeleteEvent?.summary}"</Text>
 
-                <TouchableOpacity style={styles.deleteOptionBtn} onPress={handleDeleteSingleOccurrence}>
+                <TouchableOpacity style={styles.deleteOptionBtn} onPress={() => void handleDeleteSingleOccurrence()}>
                   <Text allowFontScaling={false} style={styles.deleteOptionBtnText}>
                     🗑️ Delete This Occurrence Only ({selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})
                   </Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.deleteOptionBtnDanger} onPress={handleDeleteEntireSeries}>
+                <TouchableOpacity style={styles.deleteOptionBtnDanger} onPress={() => void handleDeleteEntireSeries()}>
                   <Text allowFontScaling={false} style={styles.deleteOptionBtnTextDanger}>🗑️ Delete Entire Recurring Series</Text>
                 </TouchableOpacity>
 
@@ -3133,6 +3999,25 @@ export function AgendaScreen(): React.JSX.Element {
 
 
           {/* Item Creation Modal (Events & Tasks) */}
+          <EventDetailsModal
+            event={detailEvent}
+            readOnly={detailEvent ? !eventIsEditable(detailEvent) : true}
+            onClose={() => setDetailEvent(null)}
+            onEdit={handleBeginEditEvent}
+            onDelete={event => {
+              setDetailEvent(null);
+              void handleDeleteItem(event);
+            }}
+            onCopy={event => void handleCopyFeedEvent(event)}
+            onHide={handleHideFeedEvent}
+            notePath={detailEvent ? eventNotePaths[detailEvent.uid] : undefined}
+            onNoteAction={(event, existingPath) => {
+              setDetailEvent(null);
+              if (existingPath) void handleOpenExistingNote(existingPath);
+              else handleRequestNoteCreation(event);
+            }}
+          />
+
           <ItemCreationModal
             visible={showItemCreationModal}
             type={creationType}
@@ -3172,7 +4057,7 @@ export function AgendaScreen(): React.JSX.Element {
             onCreateProject={handleCreateProject}
             onDeleteTask={uid => {
               const task = calendarStorage.getTasks().find(t => t.uid === uid);
-              if (task) handleDeleteTask(task);
+              if (task) void handleDeleteTask(task);
             }}
           />
 
@@ -3274,15 +4159,18 @@ export function AgendaScreen(): React.JSX.Element {
                 handleSetProjectStatus(openProject.id, next);
                 setOpenProject({ ...openProject, status: next });
               }}
+              onArchive={() => handleArchiveProject(openProject)}
+              onConvertToArea={() => handleConvertProjectToArea(openProject)}
               onDelete={() => {
                 handleDeleteProject(openProject.id);
                 // Nothing left to show, so fall back to the list.
                 setOpenProject(null);
               }}
-              onOpenNotebook={() => {
-                const current = calendarStorage.getProjects().find(p => p.id === openProject.id);
-                if (current) void handleProjectNote(current);
-              }}
+              folder={paraFolder('project', openProject)}
+              onListEntries={folder => handleListParaEntries('project', openProject, folder)}
+              onNewNote={(name, folder) => handleNewParaNote('project', openProject, name, folder)}
+              onChooseFolder={folder => handleChooseParaFolder('project', openProject, folder)}
+              onOpenFile={path => void handleOpenResourceFile(path)}
               onOpenNote={path => void handleOpenExistingNote(path)}
               onAddTask={() => {
                 setEditingTask(null);
@@ -3300,25 +4188,37 @@ export function AgendaScreen(): React.JSX.Element {
 
           {viewMode === 'para' && !openProject && (
             <ParaView
+              initialAreaId={paraFocusAreaId}
+              onInitialAreaShown={() => setParaFocusAreaId(null)}
               areas={areas}
               projects={projects}
+              resources={resources}
               tasks={tasks}
               projectOf={projectOfTask}
-              selectedAreaId={paraAreaId}
-              onSelectArea={id => {
-                setParaAreaId(id);
-                setParaShowArchive(false);
-              }}
-              showArchive={paraShowArchive}
-              onToggleArchive={() => setParaShowArchive(v => !v)}
-              onNewProject={name => handleCreateProject(name, paraAreaId ?? undefined)}
+              onNewProject={(name, areaId) => handleCreateProject(name, areaId)}
               onNewArea={name => handleCreateArea(name)}
+              onNewResource={name => handleCreateResource(name)}
               onRenameArea={handleRenameArea}
               onDeleteArea={handleDeleteArea}
+              onArchiveArea={handleArchiveArea}
+              onRestoreArea={handleRestoreArea}
               areaTaskCount={countTasksInArea}
               onOpenProject={setOpenProject}
-              onProjectNote={handleProjectNote}
               onSetProjectDue={project => setProjectDueTarget(project)}
+              onArchiveProject={handleArchiveProject}
+              onRestoreProject={handleRestoreProject}
+              onBrowseFiles={(kind, item) => void handleBrowseParaFiles(kind, item)}
+              folderFor={paraFolder}
+              onListEntries={handleListParaEntries}
+              onOpenFile={path => void handleOpenResourceFile(path)}
+              onNewNote={handleNewParaNote}
+              onChooseFolder={handleChooseParaFolder}
+              onUpdateResource={resource => {
+                calendarStorage.upsertResource(resource);
+                setResources([...calendarStorage.getResources()]);
+              }}
+              onArchiveResource={handleArchiveResource}
+              onRestoreResource={handleRestoreResource}
               onToggleTask={handleToggleTask}
               onEditTask={handleEditTask}
               onAddTaskToProject={project => {
@@ -3395,7 +4295,7 @@ export function AgendaScreen(): React.JSX.Element {
                     startHour={scheduleStartHour}
                     endHour={scheduleEndHour}
                     notePaths={eventNotePaths}
-                    onEditEvent={handleEditItem}
+                    onEditEvent={handleOpenEventDetails}
                     onNoteAction={(evt, existingPath) => {
                       if (existingPath) handleOpenExistingNote(existingPath);
                       else handleRequestNoteCreation(evt);

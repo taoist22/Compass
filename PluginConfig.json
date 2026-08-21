@@ -1,10 +1,10 @@
 {
-  "name": "Calendar",
-  "desc": "Calendar agenda view and meeting note snapshot creator.",
+  "name": "Compass",
+  "desc": "Plan time, organize work, and connect it with notes.",
   "author": "taoist22",
   "iconPath": "assets/calendar.png",
   "versionName": "0.1.0",
-  "versionCode": "7",
+  "versionCode": "21",
   "pluginID": "7jne25p-gnhigcrr",
   "pluginKey": "Calendar",
   "jsMainPath": "index"

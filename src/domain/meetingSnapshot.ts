@@ -56,11 +56,13 @@ export function createMeetingSnapshot(
     year: 'numeric',
     month: 'short',
     day: 'numeric',
+    ...(event.timeZone ? { timeZone: event.timeZone } : {}),
   };
   const timeOptions: Intl.DateTimeFormatOptions = {
     hour: '2-digit',
     minute: '2-digit',
     hour12: true,
+    ...(event.timeZone ? { timeZone: event.timeZone, timeZoneName: 'short' } : {}),
   };
 
   const dateStr = event.start.toLocaleDateString('en-US', dateOptions);

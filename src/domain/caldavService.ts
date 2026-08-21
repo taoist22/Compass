@@ -17,7 +17,7 @@ export interface CaldavCredentials {
   appleId: string; // Used as username / email across providers
   appPassword?: string;
   calendarUrl?: string;
-  /** VTODO-capable collection used for tasks (Apple Reminders). */
+  /** VTODO-capable collection used by an independently configured task account. */
   taskListUrl?: string;
   customUrl?: string;
 }
@@ -126,6 +126,11 @@ function readBlockHref(block: string): string {
   return m ? m[1].trim() : '';
 }
 
+function readBlockEtag(block: string): string {
+  const m = block.match(/<(?:[^:>\s]+:)?getetag[^>]*>([^<]*)<\//i);
+  return m ? m[1].trim() : '';
+}
+
 function readBlockDisplayName(block: string): string {
   const m = block.match(/<(?:[^:>\s]+:)?displayname[^>]*>([^<]*)<\//i);
   return m ? m[1].trim() : '';
@@ -218,6 +223,17 @@ export function buildCalendarQuery(start: Date, end: Date): string {
 </C:calendar-query>`;
 }
 
+/** Requests all VTODO resources, including undated tasks that a time range would omit. */
+export function buildTodoQuery(): string {
+  return `<?xml version="1.0" encoding="utf-8" ?>
+<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:prop><D:getetag /><C:calendar-data /></D:prop>
+  <C:filter>
+    <C:comp-filter name="VCALENDAR"><C:comp-filter name="VTODO" /></C:comp-filter>
+  </C:filter>
+</C:calendar-query>`;
+}
+
 export interface CalendarCollection {
   url: string;
   displayName: string;
@@ -244,15 +260,15 @@ export function chooseDefaultCollection(
 }
 
 /**
- * Chooses where tasks go. Apple exposes its Reminders list as a VTODO-only
- * collection alongside the calendars, so a task list is picked independently
- * of the event calendar rather than derived from it.
+ * Chooses a VTODO collection independently of the event calendar. Some servers
+ * expose task-only collections; iCloud's legacy result is intentionally ignored
+ * by the higher-level iCloud connection flow.
  */
 export function chooseDefaultTaskList(
   collections: CalendarCollection[]
 ): CalendarCollection | undefined {
-  // Prefer a VTODO-only collection: on iCloud that is the Reminders list,
-  // whereas a calendar advertising both is still an events calendar.
+  // Prefer a VTODO-only collection; a dual-capable collection may primarily be
+  // intended for events.
   const todoOnly = collections.filter(c => c.supportsVTodo && !c.supportsVEvent);
   if (todoOnly.length > 0) {
     const named = todoOnly.find(c => c.displayName.trim().toLowerCase().includes('reminder'));
@@ -378,12 +394,17 @@ export class CaldavService {
 
       log(`Step 5: Enumerating calendar collections (Depth: 1 PROPFIND)...`);
       const collections = await this.listCalendarCollections(calendarHomeUrl, authHeader, log);
-      log(`Step 5: Found ${collections.length} VEVENT-capable collection(s).`);
+      const eventCollections = collections.filter(collection => collection.supportsVEvent);
+      const todoCollections = collections.filter(collection => collection.supportsVTodo);
+      log(
+        `Step 5: Found ${eventCollections.length} VEVENT collection(s) and ` +
+        `${todoCollections.length} VTODO collection(s).`
+      );
       collections.forEach((c, i) => {
         log(`   [${i}] ${c.displayName || '(unnamed)'} -> ${c.url}`);
       });
 
-      if (collections.length === 0) {
+      if (eventCollections.length === 0) {
         log(`❌ Step 5: No writable calendar found. The home set is a container, not a calendar.`);
         return logs;
       }
@@ -417,8 +438,20 @@ export class CaldavService {
         log(`✅ Event push path working.`);
       }
 
-      // Step 8: the same probe against the Reminders list. Events succeeding
-      // says nothing about VTODO — different collection, different component.
+      // Modern iCloud Reminders uses a different store. iCloud still advertises
+      // a legacy VTODO collection, but accepting a resource there does not make
+      // it appear in the lists shown by current Apple devices. Do not present a
+      // successful transport probe as Reminders integration.
+      if ((credentials.provider || 'icloud') === 'icloud') {
+        log(
+          `Step 8: Legacy iCloud VTODO collection detected but intentionally not tested. ` +
+          `It is not the modern Apple Reminders database.`
+        );
+        log(`✅ DIAGNOSTIC COMPLETE — event CalDAV path verified.`);
+        return logs;
+      }
+
+      // For a separate/non-iCloud task account, test the VTODO collection.
       const taskList = chooseDefaultTaskList(collections);
       if (!taskList) {
         log(`Step 8: No VTODO collection found — tasks have nowhere to go.`);
@@ -470,7 +503,10 @@ export class CaldavService {
 
           log(`Step 10: Cleaning VTODO probe...`);
           await this.deleteIcloudEvent('diag-test-todo-probe', { ...credentials, taskListUrl: taskList.url }, true);
-          log(`✅ DIAGNOSTIC COMPLETE — check the "${taskList.displayName}" list on your phone.`);
+          log(
+            `✅ VTODO transport verified for "${taskList.displayName}". ` +
+            `Device visibility requires adding this same CalDAV account to the device.`
+          );
         } else {
           log(`❌ Step 8 FAILED: the Reminders list rejected the VTODO.`);
         }
@@ -557,7 +593,10 @@ export class CaldavService {
   /**
    * Discovers CalDAV Calendar Home Set & Primary Calendar Collection URL with React Native fallbacks
    */
-  async discoverIcloudCalendarUrl(credentials: CaldavCredentials): Promise<CaldavTestResult> {
+  async discoverIcloudCalendarUrl(
+    credentials: CaldavCredentials,
+    target: 'events' | 'tasks' = 'events'
+  ): Promise<CaldavTestResult> {
     if (!credentials.appleId || !credentials.appPassword) {
       return {
         success: false,
@@ -658,31 +697,48 @@ export class CaldavService {
       if (collections.length === 0) {
         return {
           success: false,
-          message: `Found the ${providerName} calendar home but no writable VEVENT calendar inside it.`,
+          message: target === 'tasks'
+            ? `Found the ${providerName} calendar home but no VTODO task list inside it.`
+            : `Found the ${providerName} calendar home but no writable VEVENT calendar inside it.`,
         };
       }
 
       const chosen = chooseDefaultCollection(collections);
       const taskList = chooseDefaultTaskList(collections);
 
-      if (!chosen) {
+      if (target === 'events' && !chosen) {
         return {
           success: false,
           message: `Found the ${providerName} calendar home but no writable VEVENT calendar inside it.`,
         };
       }
+      if (target === 'tasks' && !taskList) {
+        return {
+          success: false,
+          message: `Found the ${providerName} calendar home but no VTODO task list inside it.`,
+        };
+      }
 
-      const taskNote = taskList
-        ? ` Tasks → "${taskList.displayName || 'Reminders'}".`
-        : ' No Reminders list found — tasks cannot sync.';
+      const isIcloud = (credentials.provider || 'icloud') === 'icloud';
+      const taskNote = isIcloud
+        ? taskList
+          ? ' A legacy VTODO collection was detected but is not used for modern Apple Reminders.'
+          : ''
+        : taskList
+          ? ` VTODO list available: "${taskList.displayName || 'Tasks'}".`
+          : ' No VTODO task list found.';
 
       return {
         success: true,
         message:
-          `Connected to ${providerName} CalDAV — writing to "${chosen.displayName || 'calendar'}"` +
+          `Connected to ${providerName} CalDAV` +
+          (chosen ? ` — writing events to "${chosen.displayName || 'calendar'}"` : '') +
           ` (${collections.length} found).${taskNote}`,
-        calendarUrl: chosen.url,
-        taskListUrl: taskList?.url,
+        calendarUrl: chosen?.url,
+        // iCloud's advertised legacy collection is deliberately not returned;
+        // task sync must use an independent account that users also add to the
+        // Reminders app on their Apple devices.
+        taskListUrl: isIcloud ? undefined : taskList?.url,
       };
     } catch (err: any) {
       return {
@@ -748,7 +804,14 @@ export class CaldavService {
         if (!ics) continue;
         // The payload is ordinary iCalendar, the same shape a feed delivers,
         // so the existing parser handles it unchanged.
-        events.push(...parseIcsContent(ics, calendarName));
+        const resourceUrl = resolveUrl(collectionUrl, readBlockHref(block));
+        const etag = readBlockEtag(block);
+        events.push(...parseIcsContent(ics, calendarName).map(event => ({
+          ...event,
+          sourceKind: 'caldav' as const,
+          caldavUrl: resourceUrl,
+          etag: etag || undefined,
+        })));
       }
 
       return { events };
@@ -757,14 +820,61 @@ export class CaldavService {
     }
   }
 
+  async fetchTasks(
+    collectionUrl: string,
+    credentials: CaldavCredentials,
+    onTrace?: (msg: string) => void
+  ): Promise<{ tasks: CalendarEvent[]; error?: string }> {
+    if (!credentials.appleId || !credentials.appPassword) {
+      return { tasks: [], error: 'CalDAV credentials missing.' };
+    }
+    try {
+      const res = await fetch(collectionUrl, {
+        method: 'REPORT',
+        headers: {
+          Authorization: makeBasicAuthHeader(credentials.appleId, credentials.appPassword),
+          Depth: '1',
+          'Content-Type': 'text/xml; charset=utf-8',
+        },
+        body: buildTodoQuery(),
+      });
+      onTrace?.(`   VTODO REPORT ${collectionUrl} -> HTTP ${res.status}`);
+      const xml = await res.text();
+      if (res.status === 401 || res.status === 403) {
+        return { tasks: [], error: `Authentication failed (HTTP ${res.status}).` };
+      }
+      if (res.status !== 207 && res.status !== 200) {
+        return { tasks: [], error: `HTTP ${res.status}: ${xml.slice(0, 80) || 'no body'}` };
+      }
+      const tasks = splitMultistatusResponses(xml).flatMap(block => {
+        const ics = extractCalendarData(block);
+        const resourceUrl = resolveUrl(collectionUrl, readBlockHref(block));
+        const etag = readBlockEtag(block);
+        return ics ? parseIcsContent(ics, 'CalDAV Tasks').filter(isTaskItem).map(task => ({
+          ...task,
+          caldavUrl: resourceUrl,
+          etag: etag || undefined,
+        })) : [];
+      });
+      return { tasks };
+    } catch (e: any) {
+      return { tasks: [], error: `VTODO REPORT failed: ${e?.message || 'network error'}` };
+    }
+  }
+
   /**
    * Pushes a new or updated item to CalDAV via HTTP PUT.
    *
-   * Tasks are sent as VTODO to the discovered task list (Apple Reminders);
+   * Tasks are sent as VTODO to the independently configured task list;
    * everything else is a VEVENT to the calendar collection. Routing by item
    * kind is what stops tasks appearing as calendar events on iPhone/iPad.
    */
-  async pushIcloudEvent(event: CalendarEvent, credentials: CaldavCredentials): Promise<{ success: boolean; message: string }> {
+  async pushIcloudEvent(event: CalendarEvent, credentials: CaldavCredentials): Promise<{
+    success: boolean;
+    message: string;
+    etag?: string;
+    caldavUrl?: string;
+  }> {
     if (!credentials.appleId || !credentials.appPassword) {
       return { success: false, message: 'CalDAV credentials missing.' };
     }
@@ -779,13 +889,13 @@ export class CaldavService {
       return {
         success: false,
         message: isTask
-          ? 'No Reminders list found on this account. Run Connect & Test again.'
+          ? 'No VTODO task list selected. Connect the separate task account first.'
           : 'No calendar selected. Run Connect & Test first.',
       };
     }
 
     const uid = event.uid.endsWith('.ics') ? event.uid.slice(0, -4) : event.uid;
-    const eventUrl = `${targetBaseUrl.endsWith('/') ? targetBaseUrl : targetBaseUrl + '/'}${uid}.ics`;
+    const eventUrl = event.caldavUrl || `${targetBaseUrl.endsWith('/') ? targetBaseUrl : targetBaseUrl + '/'}${uid}.ics`;
 
     const icsPayload = isTask ? generateOutboundIcsTodo(event) : generateOutboundIcsEvent(event);
 
@@ -795,12 +905,18 @@ export class CaldavService {
         headers: {
           Authorization: authHeader,
           'Content-Type': 'text/calendar; charset=utf-8',
+          ...(event.etag ? { 'If-Match': event.etag } : {}),
         },
         body: icsPayload,
       });
 
       if (res.status === 201 || res.status === 204 || res.status === 200) {
-        return { success: true, message: isTask ? 'Task synced to Reminders!' : 'Event synced to CalDAV!' };
+        return {
+          success: true,
+          message: isTask ? 'Task synced to the VTODO account!' : 'Event synced to CalDAV!',
+          etag: res.headers?.get?.('etag') || undefined,
+          caldavUrl: eventUrl,
+        };
       } else {
         let errBody = '';
         try { errBody = await res.text(); } catch(e) {}
@@ -817,7 +933,8 @@ export class CaldavService {
   async deleteIcloudEvent(
     eventUid: string,
     credentials: CaldavCredentials,
-    isTask = false
+    isTask = false,
+    resource?: { url?: string; etag?: string }
   ): Promise<{ success: boolean; message: string }> {
     if (!credentials.appleId || !credentials.appPassword) {
       return { success: false, message: 'CalDAV credentials missing.' };
@@ -830,18 +947,19 @@ export class CaldavService {
     if (!targetBaseUrl) {
       return {
         success: false,
-        message: isTask ? 'No Reminders list selected.' : 'No calendar selected. Run Connect & Test first.',
+        message: isTask ? 'No VTODO task list selected.' : 'No calendar selected. Run Connect & Test first.',
       };
     }
 
     const uid = eventUid.endsWith('.ics') ? eventUid.slice(0, -4) : eventUid;
-    const eventUrl = `${targetBaseUrl.endsWith('/') ? targetBaseUrl : targetBaseUrl + '/'}${uid}.ics`;
+    const eventUrl = resource?.url || `${targetBaseUrl.endsWith('/') ? targetBaseUrl : targetBaseUrl + '/'}${uid}.ics`;
 
     try {
       const res = await fetch(eventUrl, {
         method: 'DELETE',
         headers: {
           Authorization: authHeader,
+          ...(resource?.etag ? { 'If-Match': resource.etag } : {}),
         },
       });
 

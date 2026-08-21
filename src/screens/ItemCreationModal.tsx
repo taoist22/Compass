@@ -29,20 +29,23 @@ import {
 } from '../domain/taskModel';
 import { areaIsDerived } from '../domain/membership';
 import { DatePickerModal } from './DatePickerModal';
+import { TimePickerModal } from './TimePickerModal';
 import {
   TimeRange,
-  formatClock,
   formatDuration,
   formatTimeOfDay,
-  isPm,
   minutesFromDate,
-  moveEnd,
-  moveStart,
   normaliseRange,
-  parseTimeOfDay,
-  withMeridiem,
   withTimeOfDay,
 } from '../domain/timeOfDay';
+import {
+  RepeatChoice,
+  RepeatEndMode,
+  RepeatSettings,
+  WEEKDAY_OPTIONS,
+  repeatSettingsFromRrule,
+  rruleForRepeat,
+} from '../domain/recurrence';
 
 interface ItemCreationModalProps {
   visible: boolean;
@@ -84,6 +87,7 @@ interface ItemCreationModalProps {
     uid?: string;
     title: string;
     dueDate?: Date;
+    allDay?: boolean;
     notes?: string;
     status?: TaskStatus;
     priority?: TaskPriority;
@@ -146,51 +150,20 @@ export function ItemCreationModal({
   const [description, setDescription] = useState<string>('');
   const [isAllDay, setIsAllDay] = useState<boolean>(type === 'task');
   const [timeRange, setTimeRange] = useState<TimeRange>({ start: 9 * 60, end: 10 * 60 });
-  // What the user is typing, kept apart from the parsed value so a half-typed
-  // "9:" is not rewritten under them mid-entry.
-  const [startText, setStartText] = useState<string>(formatClock(9 * 60));
-  const [endText, setEndText] = useState<string>(formatClock(10 * 60));
-
-  const startInvalid = parseTimeOfDay(startText) === null;
-  const endInvalid = parseTimeOfDay(endText, timeRange.start) === null;
+  const [timePickerTarget, setTimePickerTarget] = useState<'start' | 'end' | null>(null);
 
   const applyRange = (range: TimeRange) => {
-    const fixed = normaliseRange(range);
-    setTimeRange(fixed);
-    setStartText(formatClock(fixed.start));
-    setEndText(formatClock(fixed.end));
+    setTimeRange(normaliseRange(range));
   };
 
-  /**
-   * Commits on blur, not on every keystroke: rewriting the field while it is
-   * being written fights the user, and this display repaints slowly.
-   */
-  const commitStart = () => {
-    const parsed = parseTimeOfDay(startText);
-    if (parsed === null) return;
-    // The toggle owns the meridiem unless the text spelled one out, so typing
-    // "9" keeps whichever half of the day is already selected.
-    const withHalf = /[ap]/i.test(startText) || parsed >= 12 * 60
-      ? parsed
-      : withMeridiem(parsed, isPm(timeRange.start));
-    // Moving the start carries the end, so a meeting keeps its length.
-    applyRange(moveStart(timeRange, withHalf - timeRange.start));
+  const selectStartTime = (start: number) => {
+    const duration = Math.max(15, timeRange.end - timeRange.start);
+    applyRange({ start, end: Math.min(23 * 60 + 59, start + duration) });
   };
 
-  const commitEnd = () => {
-    const parsed = parseTimeOfDay(endText);
-    if (parsed === null) return;
-    const withHalf = /[ap]/i.test(endText) || parsed >= 12 * 60
-      ? parsed
-      : withMeridiem(parsed, isPm(timeRange.end));
-    applyRange(moveEnd(timeRange, withHalf - timeRange.end));
+  const selectDuration = (duration: number) => {
+    applyRange({ start: timeRange.start, end: Math.min(23 * 60 + 59, timeRange.start + duration) });
   };
-
-  const toggleStartMeridiem = () =>
-    applyRange(moveStart(timeRange, withMeridiem(timeRange.start, !isPm(timeRange.start)) - timeRange.start));
-
-  const toggleEndMeridiem = () =>
-    applyRange(moveEnd(timeRange, withMeridiem(timeRange.end, !isPm(timeRange.end)) - timeRange.end));
 
   // The date is editable here rather than inherited from the calendar
   // selection — a lasso can happen on any page with no idea what day the grid
@@ -221,6 +194,16 @@ export function ItemCreationModal({
   const [newProjectName, setNewProjectName] = useState<string>('');
   const [addingProject, setAddingProject] = useState<boolean>(false);
   const [typeValue, setTypeValue] = useState<string | undefined>(undefined);
+  const [repeatSettings, setRepeatSettings] = useState<RepeatSettings>(() =>
+    repeatSettingsFromRrule(undefined, targetDate)
+  );
+  const [repeatRuleTouched, setRepeatRuleTouched] = useState<boolean>(false);
+  const [showRepeatUntilPicker, setShowRepeatUntilPicker] = useState<boolean>(false);
+
+  const updateRepeat = (change: Partial<RepeatSettings>) => {
+    setRepeatRuleTouched(true);
+    setRepeatSettings(current => ({ ...current, ...change }));
+  };
 
   // Reseed every time the modal opens: with the edited item's values, or with
   // freshly captured lasso text, so a second open never shows stale state.
@@ -242,8 +225,6 @@ export function ItemCreationModal({
         end: minutesFromDate(new Date(editingEvent.end)),
       });
       setTimeRange(seeded);
-      setStartText(formatClock(seeded.start));
-      setEndText(formatClock(seeded.end));
       setNoDueDate(false);
       setTaskStatusValue(editingTask ? taskStatus(editingTask) : 'todo');
       setTaskPriorityValue(editingTask?.priority || 1);
@@ -252,6 +233,9 @@ export function ItemCreationModal({
       setNewAreaName('');
       setProjectValue(taskProjectId ?? eventProjectId);
       setTypeValue(eventTypeId);
+      setRepeatSettings(repeatSettingsFromRrule(editingEvent.rrule, start));
+      setRepeatRuleTouched(false);
+      setShowRepeatUntilPicker(false);
       setAddingProject(false);
       setNewProjectName('');
       return;
@@ -266,11 +250,12 @@ export function ItemCreationModal({
     setNewAreaName('');
     setProjectValue(undefined);
     setTypeValue(eventTypeId);
+    setRepeatSettings(repeatSettingsFromRrule(undefined, targetDate));
+    setRepeatRuleTouched(false);
+    setShowRepeatUntilPicker(false);
     setAddingProject(false);
     setNewProjectName('');
     setTimeRange({ start: 9 * 60, end: 10 * 60 });
-    setStartText(formatClock(9 * 60));
-    setEndText(formatClock(10 * 60));
     setLocation('');
     setDescription('');
     setItemDate(targetDate);
@@ -283,8 +268,6 @@ export function ItemCreationModal({
       const captured = initialParsed.hours * 60 + (initialParsed.minutes ?? 0);
       const range = normaliseRange({ start: captured, end: captured + 60 });
       setTimeRange(range);
-      setStartText(formatClock(range.start));
-      setEndText(formatClock(range.end));
       setIsAllDay(false);
     } else {
       setIsAllDay(initialParsed ? initialParsed.allDay : type === 'task');
@@ -303,7 +286,7 @@ export function ItemCreationModal({
     ? availableFeeds.filter(f => f.name && !f.id.startsWith('default-sample'))
     : [{ id: 'primary-cal', name: 'Primary Calendar', enabled: true }];
 
-  const [selectedFeedId, setSelectedFeedId] = useState<string>(cleanFeeds[0]?.id || 'primary-cal');
+  const [selectedFeedId] = useState<string>(cleanFeeds[0]?.id || 'primary-cal');
 
   const handleSave = () => {
     if (!title.trim()) return;
@@ -312,12 +295,18 @@ export function ItemCreationModal({
     if (!isAllDay) {
       start.setHours(Math.floor(timeRange.start / 60), timeRange.start % 60, 0, 0);
     } else {
-      start.setHours(9, 0, 0, 0);
+      start.setHours(0, 0, 0, 0);
     }
 
     // End comes from its own control now, so any length is expressible.
     const end = isAllDay
-      ? new Date(start.getTime() + 60 * 60 * 1000)
+      ? (() => {
+          // RFC 5545 DATE-valued DTEND is exclusive. Keeping the end on the
+          // same date produces a zero-length event once its time is stripped.
+          const nextDay = new Date(start);
+          nextDay.setDate(nextDay.getDate() + 1);
+          return nextDay;
+        })()
       : withTimeOfDay(start, timeRange.end);
 
     if (itemKind === 'event') {
@@ -332,8 +321,18 @@ export function ItemCreationModal({
         end,
         allDay: isAllDay,
         attendees: editingEvent?.attendees || [],
+        organizer: editingEvent?.organizer,
         recurringSeriesId: editingEvent?.recurringSeriesId,
-        rrule: editingEvent?.rrule,
+        // Preserve imported rules with advanced clauses (for example the
+        // first Monday of each month) until the user actually changes Repeat.
+        rrule: editingEvent?.rrule && !repeatRuleTouched
+          ? editingEvent.rrule
+          : rruleForRepeat(repeatSettings, start, isAllDay),
+        exceptionDates: editingEvent?.exceptionDates,
+        timeZone: editingEvent?.timeZone,
+        caldavUrl: editingEvent?.caldavUrl,
+        etag: editingEvent?.etag,
+        sourceKind: editingEvent?.sourceKind || 'local',
         calendarName:
           editingEvent?.calendarName ||
           cleanFeeds.find(f => f.id === selectedFeedId)?.name ||
@@ -354,6 +353,7 @@ export function ItemCreationModal({
         // Omitted entirely when the user has said it has no due date, so the
         // task lands in No Date rather than being silently dated today.
         dueDate: noDueDate ? undefined : start,
+        allDay: isAllDay,
         notes: description.trim() || undefined,
       });
     }
@@ -402,33 +402,29 @@ export function ItemCreationModal({
             </View>
           ) : null}
 
-          {/* Date is adjustable here: a lasso has no idea which day the grid
-              is on, and an edit must be able to move the item. */}
-          {/* Tapping the date opens the full picker. Single-day arrows stay
-              for nudging; the week/month jump row is redundant now that any
-              date is two taps away. */}
-          {!(itemKind === 'task' && noDueDate) && (
-            <View style={styles.dateRow}>
-              <TouchableOpacity style={styles.dateNavBtn} onPress={() => shiftDate(-1)}>
-                <Text allowFontScaling={false} style={styles.dateNavBtnText}>◀</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.dateDisplay} onPress={() => setShowDatePicker(true)}>
-                <Text allowFontScaling={false} style={styles.dateLabel}>{formattedDateStr} ▾</Text>
-                <Text allowFontScaling={false} style={styles.dateHint}>tap to change</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.dateNavBtn} onPress={() => shiftDate(1)}>
-                <Text allowFontScaling={false} style={styles.dateNavBtnText}>▶</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
           <DatePickerModal
             visible={showDatePicker}
             value={itemDate}
             onSelect={setItemDate}
             onClose={() => setShowDatePicker(false)}
+          />
+
+          <DatePickerModal
+            visible={showRepeatUntilPicker}
+            value={repeatSettings.until || itemDate}
+            onSelect={value => updateRepeat({ until: value })}
+            onClose={() => setShowRepeatUntilPicker(false)}
+          />
+
+          <TimePickerModal
+            visible={timePickerTarget !== null}
+            title={timePickerTarget === 'end' ? 'Choose exact end time' : itemKind === 'task' ? 'Choose due time' : 'Choose start time'}
+            value={timePickerTarget === 'end' ? timeRange.end : timeRange.start}
+            onSelect={value => {
+              if (timePickerTarget === 'end') applyRange({ start: timeRange.start, end: value });
+              else selectStartTime(value);
+            }}
+            onClose={() => setTimePickerTarget(null)}
           />
 
           {/* Event vs Task: decides which store the item lands in. */}
@@ -469,9 +465,29 @@ export function ItemCreationModal({
               placeholderTextColor="#707070"
             />
 
-            {/* Compact checkbox toggles. A full-width Switch row read as an
+            {/* Date, all-day state and time are one decision. Keeping them in
+                one framed block avoids the previous gap where the date lived
+                above the kind switch and the time was several fields below. */}
+            <View style={styles.whenBox}>
+              <Text allowFontScaling={false} style={styles.whenHeading}>When</Text>
+              {!(itemKind === 'task' && noDueDate) && (
+                <View style={styles.dateRow}>
+                  <TouchableOpacity style={styles.dateNavBtn} onPress={() => shiftDate(-1)}>
+                    <Text allowFontScaling={false} style={styles.dateNavBtnText}>◀</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.dateDisplay} onPress={() => setShowDatePicker(true)}>
+                    <Text allowFontScaling={false} style={styles.dateLabel}>{formattedDateStr} ▾</Text>
+                    <Text allowFontScaling={false} style={styles.dateHint}>tap to change</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.dateNavBtn} onPress={() => shiftDate(1)}>
+                    <Text allowFontScaling={false} style={styles.dateNavBtnText}>▶</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Compact checkbox toggles. A full-width Switch row read as an
                 unrelated setting rather than an on/off for this item. */}
-            <View style={styles.checkRow}>
+              <View style={styles.checkRow}>
               {itemKind === 'task' && (
                 <TouchableOpacity style={styles.checkToggle} onPress={() => setNoDueDate(!noDueDate)}>
                   <Text allowFontScaling={false} style={styles.checkToggleBox}>{noDueDate ? '☑' : '☐'}</Text>
@@ -487,73 +503,175 @@ export function ItemCreationModal({
                   </Text>
                 </TouchableOpacity>
               )}
-            </View>
+              </View>
 
-            {!isAllDay && !(itemKind === 'task' && noDueDate) && (
+              {!isAllDay && !(itemKind === 'task' && noDueDate) && (
               <>
-                {/* Typed or handwritten. A TextInput accepts the handwriting
-                    IME with no extra work, and reading "9:30" is far less
-                    effort than nudging to it fifteen minutes at a time. */}
-                <View style={styles.timeFieldRow}>
-                  <View style={styles.timeField}>
-                    <Text allowFontScaling={false} style={styles.label}>{itemKind === 'event' ? 'Start' : 'Due time'}</Text>
-                    <View style={styles.timeEntryRow}>
-                      <TextInput
-                        style={[
-                          styles.textInput,
-                          styles.timeInput,
-                          startText !== '' && startInvalid && styles.inputInvalid,
-                        ]}
-                        value={startText}
-                        onChangeText={setStartText}
-                        onEndEditing={commitStart}
-                        placeholder="9:00"
-                        placeholderTextColor="#707070"
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                      />
-                      {/* The meridiem is a tap, not something to write. */}
-                      <TouchableOpacity style={styles.meridiemBtn} onPress={toggleStartMeridiem}>
-                        <Text allowFontScaling={false} style={styles.meridiemText}>{isPm(timeRange.start) ? 'PM' : 'AM'}</Text>
+                <Text allowFontScaling={false} style={styles.label}>
+                  {itemKind === 'event' ? 'Start time:' : 'Due time:'}
+                </Text>
+                <TouchableOpacity style={styles.timeDisplayButton} onPress={() => setTimePickerTarget('start')}>
+                  <Text allowFontScaling={false} style={styles.timeDisplayText}>
+                    {formatTimeOfDay(timeRange.start)} ▾
+                  </Text>
+                  <Text allowFontScaling={false} style={styles.timeDisplayHint}>tap to choose</Text>
+                </TouchableOpacity>
+
+                {itemKind === 'event' && (
+                  <>
+                    <Text allowFontScaling={false} style={styles.label}>Duration:</Text>
+                    <View style={styles.chipRow}>
+                      {[15, 30, 45, 60, 90, 120].map(duration => {
+                        const selected = timeRange.end - timeRange.start === duration;
+                        return (
+                          <TouchableOpacity
+                            key={duration}
+                            style={[styles.stateChip, selected && styles.stateChipSelected]}
+                            onPress={() => selectDuration(duration)}
+                          >
+                            <Text allowFontScaling={false} style={[styles.stateChipText, selected && styles.stateChipTextSelected]}>
+                              {formatDuration(duration)}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                      <TouchableOpacity style={styles.stateChip} onPress={() => setTimePickerTarget('end')}>
+                        <Text allowFontScaling={false} style={styles.stateChipText}>Exact end…</Text>
                       </TouchableOpacity>
                     </View>
-                  </View>
+                    <Text allowFontScaling={false} style={styles.durationHint}>
+                      Ends {formatTimeOfDay(timeRange.end)} · {formatDuration(timeRange.end - timeRange.start)}
+                    </Text>
+                  </>
+                )}
+              </>
+              )}
+            </View>
 
-                  {itemKind === 'event' && (
-                    <View style={styles.timeField}>
-                      <Text allowFontScaling={false} style={styles.label}>End</Text>
-                      <View style={styles.timeEntryRow}>
-                        <TextInput
-                          style={[
-                            styles.textInput,
-                            styles.timeInput,
-                            endText !== '' && endInvalid && styles.inputInvalid,
-                          ]}
-                          value={endText}
-                          onChangeText={setEndText}
-                          onEndEditing={commitEnd}
-                          placeholder="10:00"
-                          placeholderTextColor="#707070"
-                          autoCapitalize="none"
-                          autoCorrect={false}
-                        />
-                        <TouchableOpacity style={styles.meridiemBtn} onPress={toggleEndMeridiem}>
-                          <Text allowFontScaling={false} style={styles.meridiemText}>{isPm(timeRange.end) ? 'PM' : 'AM'}</Text>
+            {itemKind === 'event' && (
+              <>
+                <Text allowFontScaling={false} style={styles.label}>Repeat:</Text>
+                <View style={styles.chipRow}>
+                  {(['none', 'daily', 'weekly', 'monthly', 'yearly'] as RepeatChoice[]).map(choice => (
+                    <TouchableOpacity
+                      key={choice}
+                      style={[styles.stateChip, repeatSettings.choice === choice && styles.stateChipSelected]}
+                      onPress={() => updateRepeat({ choice })}
+                    >
+                      <Text
+                        allowFontScaling={false}
+                        style={[styles.stateChipText, repeatSettings.choice === choice && styles.stateChipTextSelected]}
+                      >
+                        {choice === 'none' ? 'Does not repeat' : choice.charAt(0).toUpperCase() + choice.slice(1)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                {repeatSettings.choice !== 'none' && (
+                  <View style={styles.recurrenceBox}>
+                    <Text allowFontScaling={false} style={styles.label}>Every:</Text>
+                    <View style={styles.chipRow}>
+                      {[...new Set([1, 2, 3, 4, repeatSettings.interval])].sort((a, b) => a - b).map(interval => (
+                        <TouchableOpacity
+                          key={interval}
+                          style={[styles.stateChip, repeatSettings.interval === interval && styles.stateChipSelected]}
+                          onPress={() => updateRepeat({ interval })}
+                        >
+                          <Text
+                            allowFontScaling={false}
+                            style={[styles.stateChipText, repeatSettings.interval === interval && styles.stateChipTextSelected]}
+                          >
+                            {interval} {repeatSettings.choice === 'daily' ? 'day' : repeatSettings.choice === 'weekly' ? 'week' : repeatSettings.choice === 'monthly' ? 'month' : 'year'}{interval === 1 ? '' : 's'}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+
+                    {repeatSettings.choice === 'weekly' && (
+                      <>
+                        <Text allowFontScaling={false} style={styles.label}>On:</Text>
+                        <View style={styles.chipRow}>
+                          {WEEKDAY_OPTIONS.map(day => {
+                            const selected = repeatSettings.weekDays.includes(day.code);
+                            return (
+                              <TouchableOpacity
+                                key={day.code}
+                                style={[styles.stateChip, selected && styles.stateChipSelected]}
+                                onPress={() => {
+                                  const next = selected
+                                    ? repeatSettings.weekDays.filter(code => code !== day.code)
+                                    : [...repeatSettings.weekDays, day.code];
+                                  if (next.length > 0) updateRepeat({ weekDays: next });
+                                }}
+                              >
+                                <Text
+                                  allowFontScaling={false}
+                                  style={[styles.stateChipText, selected && styles.stateChipTextSelected]}
+                                >
+                                  {day.short}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </>
+                    )}
+
+                    <Text allowFontScaling={false} style={styles.label}>Ends:</Text>
+                    <View style={styles.chipRow}>
+                      {(['never', 'until', 'count'] as RepeatEndMode[]).map(endMode => (
+                        <TouchableOpacity
+                          key={endMode}
+                          style={[styles.stateChip, repeatSettings.endMode === endMode && styles.stateChipSelected]}
+                          onPress={() => {
+                            if (endMode === 'until' && !repeatSettings.until) {
+                              const until = new Date(itemDate);
+                              until.setMonth(until.getMonth() + 1);
+                              updateRepeat({ endMode, until });
+                            } else {
+                              updateRepeat({ endMode });
+                            }
+                          }}
+                        >
+                          <Text
+                            allowFontScaling={false}
+                            style={[styles.stateChipText, repeatSettings.endMode === endMode && styles.stateChipTextSelected]}
+                          >
+                            {endMode === 'never' ? 'Never' : endMode === 'until' ? 'On date' : 'After count'}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+
+                    {repeatSettings.endMode === 'until' && (
+                      <TouchableOpacity style={styles.timeDisplayButton} onPress={() => setShowRepeatUntilPicker(true)}>
+                        <Text allowFontScaling={false} style={styles.timeDisplayText}>
+                          {(repeatSettings.until || itemDate).toLocaleDateString('en-US', {
+                            month: 'short', day: 'numeric', year: 'numeric',
+                          })} ▾
+                        </Text>
+                        <Text allowFontScaling={false} style={styles.timeDisplayHint}>last possible date</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {repeatSettings.endMode === 'count' && (
+                      <View style={styles.countRow}>
+                        <TouchableOpacity style={styles.stateChip} onPress={() => updateRepeat({ count: Math.max(1, repeatSettings.count - 1) })}>
+                          <Text allowFontScaling={false} style={styles.stateChipText}>−</Text>
+                        </TouchableOpacity>
+                        <Text allowFontScaling={false} style={styles.countValue}>{repeatSettings.count} occurrences</Text>
+                        <TouchableOpacity style={styles.stateChip} onPress={() => updateRepeat({ count: repeatSettings.count + 1 })}>
+                          <Text allowFontScaling={false} style={styles.stateChipText}>+</Text>
                         </TouchableOpacity>
                       </View>
-                    </View>
-                  )}
-                </View>
-
-                <Text allowFontScaling={false} style={styles.durationHint}>
-                  {startInvalid || endInvalid
-                    ? 'Try 9, 9:30, 930 or 14:00 — AM/PM is the button.'
-                    : itemKind === 'event'
-                    ? `${formatTimeOfDay(timeRange.start)} – ${formatTimeOfDay(
-                        timeRange.end
-                      )} · ${formatDuration(timeRange.end - timeRange.start)}`
-                    : formatTimeOfDay(timeRange.start)}
-                </Text>
+                    )}
+                  </View>
+                )}
+                {editingEvent?.rrule ? (
+                  <Text allowFontScaling={false} style={styles.durationHint}>
+                    Editing applies to the entire recurring series.
+                  </Text>
+                ) : null}
               </>
             )}
 
@@ -902,7 +1020,7 @@ const styles = StyleSheet.create({
     // A percentage of a shorter screen is less absolute room: 62% of the
     // Nomad's 998dp is 619, against 846 on a Manta. The smaller device needs
     // the larger share, not the same one.
-    maxHeight: SHORT_SCREEN ? '88%' : '62%',
+    maxHeight: SHORT_SCREEN ? '90%' : '76%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -990,6 +1108,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 6,
   },
+  whenBox: {
+    borderWidth: 1,
+    borderColor: '#606060',
+    borderRadius: 6,
+    padding: 8,
+    marginTop: 4,
+    marginBottom: 6,
+    backgroundColor: '#f5f5f5',
+  },
+  whenHeading: { fontSize: 13, fontWeight: 'bold', color: '#000000', marginBottom: 5 },
+  recurrenceBox: {
+    borderWidth: 1,
+    borderColor: '#707070',
+    borderRadius: 6,
+    padding: 7,
+    marginBottom: 6,
+    backgroundColor: '#f5f5f5',
+  },
+  countRow: { flexDirection: 'row', alignItems: 'center' },
+  countValue: { fontSize: 13, fontWeight: 'bold', color: '#000000', marginRight: 8, marginBottom: 5 },
   dateNavBtn: {
     borderWidth: 2,
     borderColor: '#000000',
@@ -1178,6 +1316,18 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
   },
   durationHint: { fontSize: 12, color: '#505050', marginBottom: 4 },
+  timeDisplayButton: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    marginBottom: 7,
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+  },
+  timeDisplayText: { fontSize: 18, fontWeight: 'bold', color: '#000000' },
+  timeDisplayHint: { fontSize: 10, color: '#606060', marginTop: 1 },
   saveBtn: {
     backgroundColor: '#000000',
     borderRadius: 6,

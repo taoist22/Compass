@@ -1,6 +1,6 @@
 module.exports = {
   preset: 'react-native',
-  setupFiles: ['<rootDir>/jest.setup.js'],
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   transformIgnorePatterns: [
     'node_modules/(?!(sn-plugin-lib|@react-native|react-native)/)',
   ],

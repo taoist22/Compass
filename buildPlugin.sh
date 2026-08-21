@@ -718,10 +718,13 @@ main() {
         all_pkgs="$(printf "%s\n%s\n" "$project_react_pkgs" "$autolink_pkgs" | awk 'NF' | sort -u)"
         update_plugin_config_packages "$project_root" "$gen_dir" "$all_pkgs"
 
-        if build_android_apk "$project_root" "$gen_cfg"; then
-            copy_apk_and_update_config "$project_root" "$gen_dir" "$gen_cfg" || true
-        else
-            write_color_output "APK build failed" "Red"
+        if ! build_android_apk "$project_root" "$gen_cfg"; then
+            write_color_output "APK build failed; refusing to package stale native output" "Red"
+            return 1
+        fi
+        if ! copy_apk_and_update_config "$project_root" "$gen_dir" "$gen_cfg"; then
+            write_color_output "APK packaging failed; refusing to create the plugin package" "Red"
+            return 1
         fi
     else
         write_color_output "Build conditions not met; skipping native build and reactPackages update" "Yellow"

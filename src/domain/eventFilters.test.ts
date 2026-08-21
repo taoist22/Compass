@@ -1,4 +1,4 @@
-import { dedupeEvents, filterEvents } from './eventFilters';
+import { dedupeEvents, feedEventHideIdentity, filterEvents } from './eventFilters';
 import { CalendarEvent, CalendarSettings } from './types';
 
 describe('eventFilters', () => {
@@ -39,6 +39,14 @@ describe('eventFilters', () => {
       attendees: [],
     },
   ];
+  const fingerprintBase: CalendarEvent = {
+    uid: 'base',
+    summary: 'Shared appointment',
+    start: new Date('2026-08-25T10:00:00Z'),
+    end: new Date('2026-08-25T11:00:00Z'),
+    allDay: false,
+    attendees: [],
+  };
 
   test('keeps all events when filters are disabled', () => {
     const res = filterEvents(sampleEvents, dummySettings);
@@ -87,6 +95,26 @@ describe('eventFilters', () => {
     ]);
 
     expect(res).toHaveLength(4);
+  });
+
+  test('collapses identical events from two subscribed feeds even when Google gives them different UIDs', () => {
+    const first = { ...fingerprintBase, uid: 'google-a', sourceKind: 'feed' as const, calendarName: 'Work' };
+    const second = { ...fingerprintBase, uid: 'google-b', sourceKind: 'feed' as const, calendarName: 'Personal' };
+    expect(dedupeEvents([first, second])).toHaveLength(1);
+  });
+
+  test('never fingerprint-merges editable events', () => {
+    const first = { ...fingerprintBase, uid: 'local-a', sourceKind: 'local' as const };
+    const second = { ...fingerprintBase, uid: 'local-b', sourceKind: 'local' as const };
+    expect(dedupeEvents([first, second])).toHaveLength(2);
+  });
+
+  test('hides a subscribed event by its persisted identity', () => {
+    const feedEvent = { ...fingerprintBase, uid: 'hidden-google', sourceKind: 'feed' as const };
+    expect(filterEvents([feedEvent], {
+      ...dummySettings,
+      hiddenFeedEventIds: [feedEventHideIdentity(feedEvent)],
+    })).toHaveLength(0);
   });
 
   test('filterEvents dedupes before applying preferences', () => {

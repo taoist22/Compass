@@ -54,6 +54,9 @@ export function pushSignature(item: CalendarEvent): string {
     item.description || '',
     item.isTask ? '1' : '0',
     item.completed ? '1' : '0',
+    item.undatedTask ? '1' : '0',
+    item.priority || '',
+    Number.isFinite(item.alarmMinutesBefore) ? item.alarmMinutesBefore : '',
   ].join('|');
 }
 

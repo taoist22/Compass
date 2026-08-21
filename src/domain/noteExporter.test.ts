@@ -31,6 +31,19 @@ describe('noteExporter', () => {
     expect(ics).toMatch(/\r\nDTSTAMP:\d{8}T\d{6}Z\r\n/);
   });
 
+  test('generateOutboundIcsEvent emits a display alarm when requested', () => {
+    const ics = generateOutboundIcsEvent({ ...sampleEvent, alarmMinutesBefore: 15 });
+    expect(ics).toContain('BEGIN:VALARM\r\n');
+    expect(ics).toContain('TRIGGER:-PT15M\r\n');
+    expect(ics).toContain('ACTION:DISPLAY\r\n');
+    expect(ics).toContain('DESCRIPTION:Physics 301 Midterm Sync\r\nEND:VALARM');
+  });
+
+  test('a zero-minute alarm fires at event start', () => {
+    const ics = generateOutboundIcsEvent({ ...sampleEvent, alarmMinutesBefore: 0 });
+    expect(ics).toContain('TRIGGER:PT0M\r\n');
+  });
+
   test('generateOutboundIcsEvent terminates every content line with CRLF', () => {
     const ics = generateOutboundIcsEvent(sampleEvent);
     expect(ics.endsWith('END:VCALENDAR\r\n')).toBe(true);
@@ -112,21 +125,46 @@ describe('noteExporter', () => {
       ...sampleEvent,
       isTask: true,
       allDay: true,
-      start: new Date('2026-08-25T00:00:00Z'),
+      start: new Date(2026, 7, 25),
     });
     expect(ics).toContain('DUE;VALUE=DATE:20260825');
+  });
+
+  test('generateOutboundIcsTodo keeps undated tasks undated and maps priority', () => {
+    const ics = generateOutboundIcsTodo({
+      ...sampleEvent,
+      isTask: true,
+      undatedTask: true,
+      priority: 4,
+    });
+    expect(ics).not.toMatch(/\r\nDUE[;:]/);
+    expect(ics).toContain('PRIORITY:1');
   });
 
   test('generateOutboundIcsEvent uses the DATE value type for all-day events', () => {
     const ics = generateOutboundIcsEvent({
       ...sampleEvent,
       allDay: true,
-      start: new Date('2026-08-25T00:00:00Z'),
-      end: new Date('2026-08-26T00:00:00Z'),
+      start: new Date(2026, 7, 25),
+      end: new Date(2026, 7, 26),
     });
 
     expect(ics).toContain('DTSTART;VALUE=DATE:20260825');
     expect(ics).toContain('DTEND;VALUE=DATE:20260826');
     expect(ics).not.toContain('DTSTART:2026');
+  });
+
+  test('editing an imported recurring event preserves recurrence and participants', () => {
+    const ics = generateOutboundIcsEvent({
+      ...sampleEvent,
+      rrule: 'FREQ=WEEKLY;BYDAY=MO,WE',
+      exceptionDates: ['2026-08-26'],
+      organizer: { name: 'Ada', email: 'ada@example.com' },
+      attendees: [{ name: 'Grace', email: 'grace@example.com', status: 'ACCEPTED' }],
+    });
+    expect(ics).toContain('RRULE:FREQ=WEEKLY;BYDAY=MO,WE');
+    expect(ics).toContain('EXDATE:');
+    expect(ics).toContain('ORGANIZER;CN=Ada:mailto:ada@example.com');
+    expect(ics).toContain('ATTENDEE;CN=Grace;PARTSTAT=ACCEPTED:mailto:grace@example.com');
   });
 });
