@@ -230,7 +230,12 @@ export class MeetingNoteService {
       // point the new file/page is not open yet, so use the file API that names
       // the destination explicitly.
       const elRes: any = await PluginCommAPI.createElement(500);
-      const textElement = elRes?.success && elRes.data?.textBox ? elRes.data : null;
+      // PluginCommAPI documents APIResponse<Element> and returns the Element
+      // under `result`. Early test doubles and some older host responses used
+      // `data`, so accept both without letting the compatibility path mask the
+      // real SDK contract again.
+      const createdElement = elRes?.success ? (elRes.result ?? elRes.data) : null;
+      const textElement = createdElement?.textBox ? createdElement : null;
       if (!textElement) {
         return {
           success: false,

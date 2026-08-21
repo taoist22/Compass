@@ -16,7 +16,8 @@ jest.mock('sn-plugin-lib', () => ({
     insertText: jest.fn().mockResolvedValue({ success: true }),
   },
   PluginCommAPI: {
-    createElement: jest.fn().mockResolvedValue({ success: true, data: { textBox: {} } }),
+    // The real SDK returns APIResponse<Element>, whose payload key is result.
+    createElement: jest.fn().mockResolvedValue({ success: true, result: { textBox: {} } }),
     getNoteSystemTemplates: jest.fn().mockResolvedValue([
       {
         name: 'style_8mm_ruled_line',
@@ -89,6 +90,20 @@ describe('meetingNoteService', () => {
       expect.stringContaining('Design Review.note'),
       1,
       expect.any(Array)
+    );
+  });
+
+  test('reads the snapshot text element from the SDK result payload', async () => {
+    const res = await meetingNoteService.createOrAppendMeetingNote({
+      ...sampleEvent,
+      uid: 'evt-sdk-result',
+    });
+
+    expect(res.success).toBe(true);
+    expect(PluginFileAPI.insertElements).toHaveBeenCalledWith(
+      expect.stringContaining('Design Review.note'),
+      1,
+      [expect.objectContaining({ textBox: expect.any(Object) })]
     );
   });
 
