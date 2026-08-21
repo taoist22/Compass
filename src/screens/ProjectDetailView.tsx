@@ -85,33 +85,24 @@ export function ProjectDetailView({
           </Text>
         </TouchableOpacity>
         {renaming ? (
-          <TextInput
-            style={styles.titleInput}
-            value={draftName}
-            onChangeText={setDraftName}
-            autoCorrect={false}
-            onEndEditing={commitRename}
-          />
+          <>
+            <TextInput
+              style={styles.titleInput}
+              value={draftName}
+              onChangeText={setDraftName}
+              autoCorrect={false}
+              onEndEditing={commitRename}
+            />
+            <TouchableOpacity style={styles.headBtn} onPress={commitRename}>
+              <Text allowFontScaling={false} style={styles.headBtnText}>
+                Done
+              </Text>
+            </TouchableOpacity>
+          </>
         ) : (
-          <TouchableOpacity
-            style={styles.titleTap}
-            onPress={() => {
-              setDraftName(project.name);
-              setRenaming(true);
-            }}
-          >
-            <Text allowFontScaling={false} style={styles.title} numberOfLines={1}>
-              🚀 {project.name}
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {renaming && (
-          <TouchableOpacity style={styles.headBtn} onPress={commitRename}>
-            <Text allowFontScaling={false} style={styles.headBtnText}>
-              Done
-            </Text>
-          </TouchableOpacity>
+          <Text allowFontScaling={false} style={styles.title} numberOfLines={1}>
+            🚀 {project.name}
+          </Text>
         )}
       </View>
 
@@ -132,6 +123,17 @@ export function ProjectDetailView({
         </Text>
 
         <View style={styles.metaActions}>
+          <TouchableOpacity
+            style={styles.headBtn}
+            onPress={() => {
+              setDraftName(project.name);
+              setRenaming(true);
+            }}
+          >
+            <Text allowFontScaling={false} style={styles.headBtnText}>
+              Rename
+            </Text>
+          </TouchableOpacity>
           {/* Finishing is what a project can do that an area cannot. */}
           <TouchableOpacity style={styles.headBtn} onPress={onToggleStatus}>
             <Text allowFontScaling={false} style={styles.headBtnText}>
@@ -265,8 +267,7 @@ const styles = StyleSheet.create({
     maxWidth: 180,
   },
   areaBtnText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
-  titleTap: { flex: 1 },
-  title: { fontSize: 16, fontWeight: 'bold', color: '#000000' },
+  title: { flex: 1, fontSize: 16, fontWeight: 'bold', color: '#000000' },
   titleInput: {
     flex: 1,
     borderWidth: 1,

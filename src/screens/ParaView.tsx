@@ -326,20 +326,22 @@ export function ParaView({
                     </Text>
                   </TouchableOpacity>
 
-                  {/* Only on the area you are already looking at: an Edit on
-                      every row would be five buttons competing with the list. */}
-                  {active && (
-                    <TouchableOpacity
-                      onPress={() => {
-                        setEditingAreaId(area.id);
-                        setEditName(area.name);
-                      }}
+                  {/* On every row. Gating this on the selected row hid it
+                      completely whenever All Areas was chosen, which is the
+                      default — a control you cannot find is not built. */}
+                  <TouchableOpacity
+                    onPress={() => {
+                      setEditingAreaId(area.id);
+                      setEditName(area.name);
+                    }}
+                  >
+                    <Text
+                      allowFontScaling={false}
+                      style={[styles.areaEditLink, active && styles.areaTextActive]}
                     >
-                      <Text allowFontScaling={false} style={styles.areaEditLink}>
-                        Edit
-                      </Text>
-                    </TouchableOpacity>
-                  )}
+                      Edit
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               );
             })}
