@@ -72,7 +72,6 @@ function blockBar(percent: number): string {
 
 import { DayScheduleGrid } from './DayScheduleGrid';
 import { hourLabel } from '../domain/dayGrid';
-import { AreaManagerModal } from './AreaManagerModal';
 import { ItemCreationModal } from './ItemCreationModal';
 import { DatePickerModal } from './DatePickerModal';
 import { openNoteInEditor } from '../supernote/exportService';
@@ -179,7 +178,6 @@ export function AgendaScreen(): React.JSX.Element {
   const [areas, setAreas] = useState<Area[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [eventTypes, setEventTypes] = useState<EventType[]>([]);
-  const [showAreaManager, setShowAreaManager] = useState<boolean>(false);
   const [paraAreaId, setParaAreaId] = useState<string | null>(null);
   const [paraShowArchive, setParaShowArchive] = useState<boolean>(false);
   /** Project whose due date is being picked, if any. */
@@ -1828,12 +1826,6 @@ export function AgendaScreen(): React.JSX.Element {
     setAreas([...calendarStorage.getAreas()]);
   };
 
-  const projectProgressFor = (projectId: string) => {
-    void membershipRevision;
-    const mine = calendarStorage.getTasks().filter(t => projectOfTask(t.uid) === projectId);
-    return { done: mine.filter(t => t.completed).length, total: mine.length };
-  };
-
   const handleRenameProject = (projectId: string, name: string) => {
     const existing = calendarStorage.getProjects().find(p => p.id === projectId);
     if (!existing) return;
@@ -2318,23 +2310,6 @@ export function AgendaScreen(): React.JSX.Element {
         </TouchableOpacity>
       </Modal>
 
-      <AreaManagerModal
-        visible={showAreaManager}
-        areas={areas}
-        countFor={countTasksInArea}
-        projects={projects}
-        progressFor={projectProgressFor}
-        onRenameProject={handleRenameProject}
-        onSetProjectStatus={handleSetProjectStatus}
-        onDeleteProject={handleDeleteProject}
-        onCreateProject={name => handleCreateProject(name)}
-        onCycleProjectArea={handleCycleProjectArea}
-        onRename={handleRenameArea}
-        onDelete={handleDeleteArea}
-        onCreate={name => handleCreateArea(name)}
-        onClose={() => setShowAreaManager(false)}
-      />
-
       <TaskListModal
         visible={showTaskList}
         tasks={tasks}
@@ -2343,11 +2318,6 @@ export function AgendaScreen(): React.JSX.Element {
         projects={projects}
         projectOf={projectOfTask}
         onClose={() => setShowTaskList(false)}
-        onManageAreas={() => {
-          // Swapped rather than stacked: two modals at once is unreliable here.
-          setShowTaskList(false);
-          setShowAreaManager(true);
-        }}
         onToggle={handleToggleTask}
         onEdit={task => {
           setShowTaskList(false);
@@ -3291,6 +3261,20 @@ export function AgendaScreen(): React.JSX.Element {
               onBack={() => setOpenProject(null)}
               onSetDue={() => setProjectDueTarget(openProject)}
               onCycleArea={() => handleCycleProjectArea(openProject.id)}
+              onRename={name => {
+                handleRenameProject(openProject.id, name);
+                setOpenProject({ ...openProject, name });
+              }}
+              onToggleStatus={() => {
+                const next = openProject.status === 'active' ? 'done' : 'active';
+                handleSetProjectStatus(openProject.id, next);
+                setOpenProject({ ...openProject, status: next });
+              }}
+              onDelete={() => {
+                handleDeleteProject(openProject.id);
+                // Nothing left to show, so fall back to the list.
+                setOpenProject(null);
+              }}
               onOpenNotebook={() => {
                 const current = calendarStorage.getProjects().find(p => p.id === openProject.id);
                 if (current) void handleProjectNote(current);
@@ -3325,7 +3309,9 @@ export function AgendaScreen(): React.JSX.Element {
               onToggleArchive={() => setParaShowArchive(v => !v)}
               onNewProject={name => handleCreateProject(name, paraAreaId ?? undefined)}
               onNewArea={name => handleCreateArea(name)}
-              onManage={() => setShowAreaManager(true)}
+              onRenameArea={handleRenameArea}
+              onDeleteArea={handleDeleteArea}
+              areaTaskCount={countTasksInArea}
               onOpenProject={setOpenProject}
               onProjectNote={handleProjectNote}
               onSetProjectDue={project => setProjectDueTarget(project)}

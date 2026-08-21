@@ -1,5 +1,5 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Area, CalendarTask, Project } from '../domain/types';
 import { isDone, statusGlyph, taskStatus } from '../domain/taskModel';
 import { projectOverdue, projectProgress, ProjectLookup } from '../domain/taskListView';
@@ -16,6 +16,10 @@ interface ProjectDetailViewProps {
   /** Moves the project to the next area. Shown in the breadcrumb, where the
    *  wrong one is noticed. */
   onCycleArea: () => void;
+  /** A project is renamed, finished and deleted here, where it lives. */
+  onRename: (name: string) => void;
+  onToggleStatus: () => void;
+  onDelete: () => void;
   onOpenNotebook: () => void;
   onOpenNote: (path: string) => void;
   onAddTask: () => void;
@@ -39,6 +43,9 @@ export function ProjectDetailView({
   onBack,
   onSetDue,
   onCycleArea,
+  onRename,
+  onToggleStatus,
+  onDelete,
   onOpenNotebook,
   onOpenNote,
   onAddTask,
@@ -49,6 +56,17 @@ export function ProjectDetailView({
   const progress = projectProgress(tasks, project.id, lookup);
   const mine = tasks.filter(t => projectOf(t.uid) === project.id);
   const overdue = projectOverdue(project);
+
+  const [renaming, setRenaming] = React.useState<boolean>(false);
+  const [draftName, setDraftName] = React.useState<string>(project.name);
+  const [confirmingDelete, setConfirmingDelete] = React.useState<boolean>(false);
+
+  const commitRename = () => {
+    const next = draftName.trim();
+    // A blank field is a mistake, not a request to lose the name.
+    if (next && next !== project.name) onRename(next);
+    setRenaming(false);
+  };
 
   return (
     <View style={styles.root}>
@@ -66,9 +84,35 @@ export function ProjectDetailView({
             {area ? `${area.icon ? `${area.icon} ` : ''}${area.name}` : 'No Area'} ›
           </Text>
         </TouchableOpacity>
-        <Text allowFontScaling={false} style={styles.title} numberOfLines={1}>
-          🚀 {project.name}
-        </Text>
+        {renaming ? (
+          <TextInput
+            style={styles.titleInput}
+            value={draftName}
+            onChangeText={setDraftName}
+            autoCorrect={false}
+            onEndEditing={commitRename}
+          />
+        ) : (
+          <TouchableOpacity
+            style={styles.titleTap}
+            onPress={() => {
+              setDraftName(project.name);
+              setRenaming(true);
+            }}
+          >
+            <Text allowFontScaling={false} style={styles.title} numberOfLines={1}>
+              🚀 {project.name}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {renaming && (
+          <TouchableOpacity style={styles.headBtn} onPress={commitRename}>
+            <Text allowFontScaling={false} style={styles.headBtnText}>
+              Done
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={styles.metaRow}>
@@ -86,7 +130,42 @@ export function ProjectDetailView({
         <Text allowFontScaling={false} style={styles.progressText}>
           {bar(progress.percent)} {progress.done}/{progress.total} tasks ({progress.percent}%)
         </Text>
+
+        <View style={styles.metaActions}>
+          {/* Finishing is what a project can do that an area cannot. */}
+          <TouchableOpacity style={styles.headBtn} onPress={onToggleStatus}>
+            <Text allowFontScaling={false} style={styles.headBtnText}>
+              {project.status === 'active' ? 'Finish' : 'Reopen'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.headBtn} onPress={() => setConfirmingDelete(true)}>
+            <Text allowFontScaling={false} style={styles.headBtnText}>
+              Delete
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
+
+      {confirmingDelete && (
+        <View style={styles.confirmRow}>
+          <Text allowFontScaling={false} style={styles.confirmText}>
+            Delete "{project.name}"? Its {mine.length} task{mine.length === 1 ? '' : 's'} and any
+            notebooks are kept — only the project goes.
+          </Text>
+          <View style={styles.metaActions}>
+            <TouchableOpacity style={styles.headBtn} onPress={onDelete}>
+              <Text allowFontScaling={false} style={styles.headBtnText}>
+                Delete
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.headBtn} onPress={() => setConfirmingDelete(false)}>
+              <Text allowFontScaling={false} style={styles.headBtnText}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       <ScrollView style={styles.body}>
         <Text allowFontScaling={false} style={styles.sectionHeading}>
@@ -186,7 +265,38 @@ const styles = StyleSheet.create({
     maxWidth: 180,
   },
   areaBtnText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
-  title: { flex: 1, fontSize: 16, fontWeight: 'bold', color: '#000000' },
+  titleTap: { flex: 1 },
+  title: { fontSize: 16, fontWeight: 'bold', color: '#000000' },
+  titleInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#000000',
+  },
+  headBtn: {
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    marginLeft: 6,
+  },
+  headBtnText: { fontSize: 11, fontWeight: 'bold', color: '#000000' },
+  metaActions: { flexDirection: 'row', alignItems: 'center' },
+  confirmRow: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    padding: 8,
+    marginBottom: 6,
+    backgroundColor: '#ffffff',
+  },
+  confirmText: { fontSize: 11, color: '#000000' },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',

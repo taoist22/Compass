@@ -28,7 +28,6 @@ interface TaskListModalProps {
   projects: Project[];
   projectOf: (uid: string) => string | undefined;
   onClose: () => void;
-  onManageAreas: () => void;
   onToggle: (task: CalendarTask) => void;
   onEdit: (task: CalendarTask) => void;
 }
@@ -50,7 +49,6 @@ export function TaskListModal({
   projects,
   projectOf,
   onClose,
-  onManageAreas,
   onToggle,
   onEdit,
 }: TaskListModalProps): React.JSX.Element {
@@ -134,12 +132,6 @@ export function TaskListModal({
             {/* Centred and named for what it opens. Tucked beside Close and
                 labelled "Areas" it read as part of the dismiss controls, and
                 said nothing about projects living there too. */}
-            <TouchableOpacity style={styles.manageBtn} onPress={onManageAreas}>
-              <Text allowFontScaling={false} style={styles.manageText}>
-                ⚙ Areas &amp; Projects
-              </Text>
-            </TouchableOpacity>
-
             <TouchableOpacity onPress={onClose}>
               <Text allowFontScaling={false} style={styles.close}>
                 ✕ Close

@@ -2,6 +2,7 @@ import React from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Area, CalendarTask, Project } from '../domain/types';
 import { isDone, statusGlyph, taskStatus } from '../domain/taskModel';
+import { ICON_CHOICES } from '../domain/noteTemplates';
 import {
   activeProjects,
   archivedProjects,
@@ -24,7 +25,11 @@ interface ParaViewProps {
   onToggleArchive: () => void;
   onNewProject: (name: string) => void;
   onNewArea: (name: string) => void;
-  onManage: () => void;
+  /** Editing an area happens on the area, not in a sheet about all of them. */
+  onRenameArea: (areaId: string, name: string, icon?: string) => void;
+  onDeleteArea: (areaId: string) => void;
+  /** Tasks filed under an area, so deleting one can say what it detaches. */
+  areaTaskCount: (areaId: string) => number;
   onOpenProject: (project: Project) => void;
   onProjectNote: (project: Project) => void;
   onSetProjectDue: (project: Project) => void;
@@ -53,7 +58,9 @@ export function ParaView({
   onToggleArchive,
   onNewProject,
   onNewArea,
-  onManage,
+  onRenameArea,
+  onDeleteArea,
+  areaTaskCount,
   onOpenProject,
   onProjectNote,
   onSetProjectDue,
@@ -77,6 +84,16 @@ export function ParaView({
 
   const tasksOf = (projectId: string) => tasks.filter(t => projectOf(t.uid) === projectId);
   const selectedArea = areas.find(a => a.id === selectedAreaId);
+  const [editingAreaId, setEditingAreaId] = React.useState<string | null>(null);
+  const [editName, setEditName] = React.useState<string>('');
+  const [iconOpen, setIconOpen] = React.useState<boolean>(false);
+  const [confirmingAreaId, setConfirmingAreaId] = React.useState<string | null>(null);
+
+  const closeAreaEditor = () => {
+    setEditingAreaId(null);
+    setIconOpen(false);
+    setConfirmingAreaId(null);
+  };
   const [adding, setAdding] = React.useState<'project' | 'area' | null>(null);
   const [newName, setNewName] = React.useState<string>('');
 
@@ -102,11 +119,6 @@ export function ParaView({
           <TouchableOpacity style={styles.topBtn} onPress={() => setAdding('area')}>
             <Text allowFontScaling={false} style={styles.topBtnText}>
               + Area
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.topBtn} onPress={onManage}>
-            <Text allowFontScaling={false} style={styles.topBtnText}>
-              Manage
             </Text>
           </TouchableOpacity>
         </View>
@@ -183,22 +195,152 @@ export function ParaView({
 
             {counts.map(({ area, count }) => {
               const active = selectedAreaId === area.id && !showArchive;
+              const editing = editingAreaId === area.id;
+
+              if (confirmingAreaId === area.id) {
+                // Confirmed on the row rather than in a dialog, so you can see
+                // which area you are about to delete while deciding.
+                const owed = areaTaskCount(area.id);
+                return (
+                  <View key={area.id} style={styles.areaConfirm}>
+                    <Text allowFontScaling={false} style={styles.areaConfirmText}>
+                      Delete "{area.name}"? Its {owed} task{owed === 1 ? '' : 's'} and any
+                      projects are kept, just unfiled.
+                    </Text>
+                    <View style={styles.areaEditRow}>
+                      <TouchableOpacity
+                        style={styles.rowBtn}
+                        onPress={() => {
+                          onDeleteArea(area.id);
+                          closeAreaEditor();
+                        }}
+                      >
+                        <Text allowFontScaling={false} style={styles.rowBtnText}>
+                          Delete
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.rowBtn}
+                        onPress={() => setConfirmingAreaId(null)}
+                      >
+                        <Text allowFontScaling={false} style={styles.rowBtnText}>
+                          Cancel
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              }
+
+              if (editing) {
+                return (
+                  <View key={area.id} style={styles.areaEditing}>
+                    <View style={styles.areaEditRow}>
+                      <TouchableOpacity
+                        style={styles.iconBtn}
+                        onPress={() => setIconOpen(open => !open)}
+                      >
+                        <Text allowFontScaling={false} style={styles.iconBtnText}>
+                          {area.icon || '+'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TextInput
+                        style={styles.areaInput}
+                        value={editName}
+                        onChangeText={setEditName}
+                        autoCorrect={false}
+                      />
+                    </View>
+
+                    {iconOpen && (
+                      <View style={styles.iconStrip}>
+                        {ICON_CHOICES.map(icon => (
+                          <TouchableOpacity
+                            key={icon}
+                            style={styles.iconChoice}
+                            onPress={() => {
+                              onRenameArea(area.id, editName.trim() || area.name, icon);
+                              setIconOpen(false);
+                            }}
+                          >
+                            <Text allowFontScaling={false} style={styles.iconChoiceText}>
+                              {icon}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                        <TouchableOpacity
+                          style={styles.iconChoice}
+                          onPress={() => {
+                            onRenameArea(area.id, editName.trim() || area.name, '');
+                            setIconOpen(false);
+                          }}
+                        >
+                          <Text allowFontScaling={false} style={styles.iconChoiceText}>
+                            —
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+
+                    <View style={styles.areaEditRow}>
+                      <TouchableOpacity
+                        style={styles.rowBtn}
+                        onPress={() => {
+                          const next = editName.trim();
+                          if (next && next !== area.name) onRenameArea(area.id, next, area.icon);
+                          closeAreaEditor();
+                        }}
+                      >
+                        <Text allowFontScaling={false} style={styles.rowBtnText}>
+                          Done
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.rowBtn}
+                        onPress={() => setConfirmingAreaId(area.id)}
+                      >
+                        <Text allowFontScaling={false} style={styles.rowBtnText}>
+                          Delete
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              }
+
               return (
-                <TouchableOpacity
+                <View
                   key={area.id}
                   style={[styles.areaRow, active && styles.areaRowActive]}
-                  onPress={() => onSelectArea(area.id)}
                 >
                   {/* Empty areas still listed: vanishing would make one look
                       deleted rather than merely idle. */}
-                  <Text
-                    allowFontScaling={false}
-                    style={[styles.areaText, active && styles.areaTextActive]}
-                  >
-                    {area.icon ? `${area.icon} ` : ''}
-                    {area.name} ({count})
-                  </Text>
-                </TouchableOpacity>
+                  <TouchableOpacity style={styles.areaTap} onPress={() => onSelectArea(area.id)}>
+                    <Text
+                      allowFontScaling={false}
+                      numberOfLines={1}
+                      style={[styles.areaText, active && styles.areaTextActive]}
+                    >
+                      {area.icon ? `${area.icon} ` : ''}
+                      {area.name} ({count})
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Only on the area you are already looking at: an Edit on
+                      every row would be five buttons competing with the list. */}
+                  {active && (
+                    <TouchableOpacity
+                      onPress={() => {
+                        setEditingAreaId(area.id);
+                        setEditName(area.name);
+                      }}
+                    >
+                      <Text allowFontScaling={false} style={styles.areaEditLink}>
+                        Edit
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               );
             })}
           </ScrollView>
@@ -368,6 +510,66 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   topBtnText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
+  areaTap: { flex: 1 },
+  areaEditLink: { fontSize: 11, fontWeight: 'bold', color: '#000000', paddingLeft: 6 },
+  areaEditing: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    padding: 6,
+    marginBottom: 4,
+    backgroundColor: '#ffffff',
+  },
+  areaEditRow: { flexDirection: 'row', alignItems: 'center' },
+  areaInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    fontSize: 12,
+    color: '#000000',
+  },
+  iconBtn: {
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginRight: 6,
+  },
+  iconBtnText: { fontSize: 14, color: '#000000' },
+  iconStrip: { flexDirection: 'row', flexWrap: 'wrap', paddingVertical: 4 },
+  iconChoice: {
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    marginRight: 4,
+    marginBottom: 4,
+  },
+  iconChoiceText: { fontSize: 14, color: '#000000' },
+  areaConfirm: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    padding: 6,
+    marginBottom: 4,
+    backgroundColor: '#ffffff',
+  },
+  areaConfirmText: { fontSize: 11, color: '#000000', marginBottom: 6 },
+  rowBtn: {
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginRight: 6,
+    marginTop: 6,
+  },
+  rowBtnText: { fontSize: 11, fontWeight: 'bold', color: '#000000' },
   addRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   addInput: {
     flex: 1,
@@ -400,6 +602,8 @@ const styles = StyleSheet.create({
   },
   paneScroll: { flex: 1 },
   areaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     borderWidth: 1,
     borderColor: '#000000',
     borderRadius: 4,
