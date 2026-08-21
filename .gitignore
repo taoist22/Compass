@@ -6,3 +6,6 @@ ios/Pods/
 *.log
 .DS_Store
 coverage/
+
+# Machine-specific SDK path; never committed.
+android/local.properties
