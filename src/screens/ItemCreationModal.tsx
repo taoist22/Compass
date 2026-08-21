@@ -27,6 +27,7 @@ import {
   statusLabel,
   taskStatus,
 } from '../domain/taskModel';
+import { areaIsDerived } from '../domain/membership';
 import { DatePickerModal } from './DatePickerModal';
 import {
   TimeRange,
@@ -204,12 +205,19 @@ export function ItemCreationModal({
    * alone meant the task controls could be absent on the first render.
    */
   const isTaskForm = Boolean(editingTask) || itemKind === 'task';
+
   const [taskStatusValue, setTaskStatusValue] = useState<TaskStatus>('todo');
   const [taskPriorityValue, setTaskPriorityValue] = useState<TaskPriority>(1);
   const [areaValue, setAreaValue] = useState<string | undefined>(undefined);
   const [newAreaName, setNewAreaName] = useState<string>('');
   const [addingArea, setAddingArea] = useState<boolean>(false);
   const [projectValue, setProjectValue] = useState<string | undefined>(undefined);
+  // A chosen project decides the area; the form shows the answer rather than
+  // asking a question whose reply would be discarded.
+  const derivedArea = areaIsDerived({ projectId: projectValue }, projects);
+  const derivedAreaName =
+    areas.find(a => a.id === projects.find(p => p.id === projectValue)?.areaId)?.name ||
+    'No area';
   const [newProjectName, setNewProjectName] = useState<string>('');
   const [addingProject, setAddingProject] = useState<boolean>(false);
   const [typeValue, setTypeValue] = useState<string | undefined>(undefined);
@@ -338,7 +346,9 @@ export function ItemCreationModal({
         uid: editingEvent?.uid,
         status: taskStatusValue,
         priority: taskPriorityValue,
-        areaId: areaValue,
+        // Omitted when a project decides it, so the record never carries a
+        // second answer that disagrees with the one actually used.
+        areaId: derivedArea ? undefined : areaValue,
         projectId: projectValue,
         title: title.trim(),
         // Omitted entirely when the user has said it has no due date, so the
@@ -583,6 +593,14 @@ export function ItemCreationModal({
                 </View>
 
                 <Text allowFontScaling={false} style={styles.label}>Area:</Text>
+
+                {/* A project owns its items' area, so offering a choice here
+                    would be offering one that gets ignored. Shown, not asked. */}
+                {derivedArea ? (
+                  <Text allowFontScaling={false} style={styles.derivedArea}>
+                    {derivedAreaName} — from project
+                  </Text>
+                ) : (
                 <View style={styles.chipRow}>
                   <TouchableOpacity
                     style={[styles.stateChip, !areaValue && styles.stateChipSelected]}
@@ -618,10 +636,11 @@ export function ItemCreationModal({
                     </TouchableOpacity>
                   )}
                 </View>
+                )}
 
                 {/* Created inline so filing a task never means leaving the
                     form to go and set an area up first. */}
-                {addingArea && onCreateArea && (
+                {addingArea && onCreateArea && !derivedArea && (
                   <View style={styles.timeEntryRow}>
                     <TextInput
                       style={[styles.textInput, styles.timeInput]}
@@ -1041,6 +1060,13 @@ const styles = StyleSheet.create({
   },
   formContent: {
     marginBottom: 12,
+  },
+  derivedArea: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#000000',
+    paddingVertical: 4,
+    paddingHorizontal: 2,
   },
   label: {
     fontSize: 13,

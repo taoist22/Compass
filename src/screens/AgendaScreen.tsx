@@ -44,6 +44,7 @@ import {
 import { expandEventsForDate, parseIcsContent } from '../domain/icsParser';
 import { filterEvents } from '../domain/eventFilters';
 import { meetingNoteService } from '../supernote/meetingNoteService';
+import { resolveArea, resolveAreaId } from '../domain/membership';
 import { calendarStorage } from '../storage/calendarStorage';
 import { generateNoteFilename, noteIdentity } from '../domain/meetingSnapshot';
 import { formatTimeOfDay, minutesFromDate } from '../domain/timeOfDay';
@@ -1724,16 +1725,10 @@ export function AgendaScreen(): React.JSX.Element {
     // Stored beside the event rather than on it: a sync rebuilds the event
     // object from ICS, and anything held on it would be lost.
     const identity = noteIdentity(newEvent);
-    const chosenType = typeId ? calendarStorage.getEventTypes().find(t => t.id === typeId) : undefined;
-    const existingArea = calendarStorage.getMembership(identity).areaId;
-
-    calendarStorage.setMembership(identity, {
-      typeId,
-      projectId,
-      // Prefilled from the type, never forced: an area already chosen for this
-      // event wins, so tagging cannot silently refile something.
-      areaId: existingArea || chosenType?.defaultAreaId,
-    });
+    // No area is written. An event's area follows its project or its type,
+    // read fresh each time — storing it froze whichever type the event was
+    // tagged with first, with no way to correct it afterwards.
+    calendarStorage.setMembership(identity, { typeId, projectId, areaId: undefined });
     setMembershipRevision(n => n + 1);
 
     // Same uid means this is an edit: replace in place rather than appending a
@@ -1811,7 +1806,13 @@ export function AgendaScreen(): React.JSX.Element {
 
   const areaOfTask = (uid: string): string | undefined => {
     void membershipRevision;
-    return calendarStorage.getMembership(uid).areaId;
+    // Derived, not read: a project owns its items' area, so moving a project
+    // between areas moves everything filed under it.
+    return resolveAreaId(
+      calendarStorage.getMembership(uid),
+      calendarStorage.getProjects(),
+      calendarStorage.getEventTypes()
+    );
   };
 
   const countTasksInArea = (areaId: string): number => {
@@ -1877,9 +1878,12 @@ export function AgendaScreen(): React.JSX.Element {
   /** Area label for a task row, e.g. "[Home]". Empty when unfiled. */
   const areaTagFor = (uid: string): string => {
     void membershipRevision;
-    const areaId = calendarStorage.getMembership(uid).areaId;
-    if (!areaId) return '';
-    const area = areas.find(x => x.id === areaId);
+    const area = resolveArea(
+      calendarStorage.getMembership(uid),
+      calendarStorage.getProjects(),
+      areas,
+      calendarStorage.getEventTypes()
+    );
     return area ? `[${area.name}]` : '';
   };
 
