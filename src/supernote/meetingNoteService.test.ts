@@ -107,6 +107,24 @@ describe('meetingNoteService', () => {
     );
   });
 
+  test('uses the rectangle shape required by the Supernote element API', async () => {
+    await meetingNoteService.createOrAppendMeetingNote({
+      ...sampleEvent,
+      uid: 'evt-sdk-text-rect',
+    });
+
+    const calls = (PluginFileAPI.insertElements as jest.Mock).mock.calls;
+    const insertedElement = calls[calls.length - 1][2][0];
+    expect(insertedElement.textBox.textRect).toEqual({
+      left: 60,
+      top: 60,
+      right: 1260,
+      bottom: 860,
+    });
+    expect(insertedElement.textBox.textRect).not.toHaveProperty('x');
+    expect(insertedElement.textBox.textRect).not.toHaveProperty('width');
+  });
+
   test('appends page to existing recurring meeting notebook', async () => {
     (PluginFileAPI.getNoteTotalPageNum as jest.Mock).mockResolvedValueOnce({
       success: true,

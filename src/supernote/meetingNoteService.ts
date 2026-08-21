@@ -220,10 +220,10 @@ export class MeetingNoteService {
 
       // Insert snapshot header as text box element
       const textRect = {
-        x: 60,
-        y: 60,
-        width: 1200,
-        height: 800,
+        left: 60,
+        top: 60,
+        right: 1260,
+        bottom: 860,
       };
 
       // insertText only targets the note currently open in the editor. At this
