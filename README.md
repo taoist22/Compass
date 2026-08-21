@@ -2,6 +2,15 @@
 
 An e-ink optimized planning, PARA, calendar, task, and note workspace for Supernote. The repository retains its original `sn-calendar` directory and internal plugin identity so existing installations and stored data continue to upgrade safely.
 
+## Start Here
+
+- [Getting Started](docs/GETTING_STARTED.md) — install Compass and choose the simplest setup for your needs.
+- [Calendar Connections](docs/CALENDAR_CONNECTIONS.md) — Google feeds, iCloud CalDAV, custom CalDAV, and what is editable.
+- [PARA and Notes](docs/PARA_AND_NOTES.md) — what Projects, Areas, Resources, and Archive mean in Compass.
+- [Troubleshooting](docs/TROUBLESHOOTING.md) — common setup, sync, folder, and note-opening problems.
+
+Compass works without an online account. Calendar connections and PARA organization are optional and can be added later.
+
 ---
 
 ## Key Features
@@ -37,6 +46,8 @@ An e-ink optimized planning, PARA, calendar, task, and note workspace for Supern
 ---
 
 ## How to Use
+
+For a first-time walkthrough, use [Getting Started](docs/GETTING_STARTED.md). The sections below are a feature reference.
 
 ### Adding Events and Tasks by Handwriting
 
@@ -101,7 +112,7 @@ The **PARA** tab now represents all four categories:
 
 - **Projects** are actionable outcomes with due dates, progress, tasks, linked meeting notes, and a folder of supporting files. **Finish** records completion; **Archive** removes unfinished work from the active view without claiming it was completed.
 - **Areas** are ongoing responsibilities that contain active projects and can carry their own folder of notes and reference files. Archiving an Area asks whether its active Projects should also be archived or should remain active and become unfiled.
-- **Resources** are non-actionable reference topics backed by folders. Link an existing folder by choosing any file inside it; Compass lists the same regular files the device exposes, including `.note`, PDF, EPUB, Office, text, and image files. Compass can also create additional `.note` files. New Resources default to `/Note/Resources/<Resource name>`.
+- **Resources** are non-actionable reference topics backed by folders. Link an existing folder by choosing any file inside it; Compass lists the same regular files the device exposes, including `.note`, PDF, EPUB, Office, text, and image files. Compass can also create additional `.note` files. New Resources default to `/Note/Compass/Resources/<Resource name>`.
 - **Archive** combines finished or archived Projects, retired Areas, and archived Resources. Each can be restored; restoring a Project also restores its Area when necessary.
 - Projects, Areas, and Resources share the same **Refresh Files**, **+ New Note**, and **Choose Folder** workflow. Defaults are `/Note/Compass/Projects/<name>`, `/Note/Compass/Areas/<name>`, and `/Note/Compass/Resources/<name>`; existing Project notebooks migrate to their current containing folder.
 - The left pane follows PARA order—Projects, Areas, Resources, Archive—and each section expands into its items. Selecting an Area opens its projects; selecting a Resource lists the actual files in its folder on the right.
@@ -112,14 +123,14 @@ The **PARA** tab now represents all four categories:
 - Meetings display start/end times, locations, attendee lists, and agenda previews.
 
 ### 3. Create a Single Meeting Note
-- For single meetings, tap **📝 Create Meeting Note**.
+- Tap an event and choose **Create Note**. Taller Day View blocks also show the command directly.
 - The plugin automatically:
   1. Creates a new `.note` file named `YYYY-MM-DD - Meeting Title.note` in `/Note/Meetings/`.
   2. Stamps the frozen snapshot header at the top of Page 1.
   3. Opens the note so you can start writing your handwritten notes immediately.
 
 ### 4. Append a Page for Recurring Meetings
-- For recurring meetings (e.g. Weekly Standup), tap **➕ Append Meeting Page**.
+- Tap an occurrence and choose **Create Note**. Compass recognizes the series and appends rather than creating a separate notebook.
 - The plugin automatically:
   1. Locates the existing notebook `Series - Meeting Title.note` in `/Note/Meetings/`.
   2. Appends a new page to the end of the notebook.

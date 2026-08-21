@@ -27,6 +27,12 @@ build number and mark each result Pass, Fail, or Not Tested.
 - REC-11 Apple-to-Compass round trip passed for creating and deleting events.
 - Regression found: short event blocks (observed on an every-two-days series) had no room for the inline Create Note command. Event details must provide the command for every event duration.
 
+### Build 21 release-candidate result
+
+- REC-01 through REC-13: Pass on device.
+- CORE-01 through CORE-04: Pass on device.
+- Additional verified behavior: Google feed display, two-way Apple event creation/deletion, nested PARA folders and notes, event/task editing and deletion, persistence after restart, and no handwriting transfer between notes.
+
 ## Core Regression After Recurrence Changes
 
 | ID | Test | Expected result |

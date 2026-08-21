@@ -3234,7 +3234,7 @@ export function AgendaScreen(): React.JSX.Element {
               ['sync', '🔄 Calendars & Sync'],
               ['notes', '📁 Notes & Storage'],
               ['app', '🎨 App & View'],
-              ['help', '🛠 Help / Logs'],
+              ['help', '🛠 Help & Setup'],
             ] as Array<[SettingsTab, string]>).map(([key, label]) => (
               <TouchableOpacity
                 key={key}
@@ -3841,6 +3841,55 @@ export function AgendaScreen(): React.JSX.Element {
 
           {settingsTab === 'help' && (
             <>
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Start Here</Text>
+          <View style={styles.hintBox}>
+            <Text allowFontScaling={false} style={styles.hintTitle}>1. Choose only what you need</Text>
+            <Text allowFontScaling={false} style={styles.hintText}>
+              Local only: create events, tasks, notes, and PARA folders without connecting an
+              account. Google: import its Secret address in iCal format for a read-only schedule.
+              Apple or another CalDAV provider: connect it under Calendars &amp; Sync for editable,
+              two-way calendar events.
+            </Text>
+
+            <Text allowFontScaling={false} style={styles.hintTitle}>2. Set up notes when you are ready</Text>
+            <Text allowFontScaling={false} style={styles.hintText}>
+              The defaults work immediately. Notes &amp; Storage lets you choose different folders,
+              templates, and a daily-note filename. When browsing for a folder, select any file
+              inside it; once the Supernote picker opens, it selects files rather than folders.
+            </Text>
+
+            <Text allowFontScaling={false} style={styles.hintTitle}>3. Add PARA gradually</Text>
+            <Text allowFontScaling={false} style={styles.hintText}>
+              Projects have a finish line. Areas are ongoing responsibilities. Resources are
+              reference folders. Archive holds inactive items. You do not need to create all four
+              before using Compass.
+            </Text>
+          </View>
+
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Calendar Connection Guide</Text>
+          <View style={styles.hintBox}>
+            <Text allowFontScaling={false} style={styles.hintTitle}>Google Calendar</Text>
+            <Text allowFontScaling={false} style={styles.hintText}>
+              Use Google Calendar's Secret address in iCal format under Add a Calendar. It is a
+              subscription: Google events can be viewed but not edited or deleted from Compass.
+              To avoid typing the long address, put it in a .txt file on your computer, transfer
+              that file to Supernote, then use Import Setup or Calendar File.
+            </Text>
+
+            <Text allowFontScaling={false} style={styles.hintTitle}>Apple iCloud Calendar</Text>
+            <Text allowFontScaling={false} style={styles.hintText}>
+              Use your Apple Account email and an app-specific password under Calendars &amp; Sync.
+              This provides two-way calendar events. It does not place Compass tasks in modern
+              Apple Reminders; keep tasks local or mirror dated tasks as calendar events.
+            </Text>
+
+            <Text allowFontScaling={false} style={styles.hintTitle}>What the terms mean</Text>
+            <Text allowFontScaling={false} style={styles.hintText}>
+              ICS/iCal feed = read-only calendar subscription. CalDAV = an account connection that
+              can read and write. VTODO = the CalDAV task format, supported only by some services.
+            </Text>
+          </View>
+
           <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Adding Items by Handwriting</Text>
           <View style={styles.hintBox}>
             <Text allowFontScaling={false} style={styles.hintTitle}>Write it on one line</Text>
@@ -3851,7 +3900,17 @@ export function AgendaScreen(): React.JSX.Element {
             <Text allowFontScaling={false} style={styles.hintExample}>08-20-2026 10:00A Meeting B</Text>
             <Text allowFontScaling={false} style={styles.hintText}>
               Splitting them across lines confuses the handwriting recogniser and it misreads
-              times. With no date or time, the item becomes a task dated today.
+              times. With no date or time, the item becomes an undated task.
+            </Text>
+          </View>
+
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>If Something Does Not Appear</Text>
+          <View style={styles.hintBox}>
+            <Text allowFontScaling={false} style={styles.hintText}>
+              Tap Sync Now and read the source-by-source result. A Google feed must use the Secret
+              iCal address, not a normal calendar web page. For folder contents, select a file
+              inside the intended folder and then tap Refresh Files. Run the CalDAV diagnostic
+              below only when an editable account will not connect or sync.
             </Text>
           </View>
 
