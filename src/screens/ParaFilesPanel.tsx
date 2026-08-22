@@ -1,6 +1,7 @@
 import React from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { ParaFolderEntry } from '../supernote/exportService';
+import { HandwritingTextInput, HandwritingTextInputHandle } from './HandwritingTextInput';
 
 interface ParaFilesPanelProps {
   itemKey: string;
@@ -32,6 +33,7 @@ export function ParaFilesPanel({
   const [adding, setAdding] = React.useState<boolean>(false);
   const [choosing, setChoosing] = React.useState<boolean>(false);
   const [noteName, setNoteName] = React.useState<string>('');
+  const noteNameInputRef = React.useRef<HandwritingTextInputHandle>(null);
 
   const refresh = React.useCallback(async (target: string) => {
     setLoading(true);
@@ -117,7 +119,8 @@ export function ParaFilesPanel({
 
       {adding && !choosing && (
         <View style={styles.newRow}>
-          <TextInput
+          <HandwritingTextInput
+            ref={noteNameInputRef}
             style={styles.input}
             value={noteName}
             onChangeText={setNoteName}
@@ -126,7 +129,7 @@ export function ParaFilesPanel({
             autoCorrect={false}
           />
           <TouchableOpacity style={styles.button} onPress={async () => {
-            const name = noteName.trim();
+            const name = (noteNameInputRef.current?.getValue() ?? noteName).trim();
             if (name) {
               await onNewNote(name, viewFolder);
               await refresh(viewFolder);

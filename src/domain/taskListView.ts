@@ -121,6 +121,22 @@ export function filterByArea(
 }
 
 /**
+ * Tasks filed directly in an Area rather than inside one of its Projects.
+ * Project tasks are rendered with their Project, otherwise the Area view
+ * would show the same task twice.
+ */
+export function directTasksInArea(
+  tasks: CalendarTask[],
+  areaId: string,
+  areaOf: (uid: string) => string | undefined,
+  projectOf: (uid: string) => string | undefined
+): CalendarTask[] {
+  return [...tasks]
+    .filter(task => areaOf(task.uid) === areaId && !projectOf(task.uid))
+    .sort(compareTasks);
+}
+
+/**
  * Groups a filtered list for display.
  *
  * Empty groups are omitted rather than shown as headers with nothing beneath —

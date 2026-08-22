@@ -1,6 +1,7 @@
 import {
   countGrouped,
   filterByArea,
+  directTasksInArea,
   filterByProject,
   filterByScope,
   groupTasks,
@@ -249,6 +250,18 @@ describe('areas', () => {
     const partial = { areaOf: (uid: string) => membership[uid], nameOf: () => '' };
     const groups = groupTasks([makeTask('a')], 'area', NOW, partial);
     expect(groups).toHaveLength(1);
+  });
+
+  test('an Area shows only tasks filed directly in it', () => {
+    const projectMembership: Record<string, string> = { c: 'project-in-work' };
+    expect(
+      directTasksInArea(
+        tasks,
+        'area-work',
+        uid => membership[uid],
+        uid => projectMembership[uid]
+      ).map(task => task.uid)
+    ).toEqual(['a']);
   });
 });
 

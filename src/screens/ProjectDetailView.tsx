@@ -1,10 +1,11 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Area, CalendarTask, Project } from '../domain/types';
 import { isDone, statusGlyph, taskStatus } from '../domain/taskModel';
 import { projectOverdue, projectProgress, ProjectLookup } from '../domain/taskListView';
 import { ParaFilesPanel } from './ParaFilesPanel';
 import { ParaFolderEntry } from '../supernote/exportService';
+import { HandwritingTextInput, HandwritingTextInputHandle } from './HandwritingTextInput';
 
 interface ProjectDetailViewProps {
   project: Project;
@@ -74,11 +75,12 @@ export function ProjectDetailView({
 
   const [renaming, setRenaming] = React.useState<boolean>(false);
   const [draftName, setDraftName] = React.useState<string>(project.name);
+  const draftNameInputRef = React.useRef<HandwritingTextInputHandle>(null);
   const [confirmingDelete, setConfirmingDelete] = React.useState<boolean>(false);
   const [confirmingConversion, setConfirmingConversion] = React.useState<boolean>(false);
 
   const commitRename = () => {
-    const next = draftName.trim();
+    const next = (draftNameInputRef.current?.getValue() ?? draftName).trim();
     // A blank field is a mistake, not a request to lose the name.
     if (next && next !== project.name) onRename(next);
     setRenaming(false);
@@ -102,7 +104,8 @@ export function ProjectDetailView({
         </TouchableOpacity>
         {renaming ? (
           <>
-            <TextInput
+            <HandwritingTextInput
+              ref={draftNameInputRef}
               style={styles.titleInput}
               value={draftName}
               onChangeText={setDraftName}

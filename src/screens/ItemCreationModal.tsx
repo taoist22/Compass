@@ -1,11 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Dimensions,
   Modal,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -30,6 +29,7 @@ import {
 import { areaIsDerived } from '../domain/membership';
 import { DatePickerModal } from './DatePickerModal';
 import { TimePickerModal } from './TimePickerModal';
+import { HandwritingTextInput, HandwritingTextInputHandle } from './HandwritingTextInput';
 import {
   TimeRange,
   formatDuration,
@@ -141,6 +141,7 @@ export function ItemCreationModal({
   eventProjectId,
 }: ItemCreationModalProps): React.JSX.Element {
   const [title, setTitle] = useState<string>('');
+  const titleInputRef = useRef<HandwritingTextInputHandle>(null);
 
   // The caller's `type` is only the starting point — the user picks Event or
   // Task in the modal, which decides whether it becomes a calendar event or
@@ -148,6 +149,8 @@ export function ItemCreationModal({
   const [itemKind, setItemKind] = useState<'event' | 'task'>(type);
   const [location, setLocation] = useState<string>('');
   const [description, setDescription] = useState<string>('');
+  const locationInputRef = useRef<HandwritingTextInputHandle>(null);
+  const descriptionInputRef = useRef<HandwritingTextInputHandle>(null);
   const [isAllDay, setIsAllDay] = useState<boolean>(type === 'task');
   const [timeRange, setTimeRange] = useState<TimeRange>({ start: 9 * 60, end: 10 * 60 });
   const [timePickerTarget, setTimePickerTarget] = useState<'start' | 'end' | null>(null);
@@ -183,6 +186,7 @@ export function ItemCreationModal({
   const [taskPriorityValue, setTaskPriorityValue] = useState<TaskPriority>(1);
   const [areaValue, setAreaValue] = useState<string | undefined>(undefined);
   const [newAreaName, setNewAreaName] = useState<string>('');
+  const newAreaInputRef = useRef<HandwritingTextInputHandle>(null);
   const [addingArea, setAddingArea] = useState<boolean>(false);
   const [projectValue, setProjectValue] = useState<string | undefined>(undefined);
   // A chosen project decides the area; the form shows the answer rather than
@@ -192,6 +196,7 @@ export function ItemCreationModal({
     areas.find(a => a.id === projects.find(p => p.id === projectValue)?.areaId)?.name ||
     'No area';
   const [newProjectName, setNewProjectName] = useState<string>('');
+  const newProjectInputRef = useRef<HandwritingTextInputHandle>(null);
   const [addingProject, setAddingProject] = useState<boolean>(false);
   const [typeValue, setTypeValue] = useState<string | undefined>(undefined);
   const [repeatSettings, setRepeatSettings] = useState<RepeatSettings>(() =>
@@ -289,7 +294,10 @@ export function ItemCreationModal({
   const [selectedFeedId] = useState<string>(cleanFeeds[0]?.id || 'primary-cal');
 
   const handleSave = () => {
-    if (!title.trim()) return;
+    const currentTitle = titleInputRef.current?.getValue() ?? title;
+    const currentLocation = locationInputRef.current?.getValue() ?? location;
+    const currentDescription = descriptionInputRef.current?.getValue() ?? description;
+    if (!currentTitle.trim()) return;
 
     const start = new Date(itemDate);
     if (!isAllDay) {
@@ -314,9 +322,9 @@ export function ItemCreationModal({
         // Reuse the uid when editing so the CalDAV PUT overwrites the same
         // .ics; a fresh uid would leave the original behind as a duplicate.
         uid: editingEvent ? editingEvent.uid : `evt-user-${Date.now()}`,
-        summary: title.trim(),
-        location: location.trim() || undefined,
-        description: description.trim() || undefined,
+        summary: currentTitle.trim(),
+        location: currentLocation.trim() || undefined,
+        description: currentDescription.trim() || undefined,
         start,
         end,
         allDay: isAllDay,
@@ -349,12 +357,12 @@ export function ItemCreationModal({
         // second answer that disagrees with the one actually used.
         areaId: derivedArea ? undefined : areaValue,
         projectId: projectValue,
-        title: title.trim(),
+        title: currentTitle.trim(),
         // Omitted entirely when the user has said it has no due date, so the
         // task lands in No Date rather than being silently dated today.
         dueDate: noDueDate ? undefined : start,
         allDay: isAllDay,
-        notes: description.trim() || undefined,
+        notes: currentDescription.trim() || undefined,
       });
     }
 
@@ -370,6 +378,10 @@ export function ItemCreationModal({
     day: 'numeric',
     year: 'numeric',
   });
+
+  // Unmount native inputs between openings so Android starts each handwriting
+  // composition from the freshly seeded form values.
+  if (!visible) return <></>;
 
   return (
     <Modal visible={visible} transparent animationType="fade">
@@ -457,7 +469,8 @@ export function ItemCreationModal({
             contentContainerStyle={styles.formContentInner}
           >
             <Text allowFontScaling={false} style={styles.label}>{itemKind === 'event' ? 'Event Title:' : 'Task Name:'}</Text>
-            <TextInput
+            <HandwritingTextInput
+              ref={titleInputRef}
               style={styles.textInput}
               value={title}
               onChangeText={setTitle}
@@ -678,7 +691,8 @@ export function ItemCreationModal({
             {itemKind === 'event' && (
               <>
                 <Text allowFontScaling={false} style={styles.label}>Location / Room (Optional):</Text>
-                <TextInput
+                <HandwritingTextInput
+                  ref={locationInputRef}
                   style={styles.textInput}
                   value={location}
                   onChangeText={setLocation}
@@ -760,7 +774,8 @@ export function ItemCreationModal({
                     form to go and set an area up first. */}
                 {addingArea && onCreateArea && !derivedArea && (
                   <View style={styles.timeEntryRow}>
-                    <TextInput
+                    <HandwritingTextInput
+                      ref={newAreaInputRef}
                       style={[styles.textInput, styles.timeInput]}
                       value={newAreaName}
                       onChangeText={setNewAreaName}
@@ -771,7 +786,7 @@ export function ItemCreationModal({
                     <TouchableOpacity
                       style={styles.meridiemBtn}
                       onPress={() => {
-                        const name = newAreaName.trim();
+                        const name = (newAreaInputRef.current?.getValue() ?? newAreaName).trim();
                         if (!name) {
                           setAddingArea(false);
                           return;
@@ -829,7 +844,8 @@ export function ItemCreationModal({
 
                 {addingProject && onCreateProject && (
                   <View style={styles.timeEntryRow}>
-                    <TextInput
+                    <HandwritingTextInput
+                      ref={newProjectInputRef}
                       style={[styles.textInput, styles.timeInput]}
                       value={newProjectName}
                       onChangeText={setNewProjectName}
@@ -840,7 +856,7 @@ export function ItemCreationModal({
                     <TouchableOpacity
                       style={styles.meridiemBtn}
                       onPress={() => {
-                        const name = newProjectName.trim();
+                        const name = (newProjectInputRef.current?.getValue() ?? newProjectName).trim();
                         if (!name) {
                           setAddingProject(false);
                           return;
@@ -957,7 +973,8 @@ export function ItemCreationModal({
             )}
 
             <Text allowFontScaling={false} style={styles.label}>Description / Details:</Text>
-            <TextInput
+            <HandwritingTextInput
+              ref={descriptionInputRef}
               style={[styles.textInput, styles.multilineInput]}
               value={description}
               onChangeText={setDescription}

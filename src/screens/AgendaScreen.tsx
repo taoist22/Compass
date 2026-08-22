@@ -8,11 +8,11 @@ import {
   StyleSheet,
   Switch,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { PluginManager, FileUtils, PluginCommAPI, RattaFileSelector } from 'sn-plugin-lib';
+import { HandwritingTextInput, HandwritingTextInputHandle } from './HandwritingTextInput';
 import {
   Area,
   CalendarEvent,
@@ -178,6 +178,7 @@ export function AgendaScreen(): React.JSX.Element {
   /** UIDs from the last feed fetch, so a refresh can replace them. */
   const feedUidsRef = useRef<Set<string>>(new Set());
   const [newFeedUrl, setNewFeedUrl] = useState<string>('');
+  const newFeedInputRef = useRef<HandwritingTextInputHandle>(null);
   const [targetNotesDir, setTargetNotesDir] = useState<string>('/storage/emulated/0/Note/Meetings');
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('sync');
@@ -194,12 +195,18 @@ export function AgendaScreen(): React.JSX.Element {
   const [caldavProvider, setCaldavProvider] = useState<CaldavProviderType>('icloud');
   const [caldavAppleId, setCaldavAppleId] = useState<string>('');
   const [caldavPassword, setCaldavPassword] = useState<string>('');
+  const caldavCustomUrlInputRef = useRef<HandwritingTextInputHandle>(null);
+  const caldavAppleIdInputRef = useRef<HandwritingTextInputHandle>(null);
+  const caldavPasswordInputRef = useRef<HandwritingTextInputHandle>(null);
   const [caldavUrl, setCaldavUrl] = useState<string>('');
   const [caldavTaskListUrl, setCaldavTaskListUrl] = useState<string>('');
   const [taskCaldavEnabled, setTaskCaldavEnabled] = useState<boolean>(false);
   const [taskCaldavServerUrl, setTaskCaldavServerUrl] = useState<string>('');
   const [taskCaldavUsername, setTaskCaldavUsername] = useState<string>('');
   const [taskCaldavPassword, setTaskCaldavPassword] = useState<string>('');
+  const taskServerInputRef = useRef<HandwritingTextInputHandle>(null);
+  const taskUsernameInputRef = useRef<HandwritingTextInputHandle>(null);
+  const taskPasswordInputRef = useRef<HandwritingTextInputHandle>(null);
   const [taskCaldavCollectionUrl, setTaskCaldavCollectionUrl] = useState<string>('');
   // Text captured from a lasso selection, prefilled into the creation modal.
   const [lassoDraftTitle, setLassoDraftTitle] = useState<string>('');
@@ -211,6 +218,8 @@ export function AgendaScreen(): React.JSX.Element {
   const [pushTasksAsEvents, setPushTasksAsEvents] = useState<boolean>(false);
   const [defaultView, setDefaultView] = useState<CalendarViewMode>('month');
   const [newTypeName, setNewTypeName] = useState<string>('');
+  const newTypeInputRef = useRef<HandwritingTextInputHandle>(null);
+  const folderInputRefs = useRef<Partial<Record<NoteKind, HandwritingTextInputHandle | null>>>({});
   const [iconPickerTypeId, setIconPickerTypeId] = useState<string | null>(null);
   /** Event type whose template is being chosen, if any. */
   const [typeTemplatePicker, setTypeTemplatePicker] = useState<EventType | null>(null);
@@ -719,23 +728,29 @@ export function AgendaScreen(): React.JSX.Element {
   };
 
   const handleRunDiagnostics = async () => {
-    if (!caldavAppleId.trim() || !caldavPassword.trim()) {
+    const appleId = (caldavAppleIdInputRef.current?.getValue() ?? caldavAppleId).trim();
+    const password = (caldavPasswordInputRef.current?.getValue() ?? caldavPassword).trim();
+    const customUrl = (caldavCustomUrlInputRef.current?.getValue() ?? caldavCustomUrl).trim();
+    if (!appleId || !password) {
       setStatusMsg('Please enter your Email/Username and App-Specific Password first.');
       return;
     }
     setStatusMsg('Running step-by-step CalDAV Diagnostic probe...');
     const logs = await caldavService.runCalDavDiagnostics({
       provider: caldavProvider,
-      appleId: caldavAppleId.trim(),
-      appPassword: caldavPassword.trim(),
-      customUrl: caldavCustomUrl.trim(),
+      appleId,
+      appPassword: password,
+      customUrl,
     });
     setDiagLogs(logs);
     setStatusMsg(`Diagnostic completed (${logs.length} trace steps recorded).`);
   };
 
   const handleTestCaldavConnection = async () => {
-    if (!caldavAppleId.trim() || !caldavPassword.trim()) {
+    const appleId = (caldavAppleIdInputRef.current?.getValue() ?? caldavAppleId).trim();
+    const password = (caldavPasswordInputRef.current?.getValue() ?? caldavPassword).trim();
+    const customUrl = (caldavCustomUrlInputRef.current?.getValue() ?? caldavCustomUrl).trim();
+    if (!appleId || !password) {
       setStatusMsg('Please enter your Email/Username and App-Specific Password.');
       return;
     }
@@ -744,13 +759,13 @@ export function AgendaScreen(): React.JSX.Element {
     setStatusMsg(`Connecting to ${providerName} CalDAV...`);
     const res = await caldavService.discoverIcloudCalendarUrl({
       provider: caldavProvider,
-      appleId: caldavAppleId.trim(),
-      appPassword: caldavPassword.trim(),
-      customUrl: caldavCustomUrl.trim(),
+      appleId,
+      appPassword: password,
+      customUrl,
     });
 
     if (res.success) {
-      const resolvedUrl = res.calendarUrl || caldavService.resolveProviderInitialUrl(caldavProvider, caldavCustomUrl);
+      const resolvedUrl = res.calendarUrl || caldavService.resolveProviderInitialUrl(caldavProvider, customUrl);
       setCaldavUrl(resolvedUrl);
       setCaldavTaskListUrl('');
       setCaldavEnabled(true);
@@ -758,14 +773,14 @@ export function AgendaScreen(): React.JSX.Element {
       calendarStorage.updateSettings({
         caldavEnabled: true,
         caldavProvider,
-        caldavAppleId: caldavAppleId.trim(),
-        caldavPassword: caldavPassword.trim(),
+        caldavAppleId: appleId,
+        caldavPassword: password,
         caldavCalendarUrl: resolvedUrl,
         // Event accounts no longer double as task accounts. In particular,
         // iCloud's advertised legacy VTODO collection is not the modern
         // Reminders database visible on current Apple devices.
         caldavTaskListUrl: '',
-        caldavCustomUrl: caldavCustomUrl.trim(),
+        caldavCustomUrl: customUrl,
       });
 
       const push = await pushPendingItems();
@@ -785,9 +800,9 @@ export function AgendaScreen(): React.JSX.Element {
   };
 
   const handleTestTaskCaldavConnection = async () => {
-    const serverUrl = taskCaldavServerUrl.trim();
-    const username = taskCaldavUsername.trim();
-    const password = taskCaldavPassword.trim();
+    const serverUrl = (taskServerInputRef.current?.getValue() ?? taskCaldavServerUrl).trim();
+    const username = (taskUsernameInputRef.current?.getValue() ?? taskCaldavUsername).trim();
+    const password = (taskPasswordInputRef.current?.getValue() ?? taskCaldavPassword).trim();
     if (!serverUrl || !username || !password) {
       setStatusMsg('Enter the task server URL, username, and password first.');
       return;
@@ -2881,8 +2896,9 @@ export function AgendaScreen(): React.JSX.Element {
   };
 
   const handleFetchFeedUrl = async () => {
-    if (!newFeedUrl.trim()) return;
-    const feedUrl = normaliseFeedUrl(newFeedUrl);
+    const draftUrl = (newFeedInputRef.current?.getValue() ?? newFeedUrl).trim();
+    if (!draftUrl) return;
+    const feedUrl = normaliseFeedUrl(draftUrl);
     if (!feedUrl) {
       setStatusMsg('Calendar subscriptions must use HTTPS (webcal:// is accepted and upgraded).');
       return;
@@ -3296,7 +3312,8 @@ export function AgendaScreen(): React.JSX.Element {
 
           {caldavProvider === 'custom' && (
             <View style={styles.inputRow}>
-              <TextInput
+              <HandwritingTextInput
+                ref={caldavCustomUrlInputRef}
                 style={styles.textInput}
                 value={caldavCustomUrl}
                 onChangeText={setCaldavCustomUrl}
@@ -3308,7 +3325,8 @@ export function AgendaScreen(): React.JSX.Element {
           )}
 
           <View style={styles.inputRow}>
-            <TextInput
+            <HandwritingTextInput
+              ref={caldavAppleIdInputRef}
               style={styles.textInput}
               value={caldavAppleId}
               onChangeText={setCaldavAppleId}
@@ -3319,7 +3337,8 @@ export function AgendaScreen(): React.JSX.Element {
           </View>
 
           <View style={styles.inputRow}>
-            <TextInput
+            <HandwritingTextInput
+              ref={caldavPasswordInputRef}
               style={styles.textInput}
               value={caldavPassword}
               onChangeText={setCaldavPassword}
@@ -3369,7 +3388,8 @@ export function AgendaScreen(): React.JSX.Element {
           </Text>
 
           <View style={styles.inputRow}>
-            <TextInput
+            <HandwritingTextInput
+              ref={taskServerInputRef}
               style={styles.textInput}
               value={taskCaldavServerUrl}
               onChangeText={setTaskCaldavServerUrl}
@@ -3379,7 +3399,8 @@ export function AgendaScreen(): React.JSX.Element {
             />
           </View>
           <View style={styles.inputRow}>
-            <TextInput
+            <HandwritingTextInput
+              ref={taskUsernameInputRef}
               style={styles.textInput}
               value={taskCaldavUsername}
               onChangeText={setTaskCaldavUsername}
@@ -3389,7 +3410,8 @@ export function AgendaScreen(): React.JSX.Element {
             />
           </View>
           <View style={styles.inputRow}>
-            <TextInput
+            <HandwritingTextInput
+              ref={taskPasswordInputRef}
               style={styles.textInput}
               value={taskCaldavPassword}
               onChangeText={setTaskCaldavPassword}
@@ -3440,7 +3462,8 @@ export function AgendaScreen(): React.JSX.Element {
             </TouchableOpacity>
           )}
           <View style={styles.inputRow}>
-            <TextInput
+            <HandwritingTextInput
+              ref={newFeedInputRef}
               style={styles.textInput}
               value={newFeedUrl}
               onChangeText={setNewFeedUrl}
@@ -3484,7 +3507,7 @@ export function AgendaScreen(): React.JSX.Element {
           </Text>
 
           <Text allowFontScaling={false} style={styles.fieldLabel}>Filename format</Text>
-          <TextInput
+          <HandwritingTextInput
             style={styles.textInput}
             value={dailyNoteFormat}
             onChangeText={value => {
@@ -3572,11 +3595,15 @@ export function AgendaScreen(): React.JSX.Element {
 
                   <View style={styles.templateCol}>
                     <Text allowFontScaling={false} style={styles.fieldLabel}>Folder</Text>
-                    <TextInput
+                    <HandwritingTextInput
+                      ref={input => { folderInputRefs.current[kind] = input; }}
                       style={[styles.textInput, styles.folderInput]}
                       value={folderDrafts[kind] ?? folder}
                       onChangeText={text => setFolderDrafts(prev => ({ ...prev, [kind]: text }))}
-                      onEndEditing={() => saveNoteFolder(kind, folderDrafts[kind] ?? folder)}
+                      onEndEditing={() => saveNoteFolder(
+                        kind,
+                        folderInputRefs.current[kind]?.getValue() ?? folderDrafts[kind] ?? folder
+                      )}
                       placeholder="/storage/emulated/0/Note/..."
                       autoCapitalize="none"
                       autoCorrect={false}
@@ -3640,7 +3667,7 @@ export function AgendaScreen(): React.JSX.Element {
                   {type.icon || '·'}
                 </Text>
               </TouchableOpacity>
-              <TextInput
+              <HandwritingTextInput
                 style={[styles.textInput, styles.typeNameInput]}
                 value={type.name}
                 onChangeText={text => handleUpdateEventType({ ...type, name: text })}
@@ -3720,7 +3747,8 @@ export function AgendaScreen(): React.JSX.Element {
           )}
 
           <View style={[styles.timeRow, { maxWidth: 660 }]}>
-            <TextInput
+            <HandwritingTextInput
+              ref={newTypeInputRef}
               style={[styles.textInput, styles.typeNameInput]}
               value={newTypeName}
               onChangeText={setNewTypeName}
@@ -3731,7 +3759,7 @@ export function AgendaScreen(): React.JSX.Element {
             <TouchableOpacity
               style={styles.nudgeBtn}
               onPress={() => {
-                const name = newTypeName.trim();
+                const name = (newTypeInputRef.current?.getValue() ?? newTypeName).trim();
                 if (!name) return;
                 handleCreateEventType(name);
                 setNewTypeName('');
@@ -4224,6 +4252,7 @@ export function AgendaScreen(): React.JSX.Element {
               resources={resources}
               tasks={tasks}
               projectOf={projectOfTask}
+              areaOf={areaOfTask}
               onNewProject={(name, areaId) => handleCreateProject(name, areaId)}
               onNewArea={name => handleCreateArea(name)}
               onNewResource={name => handleCreateResource(name)}

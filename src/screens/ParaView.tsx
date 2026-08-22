@@ -1,14 +1,16 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Area, CalendarTask, Project, Resource } from '../domain/types';
 import { isDone, statusGlyph, taskStatus } from '../domain/taskModel';
 import { ICON_CHOICES } from '../domain/noteTemplates';
 import { ParaFilesPanel } from './ParaFilesPanel';
 import { ParaFolderEntry } from '../supernote/exportService';
+import { HandwritingTextInput, HandwritingTextInputHandle } from './HandwritingTextInput';
 import {
   activeProjects,
   archivedProjects,
   areaProjectCounts,
+  directTasksInArea,
   projectOverdue,
   projectProgress,
   projectsByArea,
@@ -24,6 +26,7 @@ interface ParaViewProps {
   resources: Resource[];
   tasks: CalendarTask[];
   projectOf: (uid: string) => string | undefined;
+  areaOf: (uid: string) => string | undefined;
   onNewProject: (name: string, areaId?: string) => void;
   onNewArea: (name: string) => void;
   onNewResource: (name: string) => void;
@@ -69,6 +72,7 @@ export function ParaView({
   resources,
   tasks,
   projectOf,
+  areaOf,
   onNewProject,
   onNewArea,
   onNewResource,
@@ -131,9 +135,13 @@ export function ParaView({
 
   const tasksOf = (projectId: string) => tasks.filter(t => projectOf(t.uid) === projectId);
   const selectedArea = activeAreas.find(a => a.id === selectedAreaId);
+  const selectedAreaTasks = selectedArea
+    ? directTasksInArea(tasks, selectedArea.id, areaOf, projectOf)
+    : [];
   const selectedProject = projects.find(project => project.id === selectedProjectId);
   const [editingAreaId, setEditingAreaId] = React.useState<string | null>(null);
   const [editName, setEditName] = React.useState<string>('');
+  const editAreaInputRef = React.useRef<HandwritingTextInputHandle>(null);
   const [iconOpen, setIconOpen] = React.useState<boolean>(false);
   const [confirmingAreaId, setConfirmingAreaId] = React.useState<string | null>(null);
   const [confirmingArchiveAreaId, setConfirmingArchiveAreaId] = React.useState<string | null>(null);
@@ -146,9 +154,12 @@ export function ParaView({
   };
   const [adding, setAdding] = React.useState<'project' | 'area' | 'resource' | null>(null);
   const [newName, setNewName] = React.useState<string>('');
+  const newItemInputRef = React.useRef<HandwritingTextInputHandle>(null);
   const [editingResourceId, setEditingResourceId] = React.useState<string | null>(null);
   const [resourceName, setResourceName] = React.useState<string>('');
   const [resourceDescription, setResourceDescription] = React.useState<string>('');
+  const resourceNameInputRef = React.useRef<HandwritingTextInputHandle>(null);
+  const resourceDescriptionInputRef = React.useRef<HandwritingTextInputHandle>(null);
   const [resourceIcon, setResourceIcon] = React.useState<string>('');
 
   const showProjects = section === 'projects';
@@ -201,7 +212,8 @@ export function ParaView({
           already does. */}
       {adding && (
         <View style={styles.addRow}>
-          <TextInput
+          <HandwritingTextInput
+            ref={newItemInputRef}
             style={styles.addInput}
             value={newName}
             onChangeText={setNewName}
@@ -222,7 +234,7 @@ export function ParaView({
           <TouchableOpacity
             style={styles.topBtn}
             onPress={() => {
-              const name = newName.trim();
+              const name = (newItemInputRef.current?.getValue() ?? newName).trim();
               if (name) {
                 if (adding === 'project') onNewProject(name, selectedArea?.id);
                 else if (adding === 'area') onNewArea(name);
@@ -413,7 +425,8 @@ export function ParaView({
                       <TouchableOpacity style={styles.iconBtn} onPress={() => setIconOpen(open => !open)}>
                         <Text allowFontScaling={false} style={styles.iconBtnText}>{selectedArea.icon || '+'}</Text>
                       </TouchableOpacity>
-                      <TextInput
+                      <HandwritingTextInput
+                        ref={editAreaInputRef}
                         style={styles.areaInput}
                         value={editName}
                         onChangeText={setEditName}
@@ -427,7 +440,8 @@ export function ParaView({
                             key={icon}
                             style={styles.iconChoice}
                             onPress={() => {
-                              onRenameArea(selectedArea.id, editName.trim() || selectedArea.name, icon);
+                              const name = editAreaInputRef.current?.getValue() ?? editName;
+                              onRenameArea(selectedArea.id, name.trim() || selectedArea.name, icon);
                               setIconOpen(false);
                             }}
                           >
@@ -440,7 +454,7 @@ export function ParaView({
                       <TouchableOpacity
                         style={styles.rowBtn}
                         onPress={() => {
-                          const next = editName.trim();
+                          const next = (editAreaInputRef.current?.getValue() ?? editName).trim();
                           if (next) onRenameArea(selectedArea.id, next, selectedArea.icon);
                           closeAreaEditor();
                         }}
@@ -544,6 +558,33 @@ export function ParaView({
                 </View>
               </TouchableOpacity>
             ))}
+
+            {showAreas && selectedArea && selectedAreaTasks.length > 0 && (
+              <View style={styles.projectCard}>
+                <Text allowFontScaling={false} style={styles.groupHeading}>Area Tasks</Text>
+                {selectedAreaTasks.map((task, idx) => (
+                  <View key={task.uid} style={styles.taskRow}>
+                    <Text allowFontScaling={false} style={styles.treeStem}>
+                      {idx === selectedAreaTasks.length - 1 ? '└─' : '├─'}
+                    </Text>
+                    <TouchableOpacity onPress={() => onToggleTask(task)}>
+                      <Text allowFontScaling={false} style={styles.taskGlyph}>
+                        {statusGlyph(taskStatus(task))}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.taskBody} onPress={() => onEditTask(task)}>
+                      <Text
+                        allowFontScaling={false}
+                        numberOfLines={1}
+                        style={[styles.taskText, isDone(task) && styles.taskTextDone]}
+                      >
+                        {task.title}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
 
             {showProjects && grouped.length === 0 && (
               <Text allowFontScaling={false} style={styles.empty}>
@@ -688,14 +729,16 @@ export function ParaView({
               <View key={resource.id} style={styles.projectCard}>
                 {editing ? (
                   <>
-                    <TextInput
+                    <HandwritingTextInput
+                      ref={resourceNameInputRef}
                       style={styles.areaInput}
                       value={resourceName}
                       onChangeText={setResourceName}
                       placeholder="Resource name"
                       placeholderTextColor="#707070"
                     />
-                    <TextInput
+                    <HandwritingTextInput
+                      ref={resourceDescriptionInputRef}
                       style={[styles.areaInput, styles.resourceDescriptionInput]}
                       value={resourceDescription}
                       onChangeText={setResourceDescription}
@@ -713,11 +756,12 @@ export function ParaView({
                     <TouchableOpacity
                       style={styles.projectNoteBtn}
                       onPress={() => {
-                        const name = resourceName.trim();
+                        const name = (resourceNameInputRef.current?.getValue() ?? resourceName).trim();
+                        const description = resourceDescriptionInputRef.current?.getValue() ?? resourceDescription;
                         if (name) onUpdateResource({
                           ...resource,
                           name,
-                          description: resourceDescription.trim() || undefined,
+                          description: description.trim() || undefined,
                           icon: resourceIcon || undefined,
                         });
                         setEditingResourceId(null);
