@@ -134,13 +134,6 @@ The **PARA** tab now represents all four categories:
   2. Links the note to the event.
   3. Opens the note so you can start handwriting immediately.
 
-### 4. Append a Page for Recurring Meetings
-- Tap an occurrence and choose **Create Note**. SNFolio recognizes the series and appends rather than creating a separate notebook.
-- The plugin automatically:
-  1. Locates the existing series notebook in the configured meeting-note folder.
-  2. Appends a new page using the configured meeting template.
-  3. Opens the notebook straight to the new page.
-
 ---
 
 ## Notes Directory
@@ -152,8 +145,7 @@ By default, meeting notes are saved in:
 
 You can change the meeting-note folder and template under **Feeds / Config → Notes & Storage**. Event types can use their own folder and template.
 
-Device release checks are tracked in [TEST_MATRIX.md](TEST_MATRIX.md), including recurrence, persistence, deletion, synchronization, and series notebooks.
-You can view, move, or organize these notebooks in Supernote's built-in Note app anytime.
+
 
 ---
 
