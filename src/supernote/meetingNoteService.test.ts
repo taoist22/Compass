@@ -88,7 +88,7 @@ describe('meetingNoteService', () => {
     expect(PluginFileAPI.createNote).toHaveBeenCalled();
     expect(PluginFileAPI.insertElements).toHaveBeenCalledWith(
       expect.stringContaining('Design Review.note'),
-      1,
+      0,
       expect.any(Array)
     );
   });
@@ -102,7 +102,7 @@ describe('meetingNoteService', () => {
     expect(res.success).toBe(true);
     expect(PluginFileAPI.insertElements).toHaveBeenCalledWith(
       expect.stringContaining('Design Review.note'),
-      1,
+      0,
       [expect.objectContaining({ textBox: expect.any(Object) })]
     );
   });
@@ -141,6 +141,11 @@ describe('meetingNoteService', () => {
     expect(res.isNewFile).toBe(false);
     expect(res.pageNum).toBe(4);
     expect(PluginFileAPI.insertNotePage).toHaveBeenCalled();
+    expect(PluginFileAPI.insertElements).toHaveBeenCalledWith(
+      expect.stringContaining('Design Review.note'),
+      3,
+      expect.any(Array)
+    );
   });
 
   test('fails instead of writing the snapshot onto the previous page when append fails', async () => {

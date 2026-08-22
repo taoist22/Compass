@@ -253,7 +253,10 @@ export class MeetingNoteService {
       textElement.textBox.textFrameStyle = 0;
       textElement.textBox.textEditable = 0;
 
-      const insertTextRes: any = await PluginFileAPI.insertElements(notePath, pageNum, [textElement]);
+      // File element APIs use zero-based page indices, while the native note
+      // opener and the page number shown to users are one-based.
+      const pageIndex = pageNum - 1;
+      const insertTextRes: any = await PluginFileAPI.insertElements(notePath, pageIndex, [textElement]);
       if (!insertTextRes || insertTextRes.success !== true) {
         return {
           success: false,
