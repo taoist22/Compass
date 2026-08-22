@@ -16,8 +16,6 @@ jest.mock('sn-plugin-lib', () => ({
     insertText: jest.fn().mockResolvedValue({ success: true }),
   },
   PluginCommAPI: {
-    // The real SDK returns APIResponse<Element>, whose payload key is result.
-    createElement: jest.fn().mockResolvedValue({ success: true, result: { textBox: {} } }),
     getNoteSystemTemplates: jest.fn().mockResolvedValue([
       {
         name: 'style_8mm_ruled_line',
@@ -81,48 +79,13 @@ describe('meetingNoteService', () => {
   });
 
   test('creates new meeting note file when notebook does not exist', async () => {
+    (PluginFileAPI.insertElements as jest.Mock).mockClear();
     const res = await meetingNoteService.createOrAppendMeetingNote(sampleEvent);
     expect(res.success).toBe(true);
     expect(res.isNewFile).toBe(true);
     expect(res.pageNum).toBe(1);
     expect(PluginFileAPI.createNote).toHaveBeenCalled();
-    expect(PluginFileAPI.insertElements).toHaveBeenCalledWith(
-      expect.stringContaining('Design Review.note'),
-      0,
-      expect.any(Array)
-    );
-  });
-
-  test('reads the snapshot text element from the SDK result payload', async () => {
-    const res = await meetingNoteService.createOrAppendMeetingNote({
-      ...sampleEvent,
-      uid: 'evt-sdk-result',
-    });
-
-    expect(res.success).toBe(true);
-    expect(PluginFileAPI.insertElements).toHaveBeenCalledWith(
-      expect.stringContaining('Design Review.note'),
-      0,
-      [expect.objectContaining({ textBox: expect.any(Object) })]
-    );
-  });
-
-  test('uses the rectangle shape required by the Supernote element API', async () => {
-    await meetingNoteService.createOrAppendMeetingNote({
-      ...sampleEvent,
-      uid: 'evt-sdk-text-rect',
-    });
-
-    const calls = (PluginFileAPI.insertElements as jest.Mock).mock.calls;
-    const insertedElement = calls[calls.length - 1][2][0];
-    expect(insertedElement.textBox.textRect).toEqual({
-      left: 60,
-      top: 60,
-      right: 1260,
-      bottom: 860,
-    });
-    expect(insertedElement.textBox.textRect).not.toHaveProperty('x');
-    expect(insertedElement.textBox.textRect).not.toHaveProperty('width');
+    expect(PluginFileAPI.insertElements).not.toHaveBeenCalled();
   });
 
   test('appends page to existing recurring meeting notebook', async () => {
@@ -141,14 +104,9 @@ describe('meetingNoteService', () => {
     expect(res.isNewFile).toBe(false);
     expect(res.pageNum).toBe(4);
     expect(PluginFileAPI.insertNotePage).toHaveBeenCalled();
-    expect(PluginFileAPI.insertElements).toHaveBeenCalledWith(
-      expect.stringContaining('Design Review.note'),
-      3,
-      expect.any(Array)
-    );
   });
 
-  test('fails instead of writing the snapshot onto the previous page when append fails', async () => {
+  test('fails cleanly when appending a recurring notebook page fails', async () => {
     (PluginFileAPI.getNoteTotalPageNum as jest.Mock).mockResolvedValueOnce({ success: true, data: 3 });
     (PluginFileAPI.insertNotePage as jest.Mock).mockResolvedValueOnce({
       success: false,

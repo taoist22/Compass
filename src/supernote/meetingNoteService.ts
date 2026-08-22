@@ -1,6 +1,6 @@
 import { FileUtils, PluginCommAPI, PluginFileAPI } from 'sn-plugin-lib';
-import { CalendarEvent, CalendarSettings, EventType, MeetingSnapshot, NoteKind } from '../domain/types';
-import { createMeetingSnapshot, generateNoteFilename } from '../domain/meetingSnapshot';
+import { CalendarEvent, CalendarSettings, EventType, NoteKind } from '../domain/types';
+import { generateNoteFilename } from '../domain/meetingSnapshot';
 import {
   DEFAULT_SYSTEM_TEMPLATE,
   resolveNoteDestination,
@@ -170,9 +170,6 @@ export class MeetingNoteService {
     const filename = generateNoteFilename(event, isRecurringSeries, settings.seriesNotebookPrefix, kind);
     const notePath = `${targetDir}/${filename}`;
 
-    // Wording follows this note's own kind, not a global Business/Academic mode.
-    const snapshot: MeetingSnapshot = createMeetingSnapshot(event, kind);
-
     try {
       let pageNum = 1;
       let isNewFile = false;
@@ -216,55 +213,6 @@ export class MeetingNoteService {
           };
         }
         pageNum = 1;
-      }
-
-      // Insert snapshot header as text box element
-      const textRect = {
-        left: 60,
-        top: 60,
-        right: 1260,
-        bottom: 860,
-      };
-
-      // insertText only targets the note currently open in the editor. At this
-      // point the new file/page is not open yet, so use the file API that names
-      // the destination explicitly.
-      const elRes: any = await PluginCommAPI.createElement(500);
-      // PluginCommAPI documents APIResponse<Element> and returns the Element
-      // under `result`. Early test doubles and some older host responses used
-      // `data`, so accept both without letting the compatibility path mask the
-      // real SDK contract again.
-      const createdElement = elRes?.success ? (elRes.result ?? elRes.data) : null;
-      const textElement = createdElement?.textBox ? createdElement : null;
-      if (!textElement) {
-        return {
-          success: false,
-          notePath,
-          pageNum,
-          isNewFile,
-          error: elRes?.error?.message || 'Could not create the meeting snapshot header.',
-        };
-      }
-      textElement.textBox.textContentFull = snapshot.formattedHeaderText;
-      textElement.textBox.textRect = textRect;
-      textElement.textBox.fontSize = 20;
-      textElement.textBox.textAlign = 0;
-      textElement.textBox.textFrameWidthType = 0;
-      textElement.textBox.textFrameStyle = 0;
-      textElement.textBox.textEditable = 0;
-
-      // File element APIs use zero-based page indices, while the native note
-      // opener and the page number shown to users are one-based.
-      const pageIndex = pageNum - 1;
-      const insertTextRes: any = await PluginFileAPI.insertElements(notePath, pageIndex, [textElement]);
-      if (!insertTextRes || insertTextRes.success !== true) {
-        return {
-          success: false,
-          notePath,
-          pageNum,
-          isNewFile,
-          error: insertTextRes?.error?.message || 'Could not write the meeting snapshot header.',
-        };
       }
 
       // Record mapping
