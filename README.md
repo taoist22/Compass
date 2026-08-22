@@ -1,9 +1,5 @@
 # Compass for Supernote
 
-
-Uploading Compass-demo-small.mp4…
-
-
 An e-ink optimized planning, PARA, calendar, task, and note workspace for Supernote. The repository retains its original `sn-calendar` directory and internal plugin identity so existing installations and stored data continue to upgrade safely.
 
 ## Start Here
@@ -23,15 +19,10 @@ Compass works without an online account. Calendar connections and PARA organizat
 - **E-Ink Calendar**: Navigate high-contrast month and day views, including a 15-day quick-jump strip, overlapping events, all-day items, locations, and attendee previews.
 - **CalDAV Two-Way Sync**: Synchronize calendar events and, through an optional independent VTODO-capable account, tasks including completion, priorities, undated items, remote deletions, and conflict-protected edits when the server supplies ETags.
 - **PARA Workspace**: Organize actionable Projects, ongoing Areas, reference Resources, and a unified Archive. Projects, Areas, and Resources can each link to a folder of Supernote notes and other files.
-- **Daily and Project Notes**: Open or create a daily journal and maintain project notebooks alongside event-linked notes.
-- **Frozen Meeting Snapshots**: One-tap action stamps a static, point-in-time snapshot onto the page containing:
-  - Meeting Title & Timezone
-  - Host & Full Attendee List (with RSVP status)
-  - Location & Video Call links
-  - Agenda / Description text
-- **Recurring Meetings**: Handles common RRULE schedules, cancellations, and moved occurrences, then appends a fresh snapshot page to the series notebook.
-- **Repeat controls**: Create daily, weekly, monthly, or yearly series; choose intervals and weekly days; end on a date or after a count; edit a series; and delete one occurrence or the entire series.
-- **Auto-Launch**: Immediately opens the newly created note or appended page on device so you can start hand-writing right away.
+- **Daily and PARA Notes**: Open or create daily journals and create, browse, and open notes and other files connected to Projects, Areas, and Resources, alongside event-linked notes.
+- **Recurring Meetings**: Handle common RRULE schedules, cancellations, and moved occurrences, then append a fresh page using the configured template to the series notebook.
+- **Repeat Controls**: Create daily, weekly, monthly, or yearly series; choose intervals and weekly days; end on a date or after a count; edit a series; and delete one occurrence or the entire series.
+- **Auto-Launch**: Immediately open a newly created note or appended page on device so you can start handwriting right away.
 
 ---
 
@@ -129,26 +120,27 @@ The **PARA** tab now represents all four categories:
 ### 3. Create a Single Meeting Note
 - Tap an event and choose **Create Note**. Taller Day View blocks also show the command directly.
 - The plugin automatically:
-  1. Creates a new `.note` file named `YYYY-MM-DD - Meeting Title.note` in `/Note/Meetings/`.
-  2. Stamps the frozen snapshot header at the top of Page 1.
-  3. Opens the note so you can start writing your handwritten notes immediately.
+  1. Creates a new `.note` file in the configured meeting-note folder, using the selected meeting template. An event type can override both settings.
+  2. Links the note to the event.
+  3. Opens the note so you can start handwriting immediately.
 
 ### 4. Append a Page for Recurring Meetings
 - Tap an occurrence and choose **Create Note**. Compass recognizes the series and appends rather than creating a separate notebook.
 - The plugin automatically:
-  1. Locates the existing notebook `Series - Meeting Title.note` in `/Note/Meetings/`.
-  2. Appends a new page to the end of the notebook.
-  3. Stamps that specific day's updated snapshot header at the top of the new page.
-  4. Opens the notebook straight to the new page.
+  1. Locates the existing series notebook in the configured meeting-note folder.
+  2. Appends a new page using the configured meeting template.
+  3. Opens the notebook straight to the new page.
 
 ---
 
 ## Notes Directory
 
-Created notes are saved in your Supernote note directory:
+By default, meeting notes are saved in:
 ```
 /storage/emulated/0/Note/Meetings/
 ```
+
+You can change the meeting-note folder and template under **Feeds / Config → Notes & Storage**. Event types can use their own folder and template.
 
 Device release checks are tracked in [TEST_MATRIX.md](TEST_MATRIX.md), including recurrence, persistence, deletion, synchronization, and series notebooks.
 You can view, move, or organize these notebooks in Supernote's built-in Note app anytime.
