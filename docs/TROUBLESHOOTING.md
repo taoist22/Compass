@@ -20,9 +20,9 @@ This is expected for an iCal subscription. Tap the event and choose **Copy as Ed
 - Run **Connect & Test** again and confirm that a writable event calendar is found.
 - If it still fails, run the CalDAV diagnostic and record the failing step and HTTP status. The trace is intended for diagnosis; it should not be needed during ordinary use.
 
-## A Compass task does not appear in Apple Reminders
+## A SNFolio task does not appear in Apple Reminders
 
-Modern Apple Reminders is not available through iCloud CalDAV. Keep the task local, mirror dated tasks into Apple Calendar, or configure a separate VTODO-capable CalDAV service on both Compass and the Apple device.
+Modern Apple Reminders is not available through iCloud CalDAV. Keep the task local, mirror dated tasks into Apple Calendar, or configure a separate VTODO-capable CalDAV service on both SNFolio and the Apple device.
 
 ## Imported events do not update
 
@@ -37,7 +37,7 @@ An imported `.ics` file is a retained snapshot. Import a newer copy to update it
 
 ## A file is listed but does not open
 
-Compass hands the file to the native Supernote application. Confirm the device itself supports that file type. Notes and PDFs should open directly; Compass remains accessible through the plugin toolbar in supported file viewers.
+SNFolio hands the file to the native Supernote application. Confirm the device itself supports that file type. Notes and PDFs should open directly; SNFolio remains accessible through the plugin toolbar in supported file viewers.
 
 ## Create Note is missing from a short event block
 
@@ -45,12 +45,12 @@ Tap the event block. **Create Note** or **Open Note** is always available in eve
 
 ## A recurring event is wrong
 
-Confirm the event's start date, interval, selected weekdays, and end condition. Editing an occurrence edits the series. Deletion asks whether to remove only that date or the entire series. After synchronization, restart Compass and verify that the exception or series remains correct.
+Confirm the event's start date, interval, selected weekdays, and end condition. Editing an occurrence edits the series. Deletion asks whether to remove only that date or the entire series. After synchronization, restart SNFolio and verify that the exception or series remains correct.
 
 ## Duplicate events appear
 
-Run **Sync Now** once and allow it to finish. Compass deduplicates identical event UIDs and conservative feed matches, but two genuinely separate source events remain separate. Record both event sources, titles, and times if a duplicate persists.
+Run **Sync Now** once and allow it to finish. SNFolio deduplicates identical event UIDs and conservative feed matches, but two genuinely separate source events remain separate. Record both event sources, titles, and times if a duplicate persists.
 
 ## Handwriting appears in the wrong note
 
-Stop switching files and record the source and destination file types. Compass clears lasso and recognition state before native file navigation; a repeatable transfer after the validated build is a regression and should be reported with the exact navigation sequence.
+Stop switching files and record the source and destination file types. SNFolio clears lasso and recognition state before native file navigation; a repeatable transfer after the validated build is a regression and should be reported with the exact navigation sequence.

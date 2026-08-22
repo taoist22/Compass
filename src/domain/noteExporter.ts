@@ -107,7 +107,7 @@ export function generateOutboundIcsEvent(event: CalendarEvent): string {
   const lines = [
     `BEGIN:VCALENDAR`,
     `VERSION:2.0`,
-    `PRODID:-//Compass for Supernote//EN`,
+    `PRODID:-//SNFolio for Supernote//EN`,
     `CALSCALE:GREGORIAN`,
     `BEGIN:VEVENT`,
     `UID:${escapeIcsText(event.uid)}`,
@@ -153,7 +153,7 @@ export function generateOutboundIcsTodo(task: CalendarEvent): string {
   const lines = [
     `BEGIN:VCALENDAR`,
     `VERSION:2.0`,
-    `PRODID:-//Compass for Supernote//EN`,
+    `PRODID:-//SNFolio for Supernote//EN`,
     `CALSCALE:GREGORIAN`,
     `BEGIN:VTODO`,
     `UID:${escapeIcsText(task.uid)}`,

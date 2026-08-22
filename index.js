@@ -22,7 +22,7 @@ PluginManager.init();
 // so the lasso button would never be there when you actually need it.
 PluginManager.registerButton(BUTTON_TYPE_TOOLBAR, ['NOTE', 'DOC'], {
   id: TOOLBAR_BUTTON_ID,
-  name: 'Compass',
+  name: 'SNFolio',
   icon: Image.resolveAssetSource(require('./assets/icon.png')).uri,
   showType: SHOW_TYPE_WITH_UI,
 });

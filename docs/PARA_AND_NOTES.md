@@ -18,7 +18,7 @@ An Area can contain Projects and can link to its own folder. Moving a mistaken P
 
 A Resource is reference material that may be useful later but is not itself an outcome: recipes, research, manuals, or travel ideas.
 
-Each Resource points to a folder rather than a single note. Compass lists ordinary file types supported by the device, including Supernote notes, PDF, EPUB, Office documents, text, and images. Internal `.mark` files are hidden.
+Each Resource points to a folder rather than a single note. SNFolio lists ordinary file types supported by the device, including Supernote notes, PDF, EPUB, Office documents, text, and images. Internal `.mark` files are hidden.
 
 ## Archive
 
@@ -31,14 +31,14 @@ Supernote exposes a file picker rather than a true folder picker. To link an exi
 1. Tap **Choose Folder**.
 2. Navigate into the intended folder.
 3. Select any file inside that folder.
-4. Return to Compass and tap **Refresh Files** if necessary.
+4. Return to SNFolio and tap **Refresh Files** if necessary.
 
-For an empty or new folder, use the default Compass folder or type its full storage path where the screen provides a path field. Compass creates default folders for new PARA items.
+For an empty or new folder, use the default SNFolio folder or type its full storage path where the screen provides a path field. SNFolio creates default folders for new PARA items.
 
 ## Creating and opening notes
 
-Projects, Areas, and Resources provide **+ New Note**, **Refresh Files**, and **Choose Folder**. Opening a file temporarily leaves Compass for the native Supernote application; Compass remains available from the plugin toolbar inside supported notes and PDFs.
+Projects, Areas, and Resources provide **+ New Note**, **Refresh Files**, and **Choose Folder**. Opening a file temporarily leaves SNFolio for the native Supernote application; SNFolio remains available from the plugin toolbar inside supported notes and PDFs.
 
-Event notes work differently: tap an event, then choose **Create Note** or **Open Note**. Occurrences in a recurring series share a series notebook, with a new snapshot page appended for each occurrence.
+Event notes work differently: tap an event, then choose **Create Note** or **Open Note**. Occurrences in a recurring series share a series notebook, with a new page using the configured meeting template appended for each occurrence.
 
-Before opening another note, Compass clears transient recognition and lasso state to prevent handwriting from being carried into the destination file.
+Before opening another note, SNFolio clears transient recognition and lasso state to prevent handwriting from being carried into the destination file.

@@ -289,7 +289,7 @@ public class CalendarFileModule extends ReactContextBaseJavaModule {
     }
 
     /**
-     * Lists one folder level for Compass's own PARA browser. Ordinary folders
+     * Lists one folder level for SNFolio's own PARA browser. Ordinary folders
      * remain navigable, while Supernote .note packages are exposed as files so
      * tapping them opens the note editor rather than descending into internals.
      */

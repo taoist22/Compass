@@ -535,14 +535,14 @@ describe('PARA areas, projects and membership', () => {
     first.upsertArea({
       id: 'area-health',
       name: 'Health',
-      folder: '/storage/emulated/0/Note/Compass/Areas/Health',
+      folder: '/storage/emulated/0/Note/SNFolio/Areas/Health',
       createdAt: new Date('2026-08-20T00:00:00Z'),
     });
     await first.flush();
 
     const second = new CalendarStorage();
     await second.load();
-    expect(second.getAreas()[0].folder).toBe('/storage/emulated/0/Note/Compass/Areas/Health');
+    expect(second.getAreas()[0].folder).toBe('/storage/emulated/0/Note/SNFolio/Areas/Health');
     expect(second.getAreas()[0].createdAt).toBeInstanceOf(Date);
   });
 });

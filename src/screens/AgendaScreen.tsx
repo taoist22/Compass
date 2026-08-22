@@ -2630,7 +2630,7 @@ export function AgendaScreen(): React.JSX.Element {
       .replace(/\s+/g, ' ')
       .trim() || 'Untitled';
     const section = kind === 'project' ? 'Projects' : kind === 'area' ? 'Areas' : 'Resources';
-    return `/storage/emulated/0/Note/Compass/${section}/${safeName}`;
+    return `/storage/emulated/0/Note/SNFolio/${section}/${safeName}`;
   };
 
   const persistParaFolder = (kind: ParaFolderKind, item: ParaFolderItem, folder: string) => {
@@ -2866,8 +2866,8 @@ export function AgendaScreen(): React.JSX.Element {
    * The note app can create a transient lasso state even when the user did not
    * deliberately draw a lasso. Launching another note while that source editor
    * is still active lets the host carry those strokes into the destination.
-   * Clear it while Compass still owns the foreground, let the note host settle,
-   * then launch the destination. The caller closes Compass only after Android
+   * Clear it while SNFolio still owns the foreground, let the note host settle,
+   * then launch the destination. The caller closes SNFolio only after Android
    * has accepted that launch, so the previous note cannot flash in front.
    */
   const prepareForNativeFileOpen = async () => {
@@ -2947,7 +2947,7 @@ export function AgendaScreen(): React.JSX.Element {
       {/* Top Header Bar */}
       <View style={styles.headerBar}>
         <View style={styles.titleWithSwitcher}>
-          <Text allowFontScaling={false} style={styles.appTitle}>Compass</Text>
+          <Text allowFontScaling={false} style={styles.appTitle}>SNFolio</Text>
           <View style={styles.viewSwitcherBar}>
             <TouchableOpacity
               style={[styles.switcherBtn, viewMode === 'month' && styles.switcherBtnActive]}
@@ -3860,7 +3860,7 @@ export function AgendaScreen(): React.JSX.Element {
             <Text allowFontScaling={false} style={styles.hintText}>
               Projects have a finish line. Areas are ongoing responsibilities. Resources are
               reference folders. Archive holds inactive items. You do not need to create all four
-              before using Compass.
+              before using SNFolio.
             </Text>
           </View>
 
@@ -3869,7 +3869,7 @@ export function AgendaScreen(): React.JSX.Element {
             <Text allowFontScaling={false} style={styles.hintTitle}>Google Calendar</Text>
             <Text allowFontScaling={false} style={styles.hintText}>
               Use Google Calendar's Secret address in iCal format under Add a Calendar. It is a
-              subscription: Google events can be viewed but not edited or deleted from Compass.
+              subscription: Google events can be viewed but not edited or deleted from SNFolio.
               To avoid typing the long address, put it in a .txt file on your computer, transfer
               that file to Supernote, then use Import Setup or Calendar File.
             </Text>
@@ -3877,7 +3877,7 @@ export function AgendaScreen(): React.JSX.Element {
             <Text allowFontScaling={false} style={styles.hintTitle}>Apple iCloud Calendar</Text>
             <Text allowFontScaling={false} style={styles.hintText}>
               Use your Apple Account email and an app-specific password under Calendars &amp; Sync.
-              This provides two-way calendar events. It does not place Compass tasks in modern
+              This provides two-way calendar events. It does not place SNFolio tasks in modern
               Apple Reminders; keep tasks local or mirror dated tasks as calendar events.
             </Text>
 

@@ -1,25 +1,25 @@
-# Getting Started with Compass
+# Getting Started with SNFolio
 
-Compass does not require an online account. Start with the pieces that solve a problem for you and add the rest later.
+SNFolio does not require an online account. Start with the pieces that solve a problem for you and add the rest later.
 
 ## Install
 
-1. Copy `Compass.snplg` to the Supernote `MyStyle` folder.
+1. Copy `SNFolio.snplg` to the Supernote `MyStyle` folder.
 2. Open **Settings → Apps → Plugins** on the device.
-3. Choose **Add Plugin** and select `Compass.snplg`.
-4. Open a note, document, or supported file and tap **Compass** in the plugin toolbar.
+3. Choose **Add Plugin** and select `SNFolio.snplg`.
+4. Open a note, document, or supported file and tap **SNFolio** in the plugin toolbar.
 
-Installing an update under the same Compass plugin identity preserves its stored data. When producing a development build, clean the previous generated build artifacts first so stale native output cannot be packaged accidentally.
+SNFolio retains the internal identity of its former Compass name. Install it as an update to preserve existing settings, calendars, PARA data, and note links. Existing `/Note/Compass/` folders remain linked; new PARA items use `/Note/SNFolio/` by default. When producing a development build, clean the previous generated build artifacts first so stale native output cannot be packaged accidentally.
 
 ## Choose a calendar setup
 
 | What you want | Recommended setup | What to expect |
 |---|---|---|
-| Use Compass without an online calendar | No connection | Events and tasks remain on the Supernote. |
-| See Google Calendar | Google **Secret address in iCal format** | Read-only subscription. Google events cannot be edited or deleted from Compass. |
-| Edit events from Compass and Apple devices | iCloud CalDAV | Two-way event creation, editing, deletion, and recurrence. |
+| Use SNFolio without an online calendar | No connection | Events and tasks remain on the Supernote. |
+| See Google Calendar | Google **Secret address in iCal format** | Read-only subscription. Google events cannot be edited or deleted from SNFolio. |
+| Edit events from SNFolio and Apple devices | iCloud CalDAV | Two-way event creation, editing, deletion, and recurrence. |
 | Use another writable calendar service | Custom CalDAV | Two-way events when the provider supports standard CalDAV. |
-| Import a calendar snapshot | Import an `.ics` file | Compass retains a private copy; it does not continuously update from the source. |
+| Import a calendar snapshot | Import an `.ics` file | SNFolio retains a private copy; it does not continuously update from the source. |
 
 See [Calendar Connections](CALENDAR_CONNECTIONS.md) for setup instructions and limitations.
 
@@ -30,7 +30,7 @@ See [Calendar Connections](CALENDAR_CONNECTIONS.md) for setup instructions and l
 3. Tap an event to open its details, then choose **Create Note**.
 4. Open **PARA** and create one Project for an outcome you are actively working toward.
 
-That is enough to use Compass. Note folders, templates, event types, Areas, and Resources can wait until you have a reason to configure them.
+That is enough to use SNFolio. Note folders, templates, event types, Areas, and Resources can wait until you have a reason to configure them.
 
 ## Add an item from handwriting
 
@@ -40,7 +40,7 @@ Write the date, time, and title on one line, select it with the native lasso, an
 08-20-2026 10:00A Meeting B
 ```
 
-Compass shows both the recognized text and its interpretation before saving. If no date or time is recognized, it opens as an undated task. Splitting the information across lines makes Supernote handwriting recognition substantially less reliable.
+SNFolio shows both the recognized text and its interpretation before saving. If no date or time is recognized, it opens as an undated task. Splitting the information across lines makes Supernote handwriting recognition substantially less reliable.
 
 ## Understand the main views
 

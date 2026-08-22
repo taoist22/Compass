@@ -34,7 +34,7 @@ function ruleParts(rrule?: string): Record<string, string> {
   );
 }
 
-/** The repeat frequencies Compass can create without exposing RRULE syntax. */
+/** The repeat frequencies SNFolio can create without exposing RRULE syntax. */
 export function repeatChoiceFromRrule(rrule?: string): RepeatChoice {
   const frequency = ruleParts(rrule).FREQ;
   return ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(frequency)
@@ -91,7 +91,7 @@ function utcDateTimeValue(date: Date): string {
     `T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`;
 }
 
-/** Builds the bounded RRULE subset exposed by the Compass event form. */
+/** Builds the bounded RRULE subset exposed by the SNFolio event form. */
 export function rruleForRepeat(
   settings: RepeatSettings,
   start: Date,
