@@ -1,10 +1,14 @@
 # SNFolio for Supernote
 
 
-Uploading Compass-demo-small.mp4…
 
 
-An e-ink optimized planning, PARA, calendar, task, and note workspace for Supernote. The repository retains its original `sn-calendar` directory and internal plugin identity so existing installations and stored data continue to upgrade safely.
+https://github.com/user-attachments/assets/2210d5dc-8747-49cf-9a3f-dfa9c3068829
+
+
+
+
+An e-ink optimized planning, PARA, calendar, task, and note workspace for Supernote. 
 
 ## Start Here
 
