@@ -8,7 +8,7 @@ SNFolio uses Google's private iCal subscription because Google CalDAV requires a
 
 1. On a computer, open Google Calendar, then **Settings → Settings**.
 2. Under **Settings for my calendars**, choose the calendar, open **Integrate calendar**, and copy **Secret address in iCal format**. Do not use the normal browser address or the public calendar page. Google documents these steps in [Sync your calendar with computer programs](https://support.google.com/calendar/answer/37648).
-3. Put the address in a plain-text file. One calendar goes on each line:
+3. Put the address in a plain-text file; a .txt file. One calendar goes on each line:
 
    ```text
    Business|https://calendar.google.com/calendar/ical/.../basic.ics
