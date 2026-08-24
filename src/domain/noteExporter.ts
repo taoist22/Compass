@@ -113,6 +113,7 @@ export function generateOutboundIcsEvent(event: CalendarEvent): string {
     `UID:${escapeIcsText(event.uid)}`,
     `DTSTAMP:${dtStamp}`,
     `SUMMARY:${escapeIcsText(event.summary)}`,
+    event.isTaskMirror ? `X-SNFOLIO-TASK-MIRROR:TRUE` : '',
     ...dateLines,
     event.location ? `LOCATION:${escapeIcsText(event.location)}` : '',
     event.description ? `DESCRIPTION:${escapeIcsText(event.description)}` : '',

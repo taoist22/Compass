@@ -26,6 +26,18 @@ describe('noteExporter', () => {
     expect(ics).toContain('END:VCALENDAR');
   });
 
+  test('marks a task-mirror event without exposing the marker in its title', () => {
+    const ics = generateOutboundIcsEvent({
+      ...sampleEvent,
+      uid: 'task-1787558400000',
+      summary: 'Buy milk',
+      isTaskMirror: true,
+    });
+
+    expect(ics).toContain('\r\nSUMMARY:Buy milk\r\n');
+    expect(ics).toContain('\r\nX-SNFOLIO-TASK-MIRROR:TRUE\r\n');
+  });
+
   test('generateOutboundIcsEvent emits DTSTAMP, which iCloud requires', () => {
     const ics = generateOutboundIcsEvent(sampleEvent);
     expect(ics).toMatch(/\r\nDTSTAMP:\d{8}T\d{6}Z\r\n/);

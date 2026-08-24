@@ -3,8 +3,8 @@
   "desc": "Plan time, organize work, and connect it with notes.",
   "author": "taoist22",
   "iconPath": "assets/calendar.png",
-  "versionName": "0.1.2",
-  "versionCode": "28",
+  "versionName": "0.1.3",
+  "versionCode": "29",
   "pluginID": "7jne25p-gnhigcrr",
   "pluginKey": "Calendar",
   "jsMainPath": "index"

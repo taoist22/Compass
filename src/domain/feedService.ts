@@ -9,7 +9,8 @@ export function normaliseFeedUrl(raw: string): string | null {
 export async function fetchCalendarFeed(
   url: string,
   name: string,
-  fetcher: typeof fetch = fetch
+  fetcher: typeof fetch = fetch,
+  feedId?: string
 ): Promise<CalendarEvent[]> {
   const safeUrl = normaliseFeedUrl(url);
   if (!safeUrl) throw new Error('Calendar subscriptions must use HTTPS.');
@@ -17,7 +18,11 @@ export async function fetchCalendarFeed(
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const text = await response.text();
   if (!/BEGIN:VCALENDAR/i.test(text)) throw new Error('Response is not an iCalendar feed.');
-  return parseIcsContent(text, name).map(event => ({ ...event, sourceKind: 'feed' as const }));
+  return parseIcsContent(text, name).map(event => ({
+    ...event,
+    sourceKind: 'feed' as const,
+    sourceFeedId: feedId,
+  }));
 }
 
 export async function refreshCalendarFeeds(
@@ -30,7 +35,12 @@ export async function refreshCalendarFeeds(
   let failed = 0;
   for (const feed of enabled) {
     try {
-      events.push(...await fetchCalendarFeed(feed.url as string, feed.name || 'Calendar', fetcher));
+      events.push(...await fetchCalendarFeed(
+        feed.url as string,
+        feed.name || 'Calendar',
+        fetcher,
+        feed.id
+      ));
       successful++;
     } catch (_error) {
       failed++;

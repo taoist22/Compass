@@ -21,6 +21,8 @@ SNFolio uses Google's private iCal subscription because Google CalDAV requires a
 
 A bare URL without `Name|` also works. SNFolio accepts secure `https://` and `webcal://` addresses. Subscribed events are read-only. You may create an editable local copy or hide an occurrence on the Supernote, but SNFolio does not alter the Google event.
 
+Imported and subscribed calendars appear under **Connected Calendars**. **Remove** deletes the connection and its events from SNFolio without changing the source calendar or the setup file. Setup files are read only when explicitly imported, so retaining one for repeated development installations does not automatically restore a removed calendar.
+
 Google Workspace administrators can disable the secret address for work or school calendars. If it is missing, the account administrator must allow it; SNFolio cannot generate that address.
 
 ## Apple iCloud Calendar: editable two-way events
@@ -53,6 +55,8 @@ Choose **Custom / Other** and provide:
 - the account or app-specific password.
 
 SNFolio discovers the available calendar collections and selects a writable event calendar. Use the diagnostic trace only when connection or synchronization fails. VTODO task synchronization is configured separately because many calendar collections do not support tasks.
+
+Task events mirrored to Apple Calendar carry a private SNFolio marker. They remain visible on Apple devices but are not pulled back into SNFolio as duplicate calendar events.
 
 ## Imported `.ics` files
 

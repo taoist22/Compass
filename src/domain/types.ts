@@ -213,6 +213,10 @@ export interface CalendarEvent {
   calendarColor?: string;
   /** Origin controls whether changes can be written back. */
   sourceKind?: 'feed' | 'caldav' | 'local';
+  /** A VEVENT created only to make a local task visible on a calendar. */
+  isTaskMirror?: boolean;
+  /** The subscribed/imported feed that produced this event. */
+  sourceFeedId?: string;
   /** Optional display alert written as a VEVENT VALARM. */
   alarmMinutesBefore?: number;
 }

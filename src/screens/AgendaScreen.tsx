@@ -15,6 +15,7 @@ import { PluginManager, FileUtils, PluginCommAPI, RattaFileSelector } from 'sn-p
 import { HandwritingTextInput, HandwritingTextInputHandle } from './HandwritingTextInput';
 import {
   Area,
+  CalendarFeed,
   CalendarEvent,
   CalendarTask,
   CalendarViewMode,
@@ -49,7 +50,12 @@ import { resolveArea, resolveAreaId } from '../domain/membership';
 import { calendarStorage } from '../storage/calendarStorage';
 import { generateNoteFilename, noteIdentity } from '../domain/meetingSnapshot';
 import { formatTimeOfDay, minutesFromDate } from '../domain/timeOfDay';
-import { caldavService, CaldavProviderType, isTaskItem } from '../domain/caldavService';
+import {
+  caldavService,
+  CaldavProviderType,
+  isTaskItem,
+  isTaskMirrorEvent,
+} from '../domain/caldavService';
 import {
   prunePushState,
   recordPullSnapshot,
@@ -169,10 +175,10 @@ export function AgendaScreen(): React.JSX.Element {
 
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [allParsedEvents, setAllParsedEvents] = useState<CalendarEvent[]>([]);
+  const [calendarFeeds, setCalendarFeeds] = useState<CalendarFeed[]>([]);
   /**
-   * Whether any subscribed feed is actually producing events. Drives the Sync
-   * Now button for feed-only setups, and is derived from what a fetch returned
-   * rather than from the settings list, so URLs living in feeds.txt count too.
+   * Whether an imported or subscribed feed is configured. Drives the Sync Now
+   * button for feed-only setups.
    */
   const [hasSubscribedFeeds, setHasSubscribedFeeds] = useState<boolean>(false);
   /** UIDs from the last feed fetch, so a refresh can replace them. */
@@ -279,6 +285,7 @@ export function AgendaScreen(): React.JSX.Element {
     if (cancelled) return;
 
     const settings = calendarStorage.getSettings();
+    setCalendarFeeds([...settings.feeds]);
     setViewMode(settings.defaultViewMode || 'month');
     setHideAllDay(settings.hideAllDayEvents);
     setHideSolo(settings.hideSoloEvents);
@@ -315,7 +322,13 @@ export function AgendaScreen(): React.JSX.Element {
     // The cached CalDAV read goes on screen immediately. Without it the
     // calendar sits empty until a sync completes, and shows nothing at all
     // with no network — the subscribed feed used to cover that gap.
-    const cachedCaldav = calendarStorage.getCaldavEvents();
+    const storedCaldav = calendarStorage.getCaldavEvents();
+    const cachedCaldav = storedCaldav.filter(
+      event => !isTaskItem(event) && !isTaskMirrorEvent(event)
+    );
+    if (cachedCaldav.length !== storedCaldav.length) {
+      calendarStorage.setCaldavEvents(cachedCaldav);
+    }
     feedUidsRef.current = new Set();
     if (savedUserEvts.length > 0 || cachedCaldav.length > 0) {
       // User events first: dedupeEvents keeps the first UID it sees, so a
@@ -533,6 +546,7 @@ export function AgendaScreen(): React.JSX.Element {
         fetched.push(...parseIcsContent(text, feed.name || 'Imported Calendar').map(event => ({
           ...event,
           sourceKind: 'feed' as const,
+          sourceFeedId: feed.id,
         })));
         successfulFeeds++;
       } catch (_error) {
@@ -561,46 +575,10 @@ export function AgendaScreen(): React.JSX.Element {
       };
     }
 
-    if (fetched.length > 0) {
-      applyFeedBatch(fetched);
-      setStatusMsg(`Refreshed ${fetched.length} event(s) from subscribed feeds.`);
-    } else {
-      try {
-        const localFilePath = 'file:///storage/emulated/0/Document/feeds.txt';
-        const content = await readCalendarText(localFilePath);
-        const setup = parseCalendarSetupFile(content);
-
-        const collected: CalendarEvent[] = [];
-        let failedCount = 0;
-
-        for (const definition of setup.feeds) {
-          // Per-URL try: a single bad feed must not abort the ones after it.
-          try {
-            collected.push(...await fetchCalendarFeed(definition.url, definition.name));
-          } catch (feedErr) {
-            failedCount++;
-          }
-        }
-
-        if (collected.length > 0) {
-          applyFeedBatch(collected);
-        }
-
-        if (collected.length > 0 && failedCount > 0) {
-          setStatusMsg(`Synced ${collected.length} events from feeds.txt — ${failedCount} URL(s) failed.`);
-        } else if (collected.length > 0) {
-          setStatusMsg(`Auto-synced ${collected.length} events from feeds.txt!`);
-        } else if (failedCount > 0) {
-          setStatusMsg(`feeds.txt: all ${failedCount} URL(s) failed to load. Check the URLs.`);
-        }
-        return {
-          configured: setup.feeds.length,
-          successful: Math.max(0, setup.feeds.length - failedCount),
-          failed: failedCount + setup.invalidLines,
-          events: collected.length,
-        };
-      } catch (e) {}
-    }
+    // Setup files are imported only through the explicit picker. Automatically
+    // re-reading /Document/feeds.txt made a deliberately removed calendar come
+    // back on the next launch while making the Remove button appear broken.
+    // Keep the user's file untouched so it can be reused for test installs.
     return { configured: 0, successful: 0, failed: 0, events: fetched.length };
   };
 
@@ -910,7 +888,7 @@ export function AgendaScreen(): React.JSX.Element {
     // the legacy "[TASK] " prefix. They already exist locally, and dedupeEvents
     // keeps the local copy, so they are dropped here rather than re-added as
     // appointments.
-    const incoming = pulled.filter(e => !isTaskItem(e));
+    const incoming = pulled.filter(e => !isTaskItem(e) && !isTaskMirrorEvent(e));
 
     // Reconcile deletions. The read is the authoritative list of what exists
     // in the window, so anything known to be server-backed and missing from it
@@ -1173,9 +1151,14 @@ export function AgendaScreen(): React.JSX.Element {
       // An .ics holds calendar data directly; a .txt holds URLs to subscribe
       // to. Sniff the content rather than trusting the extension.
       if (isIcsCalendarContent(content)) {
+        const existingLocalFeed = calendarStorage.getSettings().feeds.find(
+          feed => feed.localPath === chosenPath || feed.name === fileName
+        );
+        const localFeedId = existingLocalFeed?.id || `file-${Date.now()}`;
         const evts = parseIcsContent(content, fileName).map(event => ({
           ...event,
           sourceKind: 'feed' as const,
+          sourceFeedId: localFeedId,
         }));
         if (evts.length === 0) {
           setStatusMsg(`${fileName} looks like a calendar but no events parsed out of it.`);
@@ -1185,17 +1168,15 @@ export function AgendaScreen(): React.JSX.Element {
         if (CalendarFile?.storeImportedCalendar) {
           retainedPath = await CalendarFile.storeImportedCalendar(fileName, content);
         }
-        const existingLocal = calendarStorage.getSettings().feeds.some(
-          feed => feed.localPath === retainedPath || feed.name === fileName
-        );
-        if (!existingLocal) {
-          calendarStorage.addFeed({
-            id: `file-${Date.now()}`,
+        if (!existingLocalFeed) {
+          const updatedFeeds = calendarStorage.addFeed({
+            id: localFeedId,
             name: fileName,
             localPath: retainedPath,
             enabled: true,
             lastFetched: new Date().toISOString(),
           });
+          setCalendarFeeds([...updatedFeeds]);
         }
         feedUidsRef.current = new Set([
           ...feedUidsRef.current,
@@ -1233,15 +1214,17 @@ export function AgendaScreen(): React.JSX.Element {
         // Validate by fetching before saving, so a bad URL never becomes a
         // stored feed that fails silently on every future startup.
         try {
-          const evts = await fetchCalendarFeed(definition.url, definition.name);
+          const feedId = `feed-import-${Date.now()}-${added}`;
+          const evts = await fetchCalendarFeed(definition.url, definition.name, fetch, feedId);
 
-          calendarStorage.addFeed({
-            id: `feed-import-${Date.now()}-${added}`,
+          const updatedFeeds = calendarStorage.addFeed({
+            id: feedId,
             name: definition.name,
             url: definition.url,
             enabled: true,
             lastFetched: new Date().toISOString(),
           });
+          setCalendarFeeds([...updatedFeeds]);
 
           imported.push(...evts);
           added++;
@@ -1564,6 +1547,11 @@ export function AgendaScreen(): React.JSX.Element {
   };
 
   const isWideScreen = Dimensions.get('window').width >= 800;
+  const connectedCalendarFeeds = calendarFeeds.filter(feed =>
+    (feed.url || feed.localPath) &&
+    !feed.id.startsWith('default-') &&
+    feed.id !== 'primary-cal'
+  );
 
   // Fifteen days forward from whichever day is selected, so the one- and
   // two-week marks mean "from the day you are looking at" rather than always
@@ -1768,6 +1756,7 @@ export function AgendaScreen(): React.JSX.Element {
       {
         uid: task.uid,
         summary: `${task.completed ? '✓ ' : ''}${task.title}`,
+        isTaskMirror: true,
         description: task.notes,
         start,
         end: new Date(start.getTime() + 30 * 60 * 1000),
@@ -2905,20 +2894,51 @@ export function AgendaScreen(): React.JSX.Element {
     }
     setStatusMsg('Fetching calendar feed securely...');
     try {
-      const newEvts = await fetchCalendarFeed(feedUrl, 'Subscribed Calendar');
+      const feedId = `url-${Date.now()}`;
+      const newEvts = await fetchCalendarFeed(feedUrl, 'Subscribed Calendar', fetch, feedId);
       setAllParsedEvents(prev => [...prev, ...newEvts]);
       jumpToNextUpcomingEventFromToday(newEvts);
-      calendarStorage.addFeed({
-        id: `url-${Date.now()}`,
+      const updatedFeeds = calendarStorage.addFeed({
+        id: feedId,
         name: 'iCal Feed',
         url: feedUrl,
         enabled: true,
       });
+      setCalendarFeeds([...updatedFeeds]);
       setNewFeedUrl('');
+      newFeedInputRef.current?.setValue('');
       setStatusMsg(`Loaded ${newEvts.length} events from feed!`);
     } catch (err: any) {
       setStatusMsg(`Failed to fetch feed: ${err?.message || 'Network error'}`);
     }
+  };
+
+  const handleRemoveCalendarFeed = async (feed: CalendarFeed) => {
+    const updatedFeeds = calendarStorage.removeFeed(feed.id);
+    setCalendarFeeds([...updatedFeeds]);
+    setNewFeedUrl('');
+    newFeedInputRef.current?.setValue('');
+    setAllParsedEvents(previous => {
+      const remaining = previous.filter(event => event.sourceFeedId !== feed.id);
+      feedUidsRef.current = new Set(
+        remaining
+          .filter(event => event.sourceKind === 'feed')
+          .map(event => event.uid)
+          .filter(Boolean)
+      );
+      return remaining;
+    });
+    const remainingFeeds = updatedFeeds.filter(
+      item => item.enabled && (item.url || item.localPath)
+    );
+    setHasSubscribedFeeds(remainingFeeds.length > 0);
+    setRefreshState(value => value + 1);
+    const persistenceError = await calendarStorage.flush();
+    setStatusMsg(
+      persistenceError
+        ? `Removed ${feed.name} from this session, but could not save the change: ${persistenceError}`
+        : `Removed ${feed.name}. Its source calendar was not changed.`
+    );
   };
 
 
@@ -3280,6 +3300,8 @@ export function AgendaScreen(): React.JSX.Element {
               ))}
             </View>
           )}
+          <View style={[styles.syncColumns, !isWideScreen && styles.syncColumnsStacked]}>
+          <View style={[styles.syncColumn, isWideScreen && styles.syncColumnLeft]}>
           <Text allowFontScaling={false} style={styles.sectionTitle}>Calendar CalDAV Two-Way Sync</Text>
           <Text allowFontScaling={false} style={styles.bodyText}>Select your event calendar provider:</Text>
 
@@ -3314,7 +3336,7 @@ export function AgendaScreen(): React.JSX.Element {
             <View style={styles.inputRow}>
               <HandwritingTextInput
                 ref={caldavCustomUrlInputRef}
-                style={styles.textInput}
+                style={[styles.textInput, styles.compactTextInput]}
                 value={caldavCustomUrl}
                 onChangeText={setCaldavCustomUrl}
                 placeholder="CalDAV Server URL (e.g. https://caldav.fastmail.com/)"
@@ -3327,7 +3349,7 @@ export function AgendaScreen(): React.JSX.Element {
           <View style={styles.inputRow}>
             <HandwritingTextInput
               ref={caldavAppleIdInputRef}
-              style={styles.textInput}
+              style={[styles.textInput, styles.compactTextInput]}
               value={caldavAppleId}
               onChangeText={setCaldavAppleId}
               placeholder={caldavProvider === 'google' ? 'Google Account Email' : 'Account Email / Username'}
@@ -3339,7 +3361,7 @@ export function AgendaScreen(): React.JSX.Element {
           <View style={styles.inputRow}>
             <HandwritingTextInput
               ref={caldavPasswordInputRef}
-              style={styles.textInput}
+              style={[styles.textInput, styles.compactTextInput]}
               value={caldavPassword}
               onChangeText={setCaldavPassword}
               placeholder="App-Specific Password / Passcode"
@@ -3379,7 +3401,9 @@ export function AgendaScreen(): React.JSX.Element {
             </View>
           )}
 
-          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Optional Task CalDAV Account</Text>
+          </View>
+          <View style={styles.syncColumn}>
+          <Text allowFontScaling={false} style={styles.sectionTitle}>Optional Task CalDAV Account</Text>
           <Text allowFontScaling={false} style={styles.bodyText}>
             Modern iCloud Reminders does not expose its lists through iCloud CalDAV. To show
             Supernote tasks in Apple's Reminders app, use a separate CalDAV service that supports
@@ -3390,7 +3414,7 @@ export function AgendaScreen(): React.JSX.Element {
           <View style={styles.inputRow}>
             <HandwritingTextInput
               ref={taskServerInputRef}
-              style={styles.textInput}
+              style={[styles.textInput, styles.compactTextInput]}
               value={taskCaldavServerUrl}
               onChangeText={setTaskCaldavServerUrl}
               placeholder="Task CalDAV server URL"
@@ -3401,7 +3425,7 @@ export function AgendaScreen(): React.JSX.Element {
           <View style={styles.inputRow}>
             <HandwritingTextInput
               ref={taskUsernameInputRef}
-              style={styles.textInput}
+              style={[styles.textInput, styles.compactTextInput]}
               value={taskCaldavUsername}
               onChangeText={setTaskCaldavUsername}
               placeholder="Task account username"
@@ -3412,7 +3436,7 @@ export function AgendaScreen(): React.JSX.Element {
           <View style={styles.inputRow}>
             <HandwritingTextInput
               ref={taskPasswordInputRef}
-              style={styles.textInput}
+              style={[styles.textInput, styles.compactTextInput]}
               value={taskCaldavPassword}
               onChangeText={setTaskCaldavPassword}
               placeholder="Task account password"
@@ -3440,8 +3464,12 @@ export function AgendaScreen(): React.JSX.Element {
               </TouchableOpacity>
             </View>
           )}
+          </View>
+          </View>
 
-          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Add a Calendar</Text>
+          <View style={[styles.syncColumns, !isWideScreen && styles.syncColumnsStacked]}>
+          <View style={[styles.syncColumn, isWideScreen && styles.syncColumnLeft]}>
+          <Text allowFontScaling={false} style={styles.sectionTitle}>Add a Calendar</Text>
           <TouchableOpacity style={styles.pickerOpenBtn} onPress={handleImportFeedsFromTxt}>
             <Text allowFontScaling={false} style={styles.pickerOpenBtnText}>📂 Import Setup or Calendar File...</Text>
           </TouchableOpacity>
@@ -3464,7 +3492,7 @@ export function AgendaScreen(): React.JSX.Element {
           <View style={styles.inputRow}>
             <HandwritingTextInput
               ref={newFeedInputRef}
-              style={styles.textInput}
+              style={[styles.textInput, styles.compactTextInput]}
               value={newFeedUrl}
               onChangeText={setNewFeedUrl}
               placeholder="https://example.com/calendar.ics"
@@ -3474,8 +3502,32 @@ export function AgendaScreen(): React.JSX.Element {
               <Text allowFontScaling={false} style={styles.addBtnText}>Subscribe</Text>
             </TouchableOpacity>
           </View>
+          </View>
 
-          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Smart Event Filters</Text>
+          <View style={styles.syncColumn}>
+          <Text allowFontScaling={false} style={styles.sectionTitle}>Connected Calendars</Text>
+          {connectedCalendarFeeds.length === 0 ? (
+            <Text allowFontScaling={false} style={styles.checkSettingHint}>No imported or subscribed calendars.</Text>
+          ) : connectedCalendarFeeds.map(feed => (
+            <View key={feed.id} style={styles.connectedFeedRow}>
+              <View style={styles.connectedFeedDetails}>
+                <Text allowFontScaling={false} style={styles.connectedFeedName} numberOfLines={1}>
+                  {feed.name}
+                </Text>
+                <Text allowFontScaling={false} style={styles.connectedFeedKind}>
+                  {feed.localPath ? 'Imported calendar file' : 'Subscribed calendar'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.removeFeedBtn}
+                onPress={() => void handleRemoveCalendarFeed(feed)}
+              >
+                <Text allowFontScaling={false} style={styles.removeFeedBtnText}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 12 }]}>Smart Event Filters</Text>
           <View style={styles.filterToggleRow}>
             <Text allowFontScaling={false} style={styles.bodyText}>Hide All-Day Events (Holidays, Reminders):</Text>
             <Switch value={hideAllDay} onValueChange={handleToggleHideAllDay} />
@@ -3483,6 +3535,8 @@ export function AgendaScreen(): React.JSX.Element {
           <View style={styles.filterToggleRow}>
             <Text allowFontScaling={false} style={styles.bodyText}>Hide Solo Events (0 Attendees):</Text>
             <Switch value={hideSolo} onValueChange={handleToggleHideSolo} />
+          </View>
+          </View>
           </View>
             </>
           )}
@@ -4926,6 +4980,21 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 12,
   },
+  syncColumns: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 14,
+  },
+  syncColumnsStacked: {
+    flexDirection: 'column',
+  },
+  syncColumn: {
+    flex: 1,
+    marginBottom: 8,
+  },
+  syncColumnLeft: {
+    marginRight: 18,
+  },
   providerBtn: {
     alignSelf: 'flex-start',
     borderWidth: 2,
@@ -5445,6 +5514,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginRight: 8,
   },
+  compactTextInput: {
+    paddingVertical: 3,
+    fontSize: 13,
+  },
   addBtn: {
     backgroundColor: '#000000',
     borderRadius: 6,
@@ -5455,6 +5528,44 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: 'bold',
     fontSize: 14,
+  },
+  connectedFeedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#606060',
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingLeft: 9,
+    paddingRight: 6,
+    marginBottom: 6,
+    backgroundColor: '#ffffff',
+  },
+  connectedFeedDetails: {
+    flex: 1,
+    marginRight: 8,
+  },
+  connectedFeedName: {
+    color: '#000000',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  connectedFeedKind: {
+    color: '#505050',
+    fontSize: 11,
+  },
+  removeFeedBtn: {
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 5,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    backgroundColor: '#ffffff',
+  },
+  removeFeedBtnText: {
+    color: '#000000',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   codePath: {
     maxWidth: 560,

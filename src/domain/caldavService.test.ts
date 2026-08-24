@@ -4,6 +4,7 @@ import {
   chooseDefaultTaskList,
   extractHrefFromXml,
   isTaskItem,
+  isTaskMirrorEvent,
   resolveUrl,
 } from './caldavService';
 import { CalendarEvent } from './types';
@@ -488,6 +489,22 @@ describe('CaldavService', () => {
     expect(isTaskItem({ ...base, summary: '[TASK] Buy milk' })).toBe(true);
     expect(isTaskItem({ ...base, summary: 'Buy milk' })).toBe(false);
     expect(isTaskItem({ ...base, summary: 'Talk about [TASK] naming' })).toBe(false);
+  });
+
+  test('recognises marked mirrors and legacy SNFolio task UIDs without hiding unrelated feeds', () => {
+    const base = {
+      uid: 'calendar-item',
+      summary: 'Buy milk',
+      start: new Date(),
+      end: new Date(),
+      allDay: false,
+      attendees: [],
+    };
+
+    expect(isTaskMirrorEvent({ ...base, isTaskMirror: true })).toBe(true);
+    expect(isTaskMirrorEvent({ ...base, uid: 'task-1787558400000', sourceKind: 'caldav' })).toBe(true);
+    expect(isTaskMirrorEvent({ ...base, uid: 'task-1787558400000', sourceKind: 'feed' })).toBe(false);
+    expect(isTaskMirrorEvent({ ...base, uid: 'task-planning', sourceKind: 'caldav' })).toBe(false);
   });
 
   test('pushIcloudEvent sends a VTODO to the task list, not the calendar', async () => {

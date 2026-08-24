@@ -25,5 +25,8 @@ describe('HandwritingTextInput', () => {
     expect(committed).toHaveBeenCalledWith('handwritten draft');
     act(() => nativeInput.props.onBlur({ nativeEvent: {} }));
     expect(committed).toHaveBeenCalledTimes(1);
+
+    act(() => ref.current?.setValue(''));
+    expect(ref.current?.getValue()).toBe('');
   });
 });

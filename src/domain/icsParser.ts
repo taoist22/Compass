@@ -231,6 +231,7 @@ export function parseIcsContent(icsData: string, calendarName = 'Calendar'): Cal
           // Kept internal until overrides are folded into their master below.
           ...(currentEvent.cancelled ? ({ cancelled: true } as any) : {}),
           calendarName: currentEvent.calendarName,
+          isTaskMirror: currentEvent.isTaskMirror,
         });
       }
       inEvent = false;
@@ -254,6 +255,9 @@ export function parseIcsContent(icsData: string, calendarName = 'Calendar'): Cal
         break;
       case 'SUMMARY':
         currentEvent.summary = unescapeIcsValue(propVal);
+        break;
+      case 'X-SNFOLIO-TASK-MIRROR':
+        currentEvent.isTaskMirror = propVal.trim().toUpperCase() === 'TRUE';
         break;
       case 'DESCRIPTION': {
         const unescaped = unescapeIcsValue(propVal);

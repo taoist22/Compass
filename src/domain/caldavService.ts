@@ -10,6 +10,17 @@ export function isTaskItem(item: CalendarEvent): boolean {
   return item.isTask === true || /^\[TASK\]\s*/i.test(item.summary || '');
 }
 
+/**
+ * Calendar VEVENTs created solely as an Apple-visible mirror of a local task.
+ * New mirrors carry an explicit X-property. The UID fallback is limited to
+ * CalDAV and the exact timestamp form SNFolio generated before that marker
+ * existed, so an unrelated feed event named "task" is not hidden.
+ */
+export function isTaskMirrorEvent(item: CalendarEvent): boolean {
+  return item.isTaskMirror === true ||
+    (item.sourceKind === 'caldav' && /^task-\d+$/.test(item.uid || ''));
+}
+
 export type CaldavProviderType = 'icloud' | 'google' | 'nextcloud' | 'fastmail' | 'yahoo' | 'custom';
 
 export interface CaldavCredentials {

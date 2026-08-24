@@ -9,6 +9,7 @@ import {
 export interface HandwritingTextInputHandle {
   getValue: () => string;
   focus: () => void;
+  setValue: (value: string) => void;
 }
 
 interface HandwritingTextInputProps
@@ -47,8 +48,15 @@ export const HandwritingTextInput = React.forwardRef<
     () => ({
       getValue: () => draftRef.current,
       focus: () => nativeRef.current?.focus(),
+      setValue: next => {
+        draftRef.current = next;
+        lastExternalValue.current = next;
+        lastCommittedValue.current = next;
+        nativeRef.current?.setNativeProps({ text: next });
+        onDraftChange?.(next);
+      },
     }),
-    []
+    [onDraftChange]
   );
 
   React.useEffect(() => {

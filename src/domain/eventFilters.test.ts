@@ -117,6 +117,17 @@ describe('eventFilters', () => {
     })).toHaveLength(0);
   });
 
+  test('does not show task-mirror VEVENTs as calendar appointments', () => {
+    const mirror = {
+      ...fingerprintBase,
+      uid: 'task-1787558400000',
+      summary: 'Buy milk',
+      sourceKind: 'feed' as const,
+      isTaskMirror: true,
+    };
+    expect(filterEvents([mirror], dummySettings)).toHaveLength(0);
+  });
+
   test('filterEvents dedupes before applying preferences', () => {
     const dup = {
       uid: 'dup-1',

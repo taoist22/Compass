@@ -220,6 +220,22 @@ END:VCALENDAR`);
     expect(events).toHaveLength(0);
   });
 
+  test('retains the hidden SNFolio task-mirror marker', () => {
+    const events = parseIcsContent(`BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:task-1787558400000
+SUMMARY:Buy milk
+X-SNFOLIO-TASK-MIRROR:TRUE
+DTSTART:20260824T090000
+DTEND:20260824T093000
+END:VEVENT
+END:VCALENDAR`);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].isTaskMirror).toBe(true);
+    expect(events[0].summary).toBe('Buy milk');
+  });
+
   test('shows overnight and multi-day events on each overlapping day', () => {
     const events = parseIcsContent(`BEGIN:VCALENDAR
 BEGIN:VEVENT

@@ -64,6 +64,9 @@ export function dedupeEvents(events: CalendarEvent[]): CalendarEvent[] {
 export function filterEvents(events: CalendarEvent[], settings: CalendarSettings): CalendarEvent[] {
   const hidden = new Set(settings.hiddenFeedEventIds || []);
   return dedupeEvents(events).filter(event => {
+    if (event.isTaskMirror) {
+      return false;
+    }
     if (event.sourceKind === 'feed' && hidden.has(feedEventHideIdentity(event))) {
       return false;
     }
