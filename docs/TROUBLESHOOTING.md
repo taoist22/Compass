@@ -24,6 +24,14 @@ This is expected for an iCal subscription. Tap the event and choose **Copy as Ed
 
 Modern Apple Reminders is not available through iCloud CalDAV. Keep the task local, mirror dated tasks into Apple Calendar, or configure a separate VTODO-capable CalDAV service on both SNFolio and the Apple device.
 
+## Tasks remain after disconnecting a VTODO provider
+
+Use **Remove Task Account** rather than **Pause Task Sync**. Choose whether to keep the synchronized tasks locally or remove that account's local copies. Both choices leave the remote provider unchanged. Device-only tasks are never removed by this account cleanup.
+
+## A deleted task returned after reconnecting
+
+Current builds queue deletions made while a synchronized task's account is paused and send them only when that same account resumes. If the account was removed, pending remote changes are intentionally discarded because removing an account promises not to alter its server.
+
 ## Imported events do not update
 
 An imported `.ics` file is a retained snapshot. Import a newer copy to update it. For continuous updates, use a feed URL or CalDAV connection.

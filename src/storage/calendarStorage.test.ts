@@ -40,6 +40,120 @@ describe('calendarStorage', () => {
     expect(calendarStorage.getMapping('series-1')?.notePath).toBe('/storage/emulated/0/Note/Meetings/Meeting.note');
   });
 
+  test('removes only CalDAV-backed tasks and clears their local bookkeeping', () => {
+    const store = new CalendarStorage();
+    const createdAt = new Date('2026-08-24T12:00:00Z');
+    store.upsertTask({
+      uid: 'remote-task',
+      title: 'From Radicale',
+      completed: false,
+      createdAt,
+      caldavUrl: 'https://tasks.example.test/todos/remote-task.ics',
+      etag: '"one"',
+    });
+    store.upsertTask({
+      uid: 'remote-child',
+      title: 'Local child of remote task',
+      completed: false,
+      createdAt,
+      parentId: 'remote-task',
+    });
+    store.upsertTask({
+      uid: 'device-task',
+      title: 'Device only',
+      completed: false,
+      createdAt,
+    });
+    store.setMembership('remote-task', { areaId: 'area-1' });
+    store.setMembership('remote-child', { projectId: 'project-1' });
+    store.setTaskPushState({
+      target: 'https://tasks.example.test/todos/',
+      records: {
+        'remote-task': { signature: 'remote', pushedAt: 1 },
+        'device-task': { signature: 'local', pushedAt: 1 },
+      },
+      lastSeenUids: ['remote-task', 'device-task'],
+    });
+
+    expect(store.removeSyncedTasks()).toEqual(['remote-task']);
+    expect(store.getTasks().map(task => task.uid)).toEqual(['remote-child', 'device-task']);
+    expect(store.getTasks().find(task => task.uid === 'remote-child')?.parentId).toBeUndefined();
+    expect(store.getMembership('remote-task')).toEqual({});
+    expect(store.getMembership('remote-child')).toEqual({ projectId: 'project-1' });
+    expect(store.getTaskPushState('https://tasks.example.test/todos/')).toEqual({
+      target: 'https://tasks.example.test/todos/',
+      records: { 'device-task': { signature: 'local', pushedAt: 1 } },
+      lastSeenUids: ['device-task'],
+    });
+  });
+
+  test('keeps task sync history and offline deletions scoped to each collection', () => {
+    const store = new CalendarStorage();
+    const first = 'https://one.example.test/tasks/';
+    const second = 'https://two.example.test/tasks/';
+    store.setTaskPushState({
+      target: first,
+      records: { one: { signature: 'one', pushedAt: 1 } },
+      lastSeenUids: ['one'],
+    });
+    store.setTaskPushState({
+      target: second,
+      records: { two: { signature: 'two', pushedAt: 2 } },
+      lastSeenUids: ['two'],
+    });
+    store.queueTaskDelete({
+      uid: 'one', title: 'Delete later', completed: false, createdAt: new Date(),
+      caldavUrl: `${first}one.ics`, caldavCollectionUrl: first, etag: '"one"',
+    });
+
+    expect(store.getTaskPushState(first).records.one).toBeDefined();
+    expect(store.getTaskPushState(second).records.two).toBeDefined();
+    expect(store.getPendingTaskDeletes(first)).toHaveLength(1);
+    expect(store.getPendingTaskDeletes(second)).toHaveLength(0);
+
+    store.clearTaskAccountBookkeeping(first);
+    expect(store.getPendingTaskDeletes(first)).toHaveLength(0);
+    expect(store.getTaskPushState(first).records.one).toBeDefined();
+    expect(store.getTaskPushState(second).records.two).toBeDefined();
+  });
+
+  test('removes synchronized tasks from only the selected account', () => {
+    const store = new CalendarStorage();
+    const createdAt = new Date();
+    store.upsertTask({
+      uid: 'one', title: 'One', completed: false, createdAt,
+      caldavCollectionUrl: 'https://one.example.test/tasks/',
+      caldavUrl: 'https://one.example.test/tasks/one.ics',
+    });
+    store.upsertTask({
+      uid: 'two', title: 'Two', completed: false, createdAt,
+      caldavCollectionUrl: 'https://two.example.test/tasks/',
+      caldavUrl: 'https://two.example.test/tasks/two.ics',
+    });
+
+    expect(store.removeSyncedTasks('https://one.example.test/tasks/')).toEqual(['one']);
+    expect(store.getTasks().map(task => task.uid)).toEqual(['two']);
+  });
+
+  test('keeps existing device tasks out of a newly connected account until enrolled', () => {
+    const store = new CalendarStorage();
+    const createdAt = new Date();
+    store.upsertTask({ uid: 'local', title: 'Private', completed: false, createdAt });
+    store.upsertTask({
+      uid: 'remote', title: 'Already synced', completed: false, createdAt,
+      caldavCollectionUrl: 'https://dav.example.test/tasks/',
+      caldavUrl: 'https://dav.example.test/tasks/remote.ics',
+    });
+
+    expect(store.excludeDeviceOnlyTasksFromSync()).toBe(1);
+    expect(store.excludeDeviceOnlyTasksFromSync()).toBe(0);
+    expect(store.getTasks().find(task => task.uid === 'local')?.caldavSyncExcluded).toBe(true);
+    expect(store.getTasks().find(task => task.uid === 'remote')?.caldavSyncExcluded).toBeUndefined();
+
+    expect(store.enrollDeviceOnlyTasksForSync()).toBe(1);
+    expect(store.getTasks().find(task => task.uid === 'local')?.caldavSyncExcluded).toBeUndefined();
+  });
+
   test('load returns storage data', async () => {
     const loaded = await calendarStorage.load();
     expect(loaded.settings).toBeDefined();
@@ -596,5 +710,53 @@ describe('storage failure isolation', () => {
 
     expect(store.getSettings().notesDirectory).toContain('/Note/Meetings');
     expect(store.getAreas().map(area => area.id)).toEqual(['area-safe']);
+  });
+});
+
+describe('task account lifecycle persistence', () => {
+  beforeEach(async () => {
+    await AsyncStorage.clear();
+  });
+
+  test('retains independent collection histories and offline deletions after restart', async () => {
+    const firstUrl = 'https://one.example.test/tasks/';
+    const secondUrl = 'https://two.example.test/tasks/';
+    const first = new CalendarStorage();
+    first.setTaskPushState({
+      target: firstUrl,
+      records: { one: { signature: 'one', pushedAt: 1 } },
+      lastSeenUids: ['one'],
+    });
+    first.setTaskPushState({
+      target: secondUrl,
+      records: { two: { signature: 'two', pushedAt: 2 } },
+      lastSeenUids: ['two'],
+    });
+    first.queueTaskDelete({
+      uid: 'one', title: 'Delete after reconnect', completed: false, createdAt: new Date(),
+      caldavCollectionUrl: firstUrl, caldavUrl: `${firstUrl}one.ics`,
+    });
+    await first.flush();
+
+    const second = new CalendarStorage();
+    await second.load();
+    expect(second.getTaskPushState(firstUrl).records.one).toBeDefined();
+    expect(second.getTaskPushState(secondUrl).records.two).toBeDefined();
+    expect(second.getPendingTaskDeletes(firstUrl)).toEqual([
+      expect.objectContaining({ uid: 'one', collectionUrl: firstUrl }),
+    ]);
+  });
+
+  test('migrates the previous single-collection push history', async () => {
+    const target = 'https://legacy.example.test/tasks/';
+    await AsyncStorage.setItem('@sn-calendar/caldavTaskPushState', JSON.stringify({
+      target,
+      records: { legacy: { signature: 'legacy', pushedAt: 1 } },
+      lastSeenUids: ['legacy'],
+    }));
+
+    const store = new CalendarStorage();
+    await store.load();
+    expect(store.getTaskPushState(target).records.legacy).toBeDefined();
   });
 });

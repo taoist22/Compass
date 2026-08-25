@@ -1,10 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NativeModules } from 'react-native';
-import { CalendarEvent, CalendarFeed, CalendarSettings, CalendarTask, MeetingNoteMapping, NoteKind, Area, EventType, Project, Resource, ItemMembership } from '../domain/types';
+import { CalendarEvent, CalendarFeed, CalendarSettings, CalendarTask, MeetingNoteMapping, NoteKind, Area, EventType, Project, Resource, ItemMembership, PendingTaskDelete } from '../domain/types';
 import { isLegacyTaskEvent, taskFromLegacyEvent } from '../domain/taskFilters';
 import { normaliseTask } from '../domain/taskModel';
 import { DEFAULT_SYSTEM_TEMPLATE } from '../domain/noteTemplates';
 import { CaldavPushState, emptyPushState, forgetPush, stateForTarget } from '../domain/pushState';
+import { inferTaskCollectionUrl, normaliseCollectionUrl, taskSourceCollection } from '../domain/taskSync';
 
 const SETTINGS_KEY = '@sn-calendar/settings';
 const MAPPINGS_KEY = '@sn-calendar/mappings';
@@ -12,6 +13,7 @@ const USER_EVENTS_KEY = '@sn-calendar/userEvents';
 const TASKS_KEY = '@sn-calendar/tasks';
 const PUSH_STATE_KEY = '@sn-calendar/caldavPushState';
 const TASK_PUSH_STATE_KEY = '@sn-calendar/caldavTaskPushState';
+const PENDING_TASK_DELETES_KEY = '@sn-calendar/pendingTaskDeletes';
 const CALDAV_EVENTS_KEY = '@sn-calendar/caldavEvents';
 const EVENT_KINDS_KEY = '@sn-calendar/eventKinds';
 const AREAS_KEY = '@sn-calendar/areas';
@@ -54,6 +56,8 @@ const DEFAULT_SETTINGS: CalendarSettings = {
   taskCaldavUsername: '',
   taskCaldavPassword: '',
   taskCaldavCollectionUrl: '',
+  taskCaldavCollectionName: '',
+  taskCaldavLocalEnrollmentDone: false,
   taskCaldavServerUrl: '',
   // 8mm ruled is the built-in default for every note kind; each is independently
   // changeable, and any of them may instead hold a custom PNG path.
@@ -175,6 +179,7 @@ function reviveTask(raw: any): CalendarTask {
     dueDate: raw.dueDate ? new Date(raw.dueDate) : undefined,
     completedAt: raw.completedAt ? new Date(raw.completedAt) : undefined,
     createdAt: raw.createdAt ? new Date(raw.createdAt) : new Date(),
+    caldavCollectionUrl: raw.caldavCollectionUrl || inferTaskCollectionUrl(raw.caldavUrl),
   };
 }
 
@@ -184,7 +189,9 @@ export class CalendarStorage {
   private userEvents: CalendarEvent[] = [];
   private tasks: CalendarTask[] = [];
   private pushState: CaldavPushState = emptyPushState();
-  private taskPushState: CaldavPushState = emptyPushState();
+  /** Sync history is retained per collection so switching accounts is safe. */
+  private taskPushStates: Record<string, CaldavPushState> = {};
+  private pendingTaskDeletes: PendingTaskDelete[] = [];
   /** Last read from CalDAV, cached so the calendar is populated on open. */
   private caldavEvents: CalendarEvent[] = [];
   /**
@@ -221,7 +228,7 @@ export class CalendarStorage {
 
   async load(): Promise<{ settings: CalendarSettings; mappings: Record<string, MeetingNoteMapping> }> {
     try {
-      const [rawSettings, rawMappings, rawEvents, rawTasks, rawPushState, rawTaskPushState, rawCaldavEvents, rawEventKinds, rawAreas, rawProjects, rawResources, rawMembership, rawPendingDeletes, rawEventTypes] =
+      const [rawSettings, rawMappings, rawEvents, rawTasks, rawPushState, rawTaskPushState, rawCaldavEvents, rawEventKinds, rawAreas, rawProjects, rawResources, rawMembership, rawPendingDeletes, rawEventTypes, rawPendingTaskDeletes] =
         await Promise.all([
         AsyncStorage.getItem(SETTINGS_KEY),
         AsyncStorage.getItem(MAPPINGS_KEY),
@@ -237,6 +244,7 @@ export class CalendarStorage {
         AsyncStorage.getItem(MEMBERSHIP_KEY),
         AsyncStorage.getItem(PENDING_DELETES_KEY),
         AsyncStorage.getItem(EVENT_TYPES_KEY),
+        AsyncStorage.getItem(PENDING_TASK_DELETES_KEY),
       ]);
 
       if (rawSettings) {
@@ -312,10 +320,25 @@ export class CalendarStorage {
       }
       if (rawTaskPushState) {
         const parsed = parseStored(rawTaskPushState);
-        this.taskPushState =
-          parsed && typeof parsed.target === 'string' && parsed.records
-            ? parsed
-            : emptyPushState();
+        // Migrate the original single-target shape into the per-collection map.
+        if (parsed && typeof parsed.target === 'string' && parsed.records) {
+          if (parsed.target) this.taskPushStates[normaliseCollectionUrl(parsed.target)] = parsed;
+        } else if (parsed && typeof parsed === 'object') {
+          this.taskPushStates = Object.fromEntries(
+            Object.values(parsed)
+              .filter((state: any) => state && typeof state.target === 'string' && state.records)
+              .map((state: any) => [normaliseCollectionUrl(state.target), {
+                ...state,
+                target: normaliseCollectionUrl(state.target),
+              }])
+          ) as Record<string, CaldavPushState>;
+        }
+      }
+      if (rawPendingTaskDeletes) {
+        const parsed = parseStored(rawPendingTaskDeletes);
+        this.pendingTaskDeletes = Array.isArray(parsed)
+          ? parsed.filter(item => item && typeof item.uid === 'string' && typeof item.collectionUrl === 'string')
+          : [];
       }
 
       if (rawEvents) {
@@ -409,7 +432,8 @@ export class CalendarStorage {
         AsyncStorage.setItem(USER_EVENTS_KEY, JSON.stringify(this.userEvents)),
         AsyncStorage.setItem(TASKS_KEY, JSON.stringify(this.tasks)),
         AsyncStorage.setItem(PUSH_STATE_KEY, JSON.stringify(this.pushState)),
-        AsyncStorage.setItem(TASK_PUSH_STATE_KEY, JSON.stringify(this.taskPushState)),
+        AsyncStorage.setItem(TASK_PUSH_STATE_KEY, JSON.stringify(this.taskPushStates)),
+        AsyncStorage.setItem(PENDING_TASK_DELETES_KEY, JSON.stringify(this.pendingTaskDeletes)),
         AsyncStorage.setItem(CALDAV_EVENTS_KEY, JSON.stringify(this.caldavEvents)),
         AsyncStorage.setItem(EVENT_KINDS_KEY, JSON.stringify(this.eventKinds)),
         AsyncStorage.setItem(AREAS_KEY, JSON.stringify(this.areas)),
@@ -525,6 +549,74 @@ export class CalendarStorage {
     this.tasks = this.tasks.filter(t => t.uid !== uid && t.parentId !== uid);
     void this.save();
     return this.tasks;
+  }
+
+  /** Keeps pre-existing device tasks private when a task account is connected. */
+  excludeDeviceOnlyTasksFromSync(): number {
+    let changed = 0;
+    this.tasks = this.tasks.map(task => {
+      if (taskSourceCollection(task) || task.caldavSyncExcluded) return task;
+      changed++;
+      return { ...task, caldavSyncExcluded: true };
+    });
+    if (changed > 0) void this.save();
+    return changed;
+  }
+
+  /** Explicitly enrolls previously excluded local tasks in the active account. */
+  enrollDeviceOnlyTasksForSync(): number {
+    let changed = 0;
+    this.tasks = this.tasks.map(task => {
+      if (!task.caldavSyncExcluded || taskSourceCollection(task)) return task;
+      changed++;
+      const { caldavSyncExcluded, ...enrolled } = task;
+      void caldavSyncExcluded;
+      return enrolled;
+    });
+    if (changed > 0) void this.save();
+    return changed;
+  }
+
+  /**
+   * Removes tasks that were read from or successfully written to a CalDAV
+   * VTODO collection. A resource URL is the durable source marker; device-only
+   * tasks never receive one. The remote server is deliberately not contacted.
+   */
+  removeSyncedTasks(collectionUrl?: string): string[] {
+    const target = collectionUrl ? normaliseCollectionUrl(collectionUrl) : undefined;
+    const removed = new Set(
+      this.tasks
+        .filter(task => {
+          const source = taskSourceCollection(task);
+          return Boolean(source) && (!target || source === target);
+        })
+        .map(task => task.uid)
+    );
+
+    if (removed.size === 0) return [];
+    // A device-only subtask is still device-only data. Preserve it and detach
+    // it from a removed server-backed parent instead of silently deleting it.
+    this.tasks = this.tasks
+      .filter(task => !removed.has(task.uid))
+      .map(task => task.parentId && removed.has(task.parentId)
+        ? { ...task, parentId: undefined }
+        : task);
+    for (const uid of removed) {
+      delete this.membership[uid];
+      for (const [stateTarget, state] of Object.entries(this.taskPushStates)) {
+        this.taskPushStates[stateTarget] = forgetPush(state, uid);
+      }
+    }
+    if (target) {
+      delete this.taskPushStates[target];
+      this.pendingTaskDeletes = this.pendingTaskDeletes.filter(
+        item => normaliseCollectionUrl(item.collectionUrl) !== target
+      );
+    } else {
+      this.pendingTaskDeletes = [];
+    }
+    void this.save();
+    return [...removed];
   }
 
   // ── PARA: Areas, Projects, and membership ──────────────────────────────
@@ -690,16 +782,58 @@ export class CalendarStorage {
   }
 
   getTaskPushState(target: string): CaldavPushState {
-    return stateForTarget(this.taskPushState, target);
+    const key = normaliseCollectionUrl(target);
+    return stateForTarget(this.taskPushStates[key], key);
   }
 
   setTaskPushState(state: CaldavPushState): void {
-    this.taskPushState = state;
+    const key = normaliseCollectionUrl(state.target);
+    this.taskPushStates[key] = { ...state, target: key };
     void this.save();
   }
 
-  forgetTaskPush(uid: string): void {
-    this.taskPushState = forgetPush(this.taskPushState, uid);
+  forgetTaskPush(uid: string, collectionUrl?: string): void {
+    const onlyTarget = collectionUrl ? normaliseCollectionUrl(collectionUrl) : undefined;
+    for (const [target, state] of Object.entries(this.taskPushStates)) {
+      if (!onlyTarget || target === onlyTarget) this.taskPushStates[target] = forgetPush(state, uid);
+    }
+    void this.save();
+  }
+
+  queueTaskDelete(task: CalendarTask): void {
+    const collectionUrl = taskSourceCollection(task);
+    if (!collectionUrl || this.pendingTaskDeletes.some(item => item.uid === task.uid && item.collectionUrl === collectionUrl)) return;
+    this.pendingTaskDeletes.push({
+      uid: task.uid,
+      collectionUrl,
+      resourceUrl: task.caldavUrl,
+      etag: task.etag,
+    });
+    void this.save();
+  }
+
+  getPendingTaskDeletes(collectionUrl?: string): PendingTaskDelete[] {
+    if (!collectionUrl) return [...this.pendingTaskDeletes];
+    const target = normaliseCollectionUrl(collectionUrl);
+    return this.pendingTaskDeletes.filter(item => normaliseCollectionUrl(item.collectionUrl) === target);
+  }
+
+  clearPendingTaskDelete(uid: string, collectionUrl: string): void {
+    const target = normaliseCollectionUrl(collectionUrl);
+    this.pendingTaskDeletes = this.pendingTaskDeletes.filter(
+      item => item.uid !== uid || normaliseCollectionUrl(item.collectionUrl) !== target
+    );
+    void this.save();
+  }
+
+  clearTaskAccountBookkeeping(collectionUrl?: string, clearHistory = false): void {
+    if (collectionUrl) {
+      const target = normaliseCollectionUrl(collectionUrl);
+      if (clearHistory) delete this.taskPushStates[target];
+      this.pendingTaskDeletes = this.pendingTaskDeletes.filter(
+        item => normaliseCollectionUrl(item.collectionUrl) !== target
+      );
+    }
     void this.save();
   }
 

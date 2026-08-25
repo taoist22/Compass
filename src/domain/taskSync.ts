@@ -1,6 +1,32 @@
 import { CalendarEvent, CalendarTask } from './types';
 import { taskStatus, withStatus } from './taskModel';
 
+export function normaliseCollectionUrl(url?: string): string {
+  const trimmed = (url || '').trim();
+  return trimmed ? `${trimmed.replace(/\/+$/, '')}/` : '';
+}
+
+export function inferTaskCollectionUrl(resourceUrl?: string): string | undefined {
+  if (!resourceUrl) {
+    return undefined;
+  }
+  const clean = resourceUrl.split(/[?#]/, 1)[0];
+  const slash = clean.lastIndexOf('/');
+  return slash >= 0 ? normaliseCollectionUrl(clean.slice(0, slash + 1)) : undefined;
+}
+
+export function taskSourceCollection(task: CalendarTask): string | undefined {
+  return task.caldavCollectionUrl
+    ? normaliseCollectionUrl(task.caldavCollectionUrl)
+    : inferTaskCollectionUrl(task.caldavUrl);
+}
+
+/** Device-only tasks may join the active list; server-backed tasks may not move implicitly. */
+export function taskBelongsToCollection(task: CalendarTask, collectionUrl: string): boolean {
+  const source = taskSourceCollection(task);
+  return !source || source === normaliseCollectionUrl(collectionUrl);
+}
+
 export function taskToCaldavItem(task: CalendarTask): CalendarEvent {
   const due = task.dueDate ? new Date(task.dueDate) : new Date(0);
   return {
@@ -20,7 +46,11 @@ export function taskToCaldavItem(task: CalendarTask): CalendarEvent {
   };
 }
 
-export function taskFromCaldavItem(item: CalendarEvent, existing?: CalendarTask): CalendarTask {
+export function taskFromCaldavItem(
+  item: CalendarEvent,
+  existing?: CalendarTask,
+  collectionUrl?: string
+): CalendarTask {
   const base: CalendarTask = {
     uid: item.uid,
     title: item.summary.replace(/^\[TASK\]\s*/i, '').trim(),
@@ -32,6 +62,9 @@ export function taskFromCaldavItem(item: CalendarEvent, existing?: CalendarTask)
     priority: item.priority,
     caldavUrl: item.caldavUrl,
     etag: item.etag,
+    caldavCollectionUrl: collectionUrl
+      ? normaliseCollectionUrl(collectionUrl)
+      : existing?.caldavCollectionUrl || inferTaskCollectionUrl(item.caldavUrl),
   };
   return withStatus(base, item.completed ? 'done' : existing ? taskStatus(existing) === 'in-progress' ? 'in-progress' : 'todo' : 'todo');
 }

@@ -46,6 +46,15 @@ The practical options are:
 - Enable **Push tasks to my calendar as events** for dated tasks. These appear in Apple Calendar, not Reminders.
 - Connect a separate service that supports CalDAV VTODO and add that same account to the Apple device. This is optional and provider-dependent.
 
+When several VTODO lists are available, choose the one SNFolio should use. SNFolio supports one active task list at a time and keeps every synchronized task associated with its source list.
+
+Existing device-only tasks are kept private when an account is first connected. Use **Upload Existing Device Tasks** only if all of those tasks should become eligible for that task list. New tasks created while the account is active synchronize normally.
+
+- **Pause Task Sync** keeps the account information, local task copies, and pending changes.
+- **Remove Task Account — Keep Local Tasks** removes the saved connection without changing the server.
+- **Remove Account & Local Synced Tasks** also clears that account's synchronized copies from SNFolio, while leaving device-only tasks and the server untouched.
+- Deleting a synchronized task while its account is paused creates a pending deletion for that same account. It is never sent to a different provider.
+
 ## Custom CalDAV
 
 Choose **Custom / Other** and provide:
@@ -54,7 +63,7 @@ Choose **Custom / Other** and provide:
 - the account username;
 - the account or app-specific password.
 
-SNFolio discovers the available calendar collections and selects a writable event calendar. Use the diagnostic trace only when connection or synchronization fails. VTODO task synchronization is configured separately because many calendar collections do not support tasks.
+SNFolio discovers the available calendar collections and selects a writable event calendar. For task accounts it displays a choice when more than one VTODO collection is available. Use the diagnostic trace only when connection or synchronization fails. VTODO task synchronization is configured separately because many calendar collections do not support tasks.
 
 Task events mirrored to Apple Calendar carry a private SNFolio marker. They remain visible on Apple devices but are not pulled back into SNFolio as duplicate calendar events.
 

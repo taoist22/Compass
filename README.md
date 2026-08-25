@@ -107,6 +107,10 @@ Use **Feeds / Config → Calendars & Sync** to connect iCloud or another CalDAV 
 
 Modern iCloud Reminders lists are not exposed through iCloud's CalDAV endpoint. Although iCloud may advertise and accept writes to a legacy collection named `Reminders`, those tasks do not appear in the current Reminders app. To synchronize tasks through VTODO, configure the plugin's separate **Task CalDAV Account** using a provider that supports VTODO, and add that same account to the Reminders app on the Apple device. Existing iCloud reminders are not moved. Alternatively, keep tasks local and enable the task-to-calendar event mirror for dated tasks. Mirrored events include an alert at the due time; date-only tasks use 9:00 AM.
 
+If a task provider exposes more than one VTODO list, SNFolio asks which list to use. **Pause Task Sync** keeps the account, tasks, and pending changes without contacting it. **Remove Task Account** removes the saved connection and asks whether synchronized task copies should remain on the Supernote; neither choice deletes anything from the server. Tasks remain tied to their original collection, so connecting a different provider never uploads old synchronized tasks into the new account. A task deleted while its owning account is paused is queued for deletion when that same account resumes.
+
+Connecting a task account does not upload tasks that were already stored only on the Supernote. They remain device-only unless the user confirms **Upload Existing Device Tasks**. Tasks created after the connection can synchronize normally.
+
 After a manual sync, the Calendar & Sync page shows each source's result, pending uploads, and the time of the last fully successful sync.
 
 Time entry is tap-only for device usability: choose an hour, quarter-hour minute, and AM/PM, with ±5-minute adjustment when needed. Events use common duration buttons and expose an exact-end picker for unusual lengths.

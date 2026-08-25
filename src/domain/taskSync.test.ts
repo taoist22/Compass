@@ -1,4 +1,9 @@
-import { taskFromCaldavItem, taskToCaldavItem } from './taskSync';
+import {
+  inferTaskCollectionUrl,
+  taskBelongsToCollection,
+  taskFromCaldavItem,
+  taskToCaldavItem,
+} from './taskSync';
 
 describe('task CalDAV conversion', () => {
   test('preserves due date, completion, priority and notes', () => {
@@ -22,5 +27,23 @@ describe('task CalDAV conversion', () => {
     });
     expect(item.undatedTask).toBe(true);
     expect(taskFromCaldavItem(item).dueDate).toBeUndefined();
+  });
+
+  test('ties an imported task to its source collection', () => {
+    const collection = 'https://dav.example.test/user/tasks/';
+    const task = taskFromCaldavItem({
+      uid: 'remote', summary: 'Remote', start: new Date(0), end: new Date(0),
+      allDay: true, attendees: [], isTask: true, undatedTask: true,
+      caldavUrl: `${collection}remote.ics`,
+    }, undefined, collection);
+
+    expect(task.caldavCollectionUrl).toBe(collection);
+    expect(taskBelongsToCollection(task, collection)).toBe(true);
+    expect(taskBelongsToCollection(task, 'https://other.example.test/tasks/')).toBe(false);
+  });
+
+  test('infers ownership for tasks stored before collection tracking existed', () => {
+    expect(inferTaskCollectionUrl('https://dav.example.test/tasks/old.ics?token=x'))
+      .toBe('https://dav.example.test/tasks/');
   });
 });

@@ -129,6 +129,9 @@ describe('CaldavService', () => {
     expect(res.success).toBe(true);
     expect(res.calendarUrl).toBeUndefined();
     expect(res.taskListUrl).toBe('https://tasks.example.com/u/calendars/todos/');
+    expect(res.taskLists).toEqual([
+      expect.objectContaining({ displayName: 'Shared Tasks', supportsVTodo: true }),
+    ]);
   });
 
   test('iCloud event discovery does not activate its legacy VTODO collection', async () => {

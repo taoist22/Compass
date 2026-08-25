@@ -52,6 +52,7 @@ import { generateNoteFilename, noteIdentity } from '../domain/meetingSnapshot';
 import { formatTimeOfDay, minutesFromDate } from '../domain/timeOfDay';
 import {
   caldavService,
+  CalendarCollection,
   CaldavProviderType,
   isTaskItem,
   isTaskMirrorEvent,
@@ -60,11 +61,18 @@ import {
   prunePushState,
   recordPullSnapshot,
   recordPush,
+  forgetPush,
   knownServerUids,
   selectItemsToPush,
   selectRemovedUids,
 } from '../domain/pushState';
-import { taskFromCaldavItem, taskToCaldavItem } from '../domain/taskSync';
+import {
+  normaliseCollectionUrl,
+  taskBelongsToCollection,
+  taskFromCaldavItem,
+  taskSourceCollection,
+  taskToCaldavItem,
+} from '../domain/taskSync';
 import { LASSO_BUTTON_ID, LASSO_PRESS_EVENT } from '../domain/buttonIds';
 import { parseCapturedText, resolveDateOrder, ParsedCapture } from '../domain/captureParser';
 import { captureLassoText } from '../supernote/lassoCapture';
@@ -151,10 +159,15 @@ function countPendingSyncItems(): number {
     settings.taskCaldavEnabled && settings.taskCaldavCollectionUrl &&
     settings.taskCaldavUsername && settings.taskCaldavPassword
   ) {
+    const eligibleTasks = calendarStorage.getTasks().filter(task =>
+      !task.caldavSyncExcluded &&
+      taskBelongsToCollection(task, settings.taskCaldavCollectionUrl as string)
+    );
     count += selectItemsToPush(
-      calendarStorage.getTasks().map(taskToCaldavItem),
+      eligibleTasks.map(taskToCaldavItem),
       calendarStorage.getTaskPushState(settings.taskCaldavCollectionUrl)
     ).length;
+    count += calendarStorage.getPendingTaskDeletes(settings.taskCaldavCollectionUrl).length;
   }
   return count;
 }
@@ -214,6 +227,10 @@ export function AgendaScreen(): React.JSX.Element {
   const taskUsernameInputRef = useRef<HandwritingTextInputHandle>(null);
   const taskPasswordInputRef = useRef<HandwritingTextInputHandle>(null);
   const [taskCaldavCollectionUrl, setTaskCaldavCollectionUrl] = useState<string>('');
+  const [confirmClearSyncedTasks, setConfirmClearSyncedTasks] = useState<boolean>(false);
+  const [confirmRemoveTaskAccount, setConfirmRemoveTaskAccount] = useState<boolean>(false);
+  const [confirmEnrollLocalTasks, setConfirmEnrollLocalTasks] = useState<boolean>(false);
+  const [discoveredTaskLists, setDiscoveredTaskLists] = useState<CalendarCollection[]>([]);
   // Text captured from a lasso selection, prefilled into the creation modal.
   const [lassoDraftTitle, setLassoDraftTitle] = useState<string>('');
   // Parsed date/time from a lasso capture, used to prefill the modal.
@@ -285,6 +302,11 @@ export function AgendaScreen(): React.JSX.Element {
     if (cancelled) return;
 
     const settings = calendarStorage.getSettings();
+    if (settings.taskCaldavCollectionUrl && !settings.taskCaldavLocalEnrollmentDone) {
+      calendarStorage.excludeDeviceOnlyTasksFromSync();
+      calendarStorage.updateSettings({ taskCaldavLocalEnrollmentDone: true });
+      await calendarStorage.flush();
+    }
     setCalendarFeeds([...settings.feeds]);
     setViewMode(settings.defaultViewMode || 'month');
     setHideAllDay(settings.hideAllDayEvents);
@@ -620,6 +642,7 @@ export function AgendaScreen(): React.JSX.Element {
 
     let pushed = 0;
     let error = '';
+    let taskDeleteAttempts = 0;
     for (const evt of pending) {
       const pushRes = await caldavService.pushIcloudEvent(evt, {
         provider: settings.caldavProvider as CaldavProviderType,
@@ -651,15 +674,39 @@ export function AgendaScreen(): React.JSX.Element {
     // Keeping a separate push state prevents switching targets from invalidating
     // event bookkeeping or silently leaving tasks unsynchronised.
     if (taskReady && settings.taskCaldavCollectionUrl) {
-      const taskItems = calendarStorage.getTasks().map(taskToCaldavItem);
-      let taskState = calendarStorage.getTaskPushState(settings.taskCaldavCollectionUrl);
+      const taskCollection = normaliseCollectionUrl(settings.taskCaldavCollectionUrl);
+      let taskState = calendarStorage.getTaskPushState(taskCollection);
+      const queuedDeletes = calendarStorage.getPendingTaskDeletes(taskCollection);
+      taskDeleteAttempts = queuedDeletes.length;
+      for (const deletion of queuedDeletes) {
+        const result = await caldavService.deleteIcloudEvent(deletion.uid, {
+          provider: 'custom',
+          appleId: settings.taskCaldavUsername as string,
+          appPassword: settings.taskCaldavPassword,
+          taskListUrl: taskCollection,
+        }, true, { url: deletion.resourceUrl, etag: deletion.etag });
+        if (result.success) {
+          pushed++;
+          calendarStorage.clearPendingTaskDelete(deletion.uid, taskCollection);
+          taskState = forgetPush(taskState, deletion.uid);
+        } else {
+          error = result.message;
+        }
+      }
+
+      // Never migrate tasks between providers implicitly. Device-only tasks
+      // may join this collection; server-backed tasks remain with their source.
+      const eligibleTasks = calendarStorage.getTasks().filter(task =>
+        !task.caldavSyncExcluded && taskBelongsToCollection(task, taskCollection)
+      );
+      const taskItems = eligibleTasks.map(taskToCaldavItem);
       const pendingTasks = selectItemsToPush(taskItems, taskState);
       for (const item of pendingTasks) {
         const taskRes = await caldavService.pushIcloudEvent(item, {
           provider: 'custom',
           appleId: settings.taskCaldavUsername as string,
           appPassword: settings.taskCaldavPassword,
-          taskListUrl: settings.taskCaldavCollectionUrl,
+          taskListUrl: taskCollection,
         });
         if (taskRes.success) {
           pushed++;
@@ -674,6 +721,7 @@ export function AgendaScreen(): React.JSX.Element {
               ...task,
               caldavUrl: synced.caldavUrl,
               etag: synced.etag,
+              caldavCollectionUrl: taskCollection,
             });
           }
           taskState = recordPush(taskState, synced);
@@ -686,7 +734,7 @@ export function AgendaScreen(): React.JSX.Element {
       pending.push(...pendingTasks);
     }
 
-    return { pushed, attempted: pending.length, error };
+    return { pushed, attempted: pending.length + taskDeleteAttempts, error };
   };
 
   /**
@@ -777,6 +825,47 @@ export function AgendaScreen(): React.JSX.Element {
     }
   };
 
+  const activateTaskCollection = async (
+    collection: CalendarCollection,
+    credentials?: { serverUrl: string; username: string; password: string }
+  ) => {
+    const serverUrl = credentials?.serverUrl ?? taskCaldavServerUrl;
+    const username = credentials?.username ?? taskCaldavUsername;
+    const password = credentials?.password ?? taskCaldavPassword;
+    const collectionUrl = normaliseCollectionUrl(collection.url);
+    const foreignCount = calendarStorage.getTasks().filter(task => {
+      const source = taskSourceCollection(task);
+      return source && source !== collectionUrl;
+    }).length;
+    const excludedCount = calendarStorage.excludeDeviceOnlyTasksFromSync();
+
+    setTaskCaldavEnabled(true);
+    setTaskCaldavCollectionUrl(collectionUrl);
+    setDiscoveredTaskLists([]);
+    setConfirmRemoveTaskAccount(false);
+    setTasks([...calendarStorage.getTasks()]);
+    calendarStorage.updateSettings({
+      taskCaldavEnabled: true,
+      taskCaldavUsername: username,
+      taskCaldavPassword: password,
+      taskCaldavServerUrl: serverUrl,
+      taskCaldavCollectionUrl: collectionUrl,
+      taskCaldavCollectionName: collection.displayName || 'Tasks',
+      taskCaldavLocalEnrollmentDone: true,
+    });
+    await calendarStorage.flush();
+    setStatusMsg(
+      `Task account connected to "${collection.displayName || 'Tasks'}". ` +
+      (foreignCount > 0
+        ? `${foreignCount} task(s) from another list will remain local and will not be uploaded here. `
+        : '') +
+      (excludedCount > 0
+        ? `${excludedCount} existing device task(s) were kept device-only. `
+        : '') +
+      'Tap Sync Now when you are ready.'
+    );
+  };
+
   const handleTestTaskCaldavConnection = async () => {
     const serverUrl = (taskServerInputRef.current?.getValue() ?? taskCaldavServerUrl).trim();
     const username = (taskUsernameInputRef.current?.getValue() ?? taskCaldavUsername).trim();
@@ -811,28 +900,105 @@ export function AgendaScreen(): React.JSX.Element {
       return;
     }
 
-    setTaskCaldavEnabled(true);
-    setTaskCaldavCollectionUrl(res.taskListUrl);
-    calendarStorage.updateSettings({
-      taskCaldavEnabled: true,
-      taskCaldavUsername: username,
-      taskCaldavPassword: password,
-      taskCaldavServerUrl: serverUrl,
-      taskCaldavCollectionUrl: res.taskListUrl,
-    });
-    setStatusMsg('Task account connected. Tap Sync Now when you are ready to upload local tasks.');
+    const lists = res.taskLists?.length
+      ? res.taskLists
+      : [{ url: res.taskListUrl, displayName: 'Tasks', supportsVEvent: false, supportsVTodo: true }];
+    if (lists.length > 1) {
+      setTaskCaldavServerUrl(serverUrl);
+      setTaskCaldavUsername(username);
+      setTaskCaldavPassword(password);
+      setDiscoveredTaskLists(lists);
+      setStatusMsg(`Connected. Choose one of the ${lists.length} VTODO lists below.`);
+      return;
+    }
+    await activateTaskCollection(lists[0], { serverUrl, username, password });
   };
 
-  const handleDisconnectTaskCaldav = () => {
+  const handlePauseTaskCaldav = async () => {
     setTaskCaldavEnabled(false);
-    setTaskCaldavCollectionUrl('');
-    setTaskCaldavPassword('');
     calendarStorage.updateSettings({
       taskCaldavEnabled: false,
-      taskCaldavPassword: '',
-      taskCaldavCollectionUrl: '',
     });
-    setStatusMsg('External task synchronization disconnected. Local tasks were kept.');
+    await calendarStorage.flush();
+    setStatusMsg('Task synchronization paused. Account details, tasks, and pending changes were kept.');
+  };
+
+  const handleResumeTaskCaldav = async () => {
+    if (!taskCaldavCollectionUrl || !taskCaldavUsername || !taskCaldavPassword) {
+      setStatusMsg('Re-enter the account password and connect again to resume task synchronization.');
+      return;
+    }
+    setTaskCaldavEnabled(true);
+    calendarStorage.updateSettings({ taskCaldavEnabled: true });
+    await calendarStorage.flush();
+    setStatusMsg('Task synchronization resumed. Tap Sync Now to reconcile pending changes.');
+  };
+
+  const handleRemoveTaskAccount = async (removeLocalTasks: boolean) => {
+    const collectionUrl = taskCaldavCollectionUrl;
+    const removed = removeLocalTasks && collectionUrl
+      ? calendarStorage.removeSyncedTasks(collectionUrl)
+      : [];
+    calendarStorage.clearTaskAccountBookkeeping(collectionUrl, removeLocalTasks);
+    setTaskCaldavEnabled(false);
+    setTaskCaldavServerUrl('');
+    setTaskCaldavUsername('');
+    setTaskCaldavPassword('');
+    setTaskCaldavCollectionUrl('');
+    setDiscoveredTaskLists([]);
+    setConfirmRemoveTaskAccount(false);
+    calendarStorage.updateSettings({
+      taskCaldavEnabled: false,
+      taskCaldavUsername: '',
+      taskCaldavPassword: '',
+      taskCaldavServerUrl: '',
+      taskCaldavCollectionUrl: '',
+      taskCaldavCollectionName: '',
+      taskCaldavLocalEnrollmentDone: false,
+    });
+    setTasks([...calendarStorage.getTasks()]);
+    setMembershipRevision(value => value + 1);
+    setPendingSyncCount(countPendingSyncItems());
+    const persistenceError = await calendarStorage.flush();
+    setStatusMsg(
+      persistenceError
+        ? `Account removed for this session, but could not save: ${persistenceError}`
+        : removeLocalTasks
+          ? `Task account removed. Removed ${removed.length} local synchronized task(s); the server was unchanged.`
+          : 'Task account removed. Local tasks were kept; the server was unchanged.'
+    );
+  };
+
+  const handleClearSyncedTasks = async () => {
+    if (taskCaldavCollectionUrl) {
+      setConfirmClearSyncedTasks(false);
+      setStatusMsg('Remove the task account before clearing its local synchronized tasks.');
+      return;
+    }
+    const removed = calendarStorage.removeSyncedTasks();
+    setTasks([...calendarStorage.getTasks()]);
+    setConfirmClearSyncedTasks(false);
+    setMembershipRevision(value => value + 1);
+    setPendingSyncCount(countPendingSyncItems());
+    const persistenceError = await calendarStorage.flush();
+    setStatusMsg(
+      persistenceError
+        ? `Removed ${removed.length} synced task(s) from this session, but could not save: ${persistenceError}`
+        : `Removed ${removed.length} synced task(s) from SNFolio. The remote account was not changed.`
+    );
+  };
+
+  const handleEnrollLocalTasks = async () => {
+    const enrolled = calendarStorage.enrollDeviceOnlyTasksForSync();
+    setTasks([...calendarStorage.getTasks()]);
+    setConfirmEnrollLocalTasks(false);
+    setPendingSyncCount(countPendingSyncItems());
+    const persistenceError = await calendarStorage.flush();
+    setStatusMsg(
+      persistenceError
+        ? `Selected ${enrolled} local task(s), but could not save: ${persistenceError}`
+        : `${enrolled} existing device task(s) are now eligible for the active task account. Tap Sync Now to upload them.`
+    );
   };
 
   /**
@@ -985,12 +1151,18 @@ export function AgendaScreen(): React.JSX.Element {
       return { configured: true, success: false, count: 0, error: remote.error };
     }
 
-    const taskState = calendarStorage.getTaskPushState(collectionUrl);
+    const taskCollection = normaliseCollectionUrl(collectionUrl);
+    const taskState = calendarStorage.getTaskPushState(taskCollection);
+    const pendingDeleteUids = new Set(
+      calendarStorage.getPendingTaskDeletes(taskCollection).map(item => item.uid)
+    );
     const remoteUids = new Set(remote.tasks.map(item => item.uid));
     for (const item of remote.tasks) {
+      // A failed queued DELETE must not immediately resurrect its local task.
+      if (pendingDeleteUids.has(item.uid)) continue;
       const existing = calendarStorage.getTasks().find(task => task.uid === item.uid);
       if (!existing || selectItemsToPush([taskToCaldavItem(existing)], taskState).length === 0) {
-        calendarStorage.upsertTask(taskFromCaldavItem(item, existing));
+        calendarStorage.upsertTask(taskFromCaldavItem(item, existing, taskCollection));
       }
     }
     for (const uid of knownServerUids(taskState)) {
@@ -1552,6 +1724,10 @@ export function AgendaScreen(): React.JSX.Element {
     !feed.id.startsWith('default-') &&
     feed.id !== 'primary-cal'
   );
+  const syncedTaskCount = tasks.filter(task => Boolean(taskSourceCollection(task))).length;
+  const excludedLocalTaskCount = tasks.filter(task =>
+    task.caldavSyncExcluded && !taskSourceCollection(task)
+  ).length;
 
   // Fifteen days forward from whichever day is selected, so the one- and
   // two-week marks mean "from the day you are looking at" rather than always
@@ -1776,23 +1952,29 @@ export function AgendaScreen(): React.JSX.Element {
 
   const pushTaskToCaldav = async (task: CalendarTask): Promise<string> => {
     const settings = calendarStorage.getSettings();
+    if (task.caldavSyncExcluded) return '';
     if (!settings.taskCaldavEnabled || !settings.taskCaldavCollectionUrl ||
         !settings.taskCaldavUsername || !settings.taskCaldavPassword) return '';
+    const taskCollection = normaliseCollectionUrl(settings.taskCaldavCollectionUrl);
+    if (!taskBelongsToCollection(task, taskCollection)) {
+      return 'This task belongs to a different CalDAV list and was kept local.';
+    }
     const item = taskToCaldavItem(task);
     const res = await caldavService.pushIcloudEvent(item, {
       provider: 'custom',
       appleId: settings.taskCaldavUsername,
       appPassword: settings.taskCaldavPassword,
-      taskListUrl: settings.taskCaldavCollectionUrl,
+      taskListUrl: taskCollection,
     });
     if (res.success) {
       calendarStorage.upsertTask({
         ...task,
         caldavUrl: res.caldavUrl || task.caldavUrl,
         etag: res.etag || task.etag,
+        caldavCollectionUrl: taskCollection,
       });
       calendarStorage.setTaskPushState(
-        recordPush(calendarStorage.getTaskPushState(settings.taskCaldavCollectionUrl), item)
+        recordPush(calendarStorage.getTaskPushState(taskCollection), item)
       );
       return '';
     }
@@ -1810,6 +1992,7 @@ export function AgendaScreen(): React.JSX.Element {
     setTasks([...calendarStorage.getTasks()]);
     setStatusMsg(next.completed ? `Done: "${next.title}"` : `Reopened: "${next.title}"`);
     const taskSyncError = await pushTaskToCaldav(next);
+    setTasks([...calendarStorage.getTasks()]);
     await pushTaskAsEvent(next);
     if (taskSyncError) setStatusMsg(`Updated "${next.title}" locally. CalDAV: ${taskSyncError}`);
   };
@@ -1846,15 +2029,31 @@ export function AgendaScreen(): React.JSX.Element {
   const handleDeleteTask = async (task: CalendarTask) => {
     const settings = calendarStorage.getSettings();
     let remoteError = '';
-    if (settings.taskCaldavEnabled && settings.taskCaldavCollectionUrl &&
-        settings.taskCaldavUsername && settings.taskCaldavPassword) {
+    const sourceCollection = taskSourceCollection(task);
+    const activeCollection = settings.taskCaldavCollectionUrl
+      ? normaliseCollectionUrl(settings.taskCaldavCollectionUrl)
+      : undefined;
+    const matchingAccountConfigured = Boolean(
+      sourceCollection && activeCollection === sourceCollection
+    );
+    const matchingAccountActive = Boolean(
+      matchingAccountConfigured &&
+      settings.taskCaldavEnabled &&
+      settings.taskCaldavCollectionUrl &&
+      settings.taskCaldavUsername && settings.taskCaldavPassword
+    );
+    if (matchingAccountActive) {
       const result = await caldavService.deleteIcloudEvent(task.uid, {
         provider: 'custom',
-        appleId: settings.taskCaldavUsername,
+        appleId: settings.taskCaldavUsername as string,
         appPassword: settings.taskCaldavPassword,
         taskListUrl: settings.taskCaldavCollectionUrl,
       }, true, { url: task.caldavUrl, etag: task.etag });
       if (!result.success) remoteError = result.message;
+    } else if (sourceCollection && matchingAccountConfigured) {
+      // Keep a tombstone so reconnecting the owning account does not pull the
+      // task straight back or silently lose the user's offline deletion.
+      calendarStorage.queueTaskDelete(task);
     }
     if (settings.pushTasksAsEvents && settings.caldavEnabled && settings.caldavCalendarUrl &&
         settings.caldavAppleId && settings.caldavPassword) {
@@ -1870,11 +2069,17 @@ export function AgendaScreen(): React.JSX.Element {
       return;
     }
     calendarStorage.removeTask(task.uid);
-    calendarStorage.forgetTaskPush(task.uid);
+    if (sourceCollection && matchingAccountActive) {
+      calendarStorage.forgetTaskPush(task.uid, sourceCollection);
+    }
     setTasks([...calendarStorage.getTasks()]);
-    setStatusMsg(remoteError
-      ? `Deleted task "${task.title}" locally. CalDAV: ${remoteError}`
-      : `Deleted task "${task.title}".`);
+    setStatusMsg(
+      sourceCollection && matchingAccountConfigured && !matchingAccountActive
+        ? `Deleted task "${task.title}" locally. Its server deletion is queued for the matching account.`
+        : sourceCollection && !matchingAccountConfigured
+          ? `Deleted task "${task.title}" locally. Its source account is not configured, so the server was unchanged.`
+        : `Deleted task "${task.title}".`
+    );
   };
 
   const eventIsEditable = (event: CalendarEvent): boolean => {
@@ -2807,6 +3012,7 @@ export function AgendaScreen(): React.JSX.Element {
       priority: input.priority && input.priority > 1 ? input.priority : undefined,
       caldavUrl: existing?.caldavUrl,
       etag: existing?.etag,
+      caldavCollectionUrl: existing?.caldavCollectionUrl,
     };
 
     // withStatus rather than assigning the field: completed and completedAt
@@ -2824,6 +3030,7 @@ export function AgendaScreen(): React.JSX.Element {
     setTasks([...calendarStorage.getTasks()]);
     setStatusMsg(`${existing ? 'Updated' : 'Added'} task "${task.title}".`);
     void pushTaskToCaldav(withState).then(error => {
+      setTasks([...calendarStorage.getTasks()]);
       if (error) setStatusMsg(`${existing ? 'Updated' : 'Added'} task locally. CalDAV: ${error}`);
     });
     void pushTaskAsEvent(withState);
@@ -3451,17 +3658,123 @@ export function AgendaScreen(): React.JSX.Element {
             </Text>
           </TouchableOpacity>
 
-          {taskCaldavEnabled && (
+          {discoveredTaskLists.length > 1 && (
+            <View style={styles.syncedTaskCleanupBox}>
+              <Text allowFontScaling={false} style={styles.checkSettingLabel}>Choose the task list to synchronize</Text>
+              {discoveredTaskLists.map(list => (
+                <TouchableOpacity
+                  key={list.url}
+                  style={styles.cancelBtn}
+                  onPress={() => void activateTaskCollection(list)}
+                >
+                  <Text allowFontScaling={false} style={styles.cancelBtnText}>
+                    {list.displayName || decodeURIComponent(list.url.replace(/\/$/, '').split('/').pop() || 'Tasks')}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {Boolean(taskCaldavCollectionUrl) && (
             <View style={styles.caldavActiveBadge}>
               <Text allowFontScaling={false} style={styles.caldavActiveBadgeText}>
-                ✓ External task synchronization active
+                {taskCaldavEnabled ? '✓ External task synchronization active' : '⏸ Task synchronization paused'}
               </Text>
               <Text allowFontScaling={false} style={styles.caldavTargetText}>
-                Tasks → {decodeURIComponent(taskCaldavCollectionUrl.replace(/\/$/, '').split('/').pop() || '?')}
+                Tasks → {calendarStorage.getSettings().taskCaldavCollectionName || decodeURIComponent(taskCaldavCollectionUrl.replace(/\/$/, '').split('/').pop() || '?')}
+                {taskCaldavUsername ? ` (${taskCaldavUsername})` : ''}
               </Text>
-              <TouchableOpacity style={styles.cancelBtn} onPress={handleDisconnectTaskCaldav}>
-                <Text allowFontScaling={false} style={styles.cancelBtnText}>Disconnect Task Account</Text>
+              {excludedLocalTaskCount > 0 && (
+                <View style={styles.syncedTaskCleanupBox}>
+                  <Text allowFontScaling={false} style={styles.checkSettingLabel}>
+                    {excludedLocalTaskCount} existing device task{excludedLocalTaskCount === 1 ? '' : 's'} kept device-only
+                  </Text>
+                  <Text allowFontScaling={false} style={styles.checkSettingHint}>
+                    New tasks can synchronize normally. Existing tasks are not uploaded unless you explicitly include them.
+                  </Text>
+                  {confirmEnrollLocalTasks ? (
+                    <View>
+                      <Text allowFontScaling={false} style={styles.cleanupWarningText}>
+                        This will make all {excludedLocalTaskCount} existing device task{excludedLocalTaskCount === 1 ? '' : 's'} eligible for upload to this list.
+                      </Text>
+                      <TouchableOpacity style={styles.connectCaldavBtn} onPress={() => void handleEnrollLocalTasks()}>
+                        <Text allowFontScaling={false} style={styles.connectCaldavBtnText}>Include Existing Device Tasks</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.cancelBtn} onPress={() => setConfirmEnrollLocalTasks(false)}>
+                        <Text allowFontScaling={false} style={styles.cancelBtnText}>Cancel</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity style={styles.cancelBtn} onPress={() => setConfirmEnrollLocalTasks(true)}>
+                      <Text allowFontScaling={false} style={styles.cancelBtnText}>Upload Existing Device Tasks…</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+              <TouchableOpacity
+                style={styles.cancelBtn}
+                onPress={() => void (taskCaldavEnabled ? handlePauseTaskCaldav() : handleResumeTaskCaldav())}
+              >
+                <Text allowFontScaling={false} style={styles.cancelBtnText}>
+                  {taskCaldavEnabled ? 'Pause Task Sync' : 'Resume Task Sync'}
+                </Text>
               </TouchableOpacity>
+              {confirmRemoveTaskAccount ? (
+                <View>
+                  <Text allowFontScaling={false} style={styles.cleanupWarningText}>
+                    Removing the account never changes its server. Choose whether its synchronized tasks remain on this Supernote.
+                  </Text>
+                  <TouchableOpacity style={styles.cancelBtn} onPress={() => void handleRemoveTaskAccount(false)}>
+                    <Text allowFontScaling={false} style={styles.cancelBtnText}>Remove Account — Keep Local Tasks</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.deleteOptionBtnDanger} onPress={() => void handleRemoveTaskAccount(true)}>
+                    <Text allowFontScaling={false} style={styles.deleteOptionBtnTextDanger}>Remove Account &amp; Local Synced Tasks</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.cancelBtn} onPress={() => setConfirmRemoveTaskAccount(false)}>
+                    <Text allowFontScaling={false} style={styles.cancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => setConfirmRemoveTaskAccount(true)}>
+                  <Text allowFontScaling={false} style={styles.cancelBtnText}>Remove Task Account…</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+          {syncedTaskCount > 0 && (
+            <View style={styles.syncedTaskCleanupBox}>
+              <Text allowFontScaling={false} style={styles.checkSettingLabel}>
+                {syncedTaskCount} CalDAV-backed task{syncedTaskCount === 1 ? '' : 's'} stored on this Supernote
+              </Text>
+              <Text allowFontScaling={false} style={styles.checkSettingHint}>
+                Pausing sync or removing an account with Keep Local Tasks preserves these copies. Removing them here never changes a server.
+              </Text>
+              {taskCaldavCollectionUrl ? (
+                <Text allowFontScaling={false} style={styles.checkSettingHint}>
+                  Use Remove Task Account above to keep or remove this account's local task copies safely.
+                </Text>
+              ) : confirmClearSyncedTasks ? (
+                <View>
+                  <Text allowFontScaling={false} style={styles.cleanupWarningText}>
+                    Device-only tasks will be kept. This cannot be undone unless the account is reconnected and synced.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.deleteOptionBtnDanger}
+                    onPress={() => void handleClearSyncedTasks()}
+                  >
+                    <Text allowFontScaling={false} style={styles.deleteOptionBtnTextDanger}>
+                      Remove {syncedTaskCount} Synced Task{syncedTaskCount === 1 ? '' : 's'} from SNFolio
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.cancelBtn} onPress={() => setConfirmClearSyncedTasks(false)}>
+                    <Text allowFontScaling={false} style={styles.cancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => setConfirmClearSyncedTasks(true)}>
+                  <Text allowFontScaling={false} style={styles.cancelBtnText}>Remove Synced Tasks from SNFolio</Text>
+                </TouchableOpacity>
+              )}
             </View>
           )}
           </View>
@@ -5037,6 +5350,20 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     padding: 8,
     marginBottom: 14,
+  },
+  syncedTaskCleanupBox: {
+    borderWidth: 1,
+    borderColor: '#707070',
+    borderRadius: 6,
+    padding: 8,
+    marginBottom: 10,
+    backgroundColor: '#f5f5f5',
+  },
+  cleanupWarningText: {
+    color: '#202020',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginBottom: 8,
   },
   taskSection: {
     marginBottom: 10,

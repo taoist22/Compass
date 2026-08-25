@@ -38,6 +38,8 @@ export interface CaldavTestResult {
   message: string;
   calendarUrl?: string;
   taskListUrl?: string;
+  /** All compatible task lists, so the user can choose instead of guessing. */
+  taskLists?: CalendarCollection[];
 }
 
 const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
@@ -750,6 +752,7 @@ export class CaldavService {
         // task sync must use an independent account that users also add to the
         // Reminders app on their Apple devices.
         taskListUrl: isIcloud ? undefined : taskList?.url,
+        taskLists: isIcloud ? [] : collections.filter(collection => collection.supportsVTodo),
       };
     } catch (err: any) {
       return {

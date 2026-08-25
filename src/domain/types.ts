@@ -172,6 +172,20 @@ export interface CalendarTask {
   order?: number;
   caldavUrl?: string;
   etag?: string;
+  /**
+   * Collection that owns this task. Kept separately from caldavUrl so a task
+   * can never be written to a newly connected provider by accident.
+   */
+  caldavCollectionUrl?: string;
+  /** Existing device-only task withheld from a newly connected task account. */
+  caldavSyncExcluded?: boolean;
+}
+
+export interface PendingTaskDelete {
+  uid: string;
+  collectionUrl: string;
+  resourceUrl?: string;
+  etag?: string;
 }
 
 export interface CalendarEvent {
@@ -268,6 +282,9 @@ export interface CalendarSettings {
   taskCaldavUsername?: string;
   taskCaldavPassword?: string;
   taskCaldavCollectionUrl?: string;
+  taskCaldavCollectionName?: string;
+  /** True after existing local tasks were explicitly kept out of task sync. */
+  taskCaldavLocalEnrollmentDone?: boolean;
   taskCaldavServerUrl?: string;
   /** Tie-breaker for ambiguous all-numeric dates; 'auto' uses device region. */
   dateOrder?: 'MDY' | 'DMY' | 'auto';
