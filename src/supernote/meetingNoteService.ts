@@ -9,6 +9,7 @@ import {
   templateCandidates,
 } from '../domain/noteTemplates';
 import { calendarStorage } from '../storage/calendarStorage';
+import { ensureFileWritePermission } from './pluginPermissions';
 
 export interface MeetingNoteResult {
   success: boolean;
@@ -22,6 +23,7 @@ export interface MeetingNoteResult {
 export class MeetingNoteService {
   async ensureDirectory(dirPath: string): Promise<boolean> {
     try {
+      if (!(await ensureFileWritePermission())) return false;
       if (FileUtils.makeDir) {
         await FileUtils.makeDir(dirPath);
       }
@@ -74,10 +76,16 @@ export class MeetingNoteService {
           mode: 0,
           isPortrait,
         });
-        if (res && res.success) {
+        // APIResponse.success only means the native call completed. The note
+        // exists only when its boolean result is also true.
+        if (res?.success === true && res?.result === true) {
           return { success: true, usedTemplate: candidate };
         }
-        lastError = res?.error?.message || lastError;
+        lastError =
+          res?.error?.message ||
+          (res?.success === true && res?.result === false
+            ? `The device rejected template ${candidate}.`
+            : lastError);
       } catch (e: any) {
         lastError = e?.message || lastError;
       }

@@ -78,17 +78,26 @@ describe('templateSettingKey', () => {
 });
 
 describe('templateCandidates', () => {
-  test('offers the portrait URI as a fallback for a built-in', () => {
-    // createNote is documented as taking a "path" while insertNotePage takes a
-    // "name", so the second attempt covers the ambiguity.
+  test('uses the reported built-in name without passing its resource URI', () => {
     const candidates = templateCandidates('style_8mm_ruled_line', PROBE_SAMPLE);
-    expect(candidates[0]).toBe('style_8mm_ruled_line');
-    expect(candidates[1]).toContain('drawable/style_8mm_ruled_line');
+    expect(candidates).toEqual(['style_8mm_ruled_line']);
   });
 
-  test('does not invent a fallback for an unknown built-in', () => {
+  test('falls back to a valid reported template for an unknown built-in', () => {
     expect(templateCandidates('style_not_on_this_device', PROBE_SAMPLE)).toEqual([
       'style_not_on_this_device',
+      'style_8mm_ruled_line',
+    ]);
+  });
+
+  test('resolves a legacy template name to a device-suffixed variant', () => {
+    const deviceTemplates = [
+      { name: 'style_8mm_ruled_line_a5x2' },
+      { name: 'style_blank_a5x2' },
+    ];
+    expect(templateCandidates('style_8mm_ruled_line', deviceTemplates)).toEqual([
+      'style_8mm_ruled_line_a5x2',
+      'style_8mm_ruled_line',
     ]);
   });
 
@@ -108,6 +117,10 @@ describe('parseSystemTemplates', () => {
     expect(parsed).toHaveLength(3);
     expect(parsed[0].name).toBe('style_8mm_ruled_line');
     expect(parsed[0].vUri).toContain('style_8mm_ruled_line');
+  });
+
+  test('also reads the APIResponse shape used by current documentation', () => {
+    expect(parseSystemTemplates({ success: true, result: PROBE_SAMPLE })).toHaveLength(3);
   });
 
   test('keeps names that do not match their resource path', () => {

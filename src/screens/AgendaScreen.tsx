@@ -103,6 +103,11 @@ import { ItemCreationModal } from './ItemCreationModal';
 import { EventDetailsModal } from './EventDetailsModal';
 import { DatePickerModal } from './DatePickerModal';
 import { listParaFolderEntries, openNoteInEditor, openResourceFile } from '../supernote/exportService';
+import {
+  ensureFileDeletePermission,
+  ensureFileReadPermission,
+  ensureInternetPermission,
+} from '../supernote/pluginPermissions';
 import { firstPickedFilePath, parentFolderFromPicker } from '../domain/fileSelection';
 
 type SettingsTab = 'sync' | 'notes' | 'app' | 'help';
@@ -406,12 +411,21 @@ export function AgendaScreen(): React.JSX.Element {
       }
     } catch (e) {}
 
-      await refreshFeeds();
-      // Same job the subscribed feed used to do for iCloud: populate the
-      // calendar on open. Silent because encrypted credentials may be absent or
-      // locked, and the cached read is already on screen.
-      await handlePullCaldavEvents({ silent: true });
-      await handlePullCaldavTasks({ silent: true });
+      const needsInternet =
+        settings.feeds.some(feed => Boolean(feed.enabled && feed.url)) ||
+        settings.caldavEnabled ||
+        settings.taskCaldavEnabled;
+      const internetAllowed = !needsInternet || await ensureInternetPermission();
+      if (internetAllowed) {
+        await refreshFeeds();
+        // Same job the subscribed feed used to do for iCloud: populate the
+        // calendar on open. Silent because encrypted credentials may be absent or
+        // locked, and the cached read is already on screen.
+        await handlePullCaldavEvents({ silent: true });
+        await handlePullCaldavTasks({ silent: true });
+      } else if (needsInternet) {
+        setStatusMsg('Internet access was not allowed. Cached calendar data remains available.');
+      }
     };
 
     void init();
@@ -761,6 +775,10 @@ export function AgendaScreen(): React.JSX.Element {
       setStatusMsg('Please enter your Email/Username and App-Specific Password first.');
       return;
     }
+    if (!(await ensureInternetPermission())) {
+      setStatusMsg('Internet access was not allowed.');
+      return;
+    }
     setStatusMsg('Running step-by-step CalDAV Diagnostic probe...');
     const logs = await caldavService.runCalDavDiagnostics({
       provider: caldavProvider,
@@ -778,6 +796,10 @@ export function AgendaScreen(): React.JSX.Element {
     const customUrl = (caldavCustomUrlInputRef.current?.getValue() ?? caldavCustomUrl).trim();
     if (!appleId || !password) {
       setStatusMsg('Please enter your Email/Username and App-Specific Password.');
+      return;
+    }
+    if (!(await ensureInternetPermission())) {
+      setStatusMsg('Internet access was not allowed.');
       return;
     }
 
@@ -872,6 +894,10 @@ export function AgendaScreen(): React.JSX.Element {
     const password = (taskPasswordInputRef.current?.getValue() ?? taskCaldavPassword).trim();
     if (!serverUrl || !username || !password) {
       setStatusMsg('Enter the task server URL, username, and password first.');
+      return;
+    }
+    if (!(await ensureInternetPermission())) {
+      setStatusMsg('Internet access was not allowed.');
       return;
     }
     if (/\.icloud\.com(?:\/|$)/i.test(serverUrl)) {
@@ -1194,6 +1220,11 @@ export function AgendaScreen(): React.JSX.Element {
    * uploaded yet.
    */
   const handleSyncNow = async () => {
+    if (!(await ensureInternetPermission())) {
+      setStatusMsg('Internet access was not allowed.');
+      setSyncPhase('error');
+      return;
+    }
     setStatusMsg('Syncing...');
     setSyncPhase('syncing');
     setSyncDetails([]);
@@ -1268,6 +1299,10 @@ export function AgendaScreen(): React.JSX.Element {
    */
   const handleImportFeedsFromTxt = async () => {
     try {
+      if (!(await ensureFileReadPermission())) {
+        setStatusMsg('File access was not allowed.');
+        return;
+      }
       if (!RattaFileSelector || !RattaFileSelector.selectFile) {
         setStatusMsg('Native file picker unavailable on this device.');
         return;
@@ -1370,6 +1405,11 @@ export function AgendaScreen(): React.JSX.Element {
           `No calendar data or valid HTTPS/webcal feed lines found in ${fileName}` +
           (setup.invalidLines ? ` (${setup.invalidLines} invalid line(s)).` : '.')
         );
+        return;
+      }
+
+      if (!(await ensureInternetPermission())) {
+        setStatusMsg('Internet access was not allowed.');
         return;
       }
 
@@ -2156,6 +2196,7 @@ export function AgendaScreen(): React.JSX.Element {
   const flushPendingNoteDeletions = async (): Promise<number> => {
     const queued = [...calendarStorage.getPendingNoteDeletions()];
     if (queued.length === 0) return 0;
+    if (!(await ensureFileDeletePermission())) return 0;
 
     let removed = 0;
     for (const path of queued) {
@@ -2179,6 +2220,7 @@ export function AgendaScreen(): React.JSX.Element {
     const mapping = calendarStorage.getMapping(noteIdentity(event));
     const path = mapping?.notePath;
     if (!path) return null;
+    if (!(await ensureFileDeletePermission())) return null;
 
     try {
       // Reported as a failure rather than skipped silently: clearing the
@@ -2901,9 +2943,8 @@ export function AgendaScreen(): React.JSX.Element {
     item: ParaFolderItem,
     folder: string
   ) => {
-    // Creating the assigned default makes a brand-new PARA item immediately
-    // usable. Navigated children already exist, so this is harmless for them.
-    await meetingNoteService.ensureDirectory(folder);
+    // Browsing only needs read access. Folder creation is handled when the
+    // PARA item's folder is assigned or a note is created.
     return listParaFolderEntries(folder);
   };
 
@@ -3097,6 +3138,10 @@ export function AgendaScreen(): React.JSX.Element {
     const feedUrl = normaliseFeedUrl(draftUrl);
     if (!feedUrl) {
       setStatusMsg('Calendar subscriptions must use HTTPS (webcal:// is accepted and upgraded).');
+      return;
+    }
+    if (!(await ensureInternetPermission())) {
+      setStatusMsg('Internet access was not allowed.');
       return;
     }
     setStatusMsg('Fetching calendar feed securely...');

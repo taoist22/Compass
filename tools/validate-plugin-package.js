@@ -44,6 +44,21 @@ for (const field of requiredFields) {
   }
 }
 
+const requiredPermissions = [
+  'plugin.permission.FILE:READ',
+  'plugin.permission.FILE:WRITE',
+  'plugin.permission.FILE:DELETE',
+  'plugin.permission.INTERNET',
+];
+if (!Array.isArray(config['uses-permissions'])) {
+  fail('PluginConfig.json is missing the "uses-permissions" array.');
+}
+for (const permission of requiredPermissions) {
+  if (!config['uses-permissions'].includes(permission)) {
+    fail(`PluginConfig.json is missing required permission "${permission}".`);
+  }
+}
+
 const packagePath = path.join(
   projectRoot,
   'build',
@@ -65,6 +80,20 @@ try {
 for (const expected of ['PluginConfig.json']) {
   if (!listing.includes(expected)) {
     fail(`${expected} is missing from the .snplg package.`);
+  }
+}
+
+let packagedConfig;
+try {
+  packagedConfig = JSON.parse(
+    execFileSync('unzip', ['-p', packagePath, 'PluginConfig.json'], {encoding: 'utf8'}),
+  );
+} catch (error) {
+  fail(`Could not read packaged PluginConfig.json: ${error.message}`);
+}
+for (const permission of requiredPermissions) {
+  if (!packagedConfig['uses-permissions']?.includes(permission)) {
+    fail(`Packaged PluginConfig.json is missing required permission "${permission}".`);
   }
 }
 

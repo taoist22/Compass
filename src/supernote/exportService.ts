@@ -1,5 +1,6 @@
 import { NativeModules } from 'react-native';
 import { FileUtils } from 'sn-plugin-lib';
+import { ensureFileReadPermission, ensureFileWritePermission } from './pluginPermissions';
 
 type CalendarFileModule = {
   writeTextFile(path: string, content: string): Promise<string>;
@@ -35,6 +36,10 @@ export interface ParaFolderEntry {
 
 /** One navigable level of a PARA folder, including subfolders and files. */
 export async function listParaFolderEntries(folder: string): Promise<ParaFolderEntry[]> {
+  if (!(await ensureFileReadPermission())) {
+    throw new Error('File access was not allowed. Grant file access to browse PARA folders.');
+  }
+
   if (CalendarFile?.listFolderEntries) {
     try {
       const entries = await CalendarFile.listFolderEntries(folder);
@@ -78,6 +83,9 @@ export async function listParaFolderEntries(folder: string): Promise<ParaFolderE
  * activity directly instead.
  */
 export async function openNoteInEditor(path: string, page = 0): Promise<ExportResult> {
+  if (!(await ensureFileReadPermission())) {
+    return { success: false, path, message: 'File access was not allowed.' };
+  }
   if (!CalendarFile?.openNote) {
     return { success: false, message: 'Cannot open notes — this build is missing its native module.' };
   }
@@ -90,6 +98,10 @@ export async function openNoteInEditor(path: string, page = 0): Promise<ExportRe
 }
 
 export async function listResourceFiles(folder: string): Promise<string[]> {
+  if (!(await ensureFileReadPermission())) {
+    throw new Error('File access was not allowed. Grant file access to browse Resources.');
+  }
+
   // The SDK declaration claims string[], but its Android implementation sends
   // [{ path, type }]. Accept both so this works across plugin-lib versions.
   try {
@@ -123,6 +135,9 @@ export async function listResourceFiles(folder: string): Promise<string[]> {
 }
 
 export async function openResourceFile(path: string): Promise<ExportResult> {
+  if (!(await ensureFileReadPermission())) {
+    return { success: false, path, message: 'File access was not allowed.' };
+  }
   if (path.toLowerCase().endsWith('.note')) return openNoteInEditor(path);
   if (!CalendarFile?.openDocument) {
     return { success: false, path, message: 'Cannot open documents — this build is missing its native module.' };
@@ -162,6 +177,9 @@ async function exportRoot(): Promise<string> {
  * reasoning as the ink-capture destination.
  */
 export async function writeExport(fileName: string, content: string): Promise<ExportResult> {
+  if (!(await ensureFileWritePermission())) {
+    return { success: false, message: 'File access was not allowed.' };
+  }
   if (!CalendarFile?.writeTextFile) {
     return {
       success: false,

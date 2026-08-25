@@ -6,7 +6,7 @@ import { PluginFileAPI } from 'sn-plugin-lib';
 
 jest.mock('sn-plugin-lib', () => ({
   PluginFileAPI: {
-    createNote: jest.fn().mockResolvedValue({ success: true }),
+    createNote: jest.fn().mockResolvedValue({ success: true, result: true }),
     getNoteTotalPageNum: jest.fn().mockResolvedValue({ success: false }),
     insertNotePage: jest.fn().mockResolvedValue({ success: true }),
     insertElements: jest.fn().mockResolvedValue({ success: true }),
@@ -54,24 +54,21 @@ describe('meetingNoteService', () => {
     expect(args.isPortrait).toBe(true);
   });
 
-  test('falls back to the portrait resource URI when the name is rejected', async () => {
-    // createNote is documented as taking a "path" while insertNotePage takes a
-    // "name", so a rejected name must not leave the note uncreated.
+  test('does not report success when createNote returns result false', async () => {
     (PluginFileAPI.createNote as jest.Mock)
       .mockClear()
-      .mockResolvedValueOnce({ success: false, error: { message: 'bad template' } })
-      .mockResolvedValueOnce({ success: true });
+      .mockResolvedValueOnce({ success: true, result: false });
 
     const res = await meetingNoteService.createOrAppendMeetingNote({ ...sampleEvent, uid: 'evt-301' });
 
-    expect(res.success).toBe(true);
-    const attempts = (PluginFileAPI.createNote as jest.Mock).mock.calls.map(c => c[0].template);
-    expect(attempts[0]).toBe('style_8mm_ruled_line');
-    expect(attempts[1]).toContain('drawable/style_8mm_ruled_line');
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('rejected template');
   });
 
   test('records what kind of note was created', async () => {
-    (PluginFileAPI.createNote as jest.Mock).mockClear().mockResolvedValue({ success: true });
+    (PluginFileAPI.createNote as jest.Mock)
+      .mockClear()
+      .mockResolvedValue({ success: true, result: true });
     await meetingNoteService.createOrAppendMeetingNote({ ...sampleEvent, uid: 'evt-302' });
 
     // Untyped notes default to meeting; Class is selected per event/type.
@@ -126,7 +123,9 @@ describe('meetingNoteService', () => {
 
 describe('note kind routing', () => {
   beforeEach(() => {
-    (PluginFileAPI.createNote as jest.Mock).mockClear().mockResolvedValue({ success: true });
+    (PluginFileAPI.createNote as jest.Mock)
+      .mockClear()
+      .mockResolvedValue({ success: true, result: true });
     calendarStorage.updateSettings({
       notesDirectory: '/storage/emulated/0/Note/Meetings',
       classNotesDirectory: '/storage/emulated/0/Note/Classes',

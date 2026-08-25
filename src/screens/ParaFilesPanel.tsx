@@ -30,6 +30,7 @@ export function ParaFilesPanel({
   const [entries, setEntries] = React.useState<ParaFolderEntry[]>([]);
   const [viewFolder, setViewFolder] = React.useState<string>(folder);
   const [loading, setLoading] = React.useState<boolean>(false);
+  const [error, setError] = React.useState<string>('');
   const [adding, setAdding] = React.useState<boolean>(false);
   const [choosing, setChoosing] = React.useState<boolean>(false);
   const [noteName, setNoteName] = React.useState<string>('');
@@ -37,8 +38,12 @@ export function ParaFilesPanel({
 
   const refresh = React.useCallback(async (target: string) => {
     setLoading(true);
+    setError('');
     try {
       setEntries(await onListEntries(target));
+    } catch (e: any) {
+      setEntries([]);
+      setError(e?.message || 'Could not read this folder.');
     } finally {
       setLoading(false);
     }
@@ -146,7 +151,10 @@ export function ParaFilesPanel({
       )}
 
       {loading && <Text allowFontScaling={false} style={styles.hint}>Reading folder…</Text>}
-      {!loading && entries.length === 0 && (
+      {!loading && Boolean(error) && (
+        <Text allowFontScaling={false} style={styles.error}>{error}</Text>
+      )}
+      {!loading && !error && entries.length === 0 && (
         <Text allowFontScaling={false} style={styles.hint}>No visible files or folders here.</Text>
       )}
       {!loading && entries.map(entry => (
@@ -214,6 +222,7 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
   hint: { fontSize: 11, color: '#505050', paddingVertical: 8 },
+  error: { fontSize: 11, color: '#000000', fontWeight: 'bold', paddingVertical: 8 },
   fileRow: {
     flexDirection: 'row',
     alignItems: 'center',

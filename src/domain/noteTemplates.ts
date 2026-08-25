@@ -83,21 +83,49 @@ export function templateSettingKey(kind: NoteKind): 'meetingTemplate' | 'classTe
  */
 export function templateCandidates(value: string, available: SystemTemplate[] = []): string[] {
   const trimmed = (value || '').trim();
-  if (!trimmed) return [DEFAULT_SYSTEM_TEMPLATE];
+  if (!trimmed) return systemTemplateCandidates(DEFAULT_SYSTEM_TEMPLATE, available);
   if (!isSystemTemplate(trimmed)) return [trimmed];
 
-  const match = available.find(t => t.name === trimmed);
-  const candidates = [trimmed];
-  if (match?.vUri) candidates.push(match.vUri);
-  return candidates;
+  return systemTemplateCandidates(trimmed, available);
+}
+
+/**
+ * Resolves a saved built-in name against the templates exposed by this device.
+ *
+ * Template identifiers can gain a device suffix after an OS update (for
+ * example, `style_8mm_ruled_line_a5x2`).  A setting saved on the previous OS
+ * must therefore not be the only value attempted.  `createNote` now explicitly
+ * requires a reported Template.name, so resource URIs are no longer candidates.
+ */
+function systemTemplateCandidates(value: string, available: SystemTemplate[]): string[] {
+  const exact = available.find(t => t.name === value)?.name;
+  const deviceVariant = available.find(t => t.name.startsWith(`${value}_`))?.name;
+  const defaultExact = available.find(t => t.name === DEFAULT_SYSTEM_TEMPLATE)?.name;
+  const defaultVariant = available.find(t =>
+    t.name.startsWith(`${DEFAULT_SYSTEM_TEMPLATE}_`)
+  )?.name;
+
+  return Array.from(
+    new Set(
+      [exact, deviceVariant, value, defaultExact, defaultVariant, available[0]?.name].filter(
+        (candidate): candidate is string => Boolean(candidate)
+      )
+    )
+  );
 }
 
 /** Normalises whatever getNoteSystemTemplates returns into a usable list. */
 export function parseSystemTemplates(raw: unknown): SystemTemplate[] {
-  if (!Array.isArray(raw)) return [];
+  // Current documentation shows an APIResponse wrapper while the SDK type
+  // still advertises the older raw array. Accept both during the transition.
+  const source = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === 'object' && Array.isArray((raw as Record<string, unknown>).result)
+      ? ((raw as Record<string, unknown>).result as unknown[])
+      : [];
 
   const templates: SystemTemplate[] = [];
-  for (const entry of raw) {
+  for (const entry of source) {
     if (!entry || typeof entry !== 'object') continue;
     const record = entry as Record<string, unknown>;
     const name = typeof record.name === 'string' ? record.name.trim() : '';
