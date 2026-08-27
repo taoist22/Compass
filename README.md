@@ -12,7 +12,7 @@ An e-ink-optimized planner, calendar, task, PARA, and note workspace for Superno
 
 > [!WARNING]
 > This version requires the newest Supernote Plugin Preview firmware:
-> **Chauvet 3.29.42 Beta** for Manta / Nomad or **Chauvet 2.26.39 Beta** for A5 X / A6 X.
+> **Chauvet 3.29.43 Beta** for Manta / Nomad or **Chauvet 2.26.40 Beta** for A5 X / A6 X.
 > It will not open on earlier system versions.
 
 ## Start Here
