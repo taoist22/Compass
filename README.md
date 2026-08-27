@@ -45,9 +45,6 @@ SNFolio works without an online account. Calendar connections and PARA organizat
 
 1. Connect your Supernote Nomad (A6 X2) or Manta (A5 X2) via USB or ADB.
 2. Copy `build/outputs/SNFolio.snplg` to the `/MyStyle/` folder on your Supernote storage:
-   ```bash
-   adb push build/outputs/SNFolio.snplg /storage/emulated/0/MyStyle/
-   ```
 3. On your Supernote device:
    - Go to **Settings → Apps → Plugins**.
    - Tap **Add Plugin** and select `SNFolio.snplg`.
