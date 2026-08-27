@@ -30,6 +30,10 @@ jest.mock('sn-plugin-lib', () => ({
     makeDir: jest.fn().mockResolvedValue(true),
     openFilePath: jest.fn().mockResolvedValue(true),
   },
+  PluginManager: {
+    hasPermission: jest.fn().mockResolvedValue(1),
+    requestPermission: jest.fn().mockResolvedValue(1),
+  },
 }));
 
 const sampleEvent: CalendarEvent = {
@@ -43,6 +47,23 @@ const sampleEvent: CalendarEvent = {
 };
 
 describe('meetingNoteService', () => {
+
+  test('requests write access before creating a daily note', async () => {
+    const { PluginManager } = jest.requireMock('sn-plugin-lib');
+    PluginManager.hasPermission.mockResolvedValueOnce(0);
+    PluginManager.requestPermission.mockResolvedValueOnce(1);
+
+    const res = await meetingNoteService.createDailyNote(
+      '/storage/emulated/0/Note/Daily Notes/2026-08-26.note',
+      { ...calendarStorage.getSettings(), dailyNoteTemplate: 'style_8mm_ruled_line' },
+    );
+
+    expect(res.success).toBe(true);
+    expect(PluginManager.requestPermission).toHaveBeenCalledWith(
+      'plugin.permission.FILE:WRITE',
+      expect.stringContaining('journal'),
+    );
+  });
 
   test('creates a meeting note with the configured system template', async () => {
     (PluginFileAPI.createNote as jest.Mock).mockClear();

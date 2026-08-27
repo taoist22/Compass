@@ -216,4 +216,22 @@ describe('taskRowLabel', () => {
   test('an unprioritised, undated task is just its title', () => {
     expect(taskRowLabel(makeTask())).toBe('Read chapter 4');
   });
+
+  test('puts project context before the task on current-day rows', () => {
+    expect(taskRowLabel(makeTask({ dueDate: due }), false, 'MGT120')).toBe(
+      'MGT120 — Read chapter 4'
+    );
+  });
+
+  test('puts the date before project context when a date is needed', () => {
+    expect(taskRowLabel(makeTask({ dueDate: due }), true, 'MGT120')).toBe(
+      'Aug 25 · MGT120 — Read chapter 4'
+    );
+  });
+
+  test('keeps priority beside the task rather than the project context', () => {
+    expect(taskRowLabel(makeTask({ dueDate: due, priority: 4 }), true, 'MGT120')).toBe(
+      'Aug 25 · MGT120 — !! Read chapter 4'
+    );
+  });
 });

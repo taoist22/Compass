@@ -286,7 +286,11 @@ export function projectsInArea(projects: Project[], areaId: string | null): Proj
 
 /** Active projects only — a short list is the entire point of the split. */
 export function activeProjects(projects: Project[]): Project[] {
-  return projects.filter(p => p.status === 'active');
+  return projects
+    .map((project, index) => ({ project, index }))
+    .filter(entry => entry.project.status === 'active')
+    .sort((a, b) => (a.project.sortOrder ?? a.index) - (b.project.sortOrder ?? b.index))
+    .map(entry => entry.project);
 }
 
 /**
@@ -310,7 +314,12 @@ export function projectsByArea(
   if (loose.length > 0) {
     groups.push({ areaId: null, label: 'No Area', projects: loose });
   }
-  return groups.filter(g => g.projects.length > 0);
+  // Preserve the user's project order in the right-hand PARA cards too. The
+  // old implementation always put Areas first, which made reordering visible
+  // only in the left navigation tree.
+  return groups
+    .filter(g => g.projects.length > 0)
+    .sort((a, b) => projects.indexOf(a.projects[0]) - projects.indexOf(b.projects[0]));
 }
 
 /** True when a project's due date has passed and it is not finished. */

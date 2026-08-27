@@ -643,6 +643,23 @@ describe('PARA areas, projects and membership', () => {
     expect(second.getProjects()[0].notePath).toContain('Kitchen remodel.note');
   });
 
+  test('project short labels survive a storage reload', async () => {
+    await AsyncStorage.clear();
+    const first = new CalendarStorage();
+    first.upsertProject({
+      id: 'project-management',
+      name: 'MGT120 Principles of Management',
+      shortLabel: 'MGT120',
+      status: 'active',
+      createdAt: new Date('2026-08-25T00:00:00Z'),
+    });
+    await first.flush();
+
+    const second = new CalendarStorage();
+    await second.load();
+    expect(second.getProjects()[0].shortLabel).toBe('MGT120');
+  });
+
   test('area folders survive a storage reload', async () => {
     await AsyncStorage.clear();
     const first = new CalendarStorage();

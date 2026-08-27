@@ -14,10 +14,11 @@ export function generateMonthGrid(
   year: number,
   month: number, // 0-indexed (0=Jan, 11=Dec)
   allEvents: CalendarEvent[],
-  today = new Date()
+  today = new Date(),
+  weekStartsOn: number = 0
 ): MonthGridCell[][] {
   const firstDayOfMonth = new Date(year, month, 1);
-  const startingDayOfWeek = firstDayOfMonth.getDay(); // 0=Sun, 1=Mon, ...
+  const startingDayOfWeek = (firstDayOfMonth.getDay() - weekStartsOn + 7) % 7;
 
   const startDate = new Date(year, month, 1 - startingDayOfWeek);
 

@@ -162,18 +162,21 @@ export function priorityMarker(priority?: TaskPriority): string {
  * registration in these plugins, and the date read as belonging to the next
  * column when it was rendered as a separate sibling element.
  */
-export function taskRowLabel(task: CalendarTask, showDate = false): string {
-  const parts: string[] = [];
+export function taskRowLabel(
+  task: CalendarTask,
+  showDate = false,
+  contextLabel = ''
+): string {
+  const marker = priorityMarker(task.priority);
+  const title = marker ? `${marker} ${task.title}` : task.title;
+  const date = showDate && task.dueDate
+    ? task.dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : '';
+  const context = contextLabel.trim();
 
-  if (showDate && task.dueDate) {
-    parts.push(
-      `${task.dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ·`
-    );
+  if (context) {
+    return `${date ? `${date} · ` : ''}${context} — ${title}`;
   }
 
-  const marker = priorityMarker(task.priority);
-  if (marker) parts.push(marker);
-
-  parts.push(task.title);
-  return parts.join(' ');
+  return date ? `${date} · ${title}` : title;
 }

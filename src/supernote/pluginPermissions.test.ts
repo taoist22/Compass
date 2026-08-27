@@ -1,7 +1,9 @@
 import {
   ensureFileReadPermission,
+  ensureFileWritePermission,
   ensurePluginPermission,
   FILE_READ_PERMISSION,
+  FILE_WRITE_PERMISSION,
 } from './pluginPermissions';
 import { PluginManager } from 'sn-plugin-lib';
 
@@ -36,6 +38,17 @@ describe('plugin permissions', () => {
     expect(manager.requestPermission).toHaveBeenCalledWith(
       FILE_READ_PERMISSION,
       expect.stringContaining('PARA'),
+    );
+  });
+
+  test('describes write access as note creation rather than only PARA storage', async () => {
+    manager.hasPermission.mockResolvedValue(0);
+    manager.requestPermission.mockResolvedValue(1);
+
+    await expect(ensureFileWritePermission()).resolves.toBe(true);
+    expect(manager.requestPermission).toHaveBeenCalledWith(
+      FILE_WRITE_PERMISSION,
+      expect.stringContaining('journal'),
     );
   });
 

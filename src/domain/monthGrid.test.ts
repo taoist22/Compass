@@ -35,6 +35,12 @@ describe('monthGrid', () => {
     expect(aug16Cell?.isCurrentMonth).toBe(true);
     expect(aug16Cell?.eventCount).toBe(1);
   });
+
+  test('aligns the grid to a configured Monday week start', () => {
+    const grid = generateMonthGrid(2026, 7, [], new Date(2026, 7, 16), 1);
+    expect(grid[0][0].date.toDateString()).toBe(new Date(2026, 6, 27).toDateString());
+    expect(grid[0][0].date.getDay()).toBe(1);
+  });
 });
 
 describe('allocateCellRows', () => {

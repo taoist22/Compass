@@ -51,6 +51,7 @@ interface ItemCreationModalProps {
   visible: boolean;
   type: 'event' | 'task';
   targetDate: Date;
+  weekStartsOn?: number;
   availableFeeds: CalendarFeed[];
   /**
    * Text captured from a lasso selection. Prefills the title so the user can
@@ -121,6 +122,7 @@ export function ItemCreationModal({
   visible,
   type,
   targetDate,
+  weekStartsOn = 0,
   availableFeeds,
   initialTitle,
   initialParsed,
@@ -417,6 +419,7 @@ export function ItemCreationModal({
           <DatePickerModal
             visible={showDatePicker}
             value={itemDate}
+            weekStartsOn={weekStartsOn}
             onSelect={setItemDate}
             onClose={() => setShowDatePicker(false)}
           />
@@ -424,6 +427,7 @@ export function ItemCreationModal({
           <DatePickerModal
             visible={showRepeatUntilPicker}
             value={repeatSettings.until || itemDate}
+            weekStartsOn={weekStartsOn}
             onSelect={value => updateRepeat({ until: value })}
             onClose={() => setShowRepeatUntilPicker(false)}
           />

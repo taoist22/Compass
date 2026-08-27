@@ -12,6 +12,7 @@ interface MonthGridViewProps {
   selectedDate: Date;
   allEvents: CalendarEvent[];
   allTasks?: CalendarTask[];
+  weekStartsOn?: number;
   /**
    * Local date keys (YYYY-MM-DD) that have a daily note on disk. Checked in
    * AgendaScreen, which owns the note logic; this view only draws the result.
@@ -95,6 +96,7 @@ export function MonthGridView({
   selectedDate,
   allEvents,
   allTasks = [],
+  weekStartsOn = 0,
   dailyNoteDates,
   noteKindByEvent,
   onSelectDate,
@@ -116,7 +118,10 @@ export function MonthGridView({
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
 
-  const grid = generateMonthGrid(year, month, allEvents);
+  const grid = generateMonthGrid(year, month, allEvents, new Date(), weekStartsOn);
+  const orderedDayNames = Array.from({ length: 7 }, (_, offset) =>
+    DAY_NAMES[(weekStartsOn + offset) % 7]
+  );
 
   const isSameDay = (d1: Date, d2: Date) =>
     d1.getFullYear() === d2.getFullYear() &&
@@ -127,7 +132,7 @@ export function MonthGridView({
     <View style={styles.container}>
       {/* Day Name Header Row */}
       <View style={styles.headerRow}>
-        {DAY_NAMES.map(dayName => (
+        {orderedDayNames.map(dayName => (
           <View key={dayName} style={styles.headerCell}>
             <Text allowFontScaling={false} style={styles.headerCellText}>{dayName}</Text>
           </View>

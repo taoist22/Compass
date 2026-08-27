@@ -67,6 +67,8 @@ const DEFAULT_SETTINGS: CalendarSettings = {
   classNotesDirectory: '/storage/emulated/0/Note/Classes',
   scheduleStartHour: 8,
   scheduleEndHour: 20,
+  weekStartsOn: 0,
+  calendarWeekLength: 7,
   dateOrder: 'auto',
   pushTasksAsEvents: false,
   dailyNoteFolder: '/storage/emulated/0/Note/Daily Notes',

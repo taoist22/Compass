@@ -8,7 +8,12 @@ https://github.com/user-attachments/assets/2210d5dc-8747-49cf-9a3f-dfa9c3068829
 
 
 
-An e-ink optimized planning, PARA, calendar, task, and note workspace for Supernote. 
+An e-ink-optimized planner, calendar, task, PARA, and note workspace for Supernote.
+
+> [!WARNING]
+> This version requires the newest Supernote Plugin Preview firmware:
+> **Chauvet 3.29.42 Beta** for Manta / Nomad or **Chauvet 2.26.39 Beta** for A5 X / A6 X.
+> It will not open on earlier system versions.
 
 ## Start Here
 
@@ -24,13 +29,15 @@ SNFolio works without an online account. Calendar connections and PARA organizat
 ## Key Features
 
 - **iCal / `.ics` Feed Integration**: Subscribe to public or private iCal HTTPS URLs (Google Calendar, Outlook, Apple Calendar, Fastmail, Proton) or import `.ics` files.
-- **E-Ink Calendar**: Navigate high-contrast month and day views, including a 15-day quick-jump strip, overlapping events, all-day items, locations, and attendee previews.
+- **Month and Week Calendars**: Navigate high-contrast month and week views, choose a Sunday-through-Saturday week start, and display either five or seven days. Week View combines the calendar with Weekly Focus, due and unscheduled tasks, progress, and a Weekly Review note.
+- **Day Planner and Weekly Review**: Use the Day Planner for the selected day's schedule, journal, focus tasks, deliverables, project attention, and tomorrow's schedule. Weekly Review summarizes completed, remaining, overdue, and upcoming work and opens or creates a handwritten weekly note.
 - **CalDAV Two-Way Sync**: Synchronize calendar events and, through an optional independent VTODO-capable account, tasks including completion, priorities, undated items, remote deletions, and conflict-protected edits when the server supplies ETags.
-- **PARA Workspace**: Organize actionable Projects, ongoing Areas, reference Resources, and a unified Archive. Projects, Areas, and Resources can each link to a folder of Supernote notes and other files.
+- **PARA Workspace**: Organize actionable Projects, ongoing Areas, reference Resources, and a unified Archive. Reorder Projects, assign them directly to Areas, review open and completed work in separate columns, and link Projects, Areas, and Resources to folders of Supernote notes and other files.
 - **Daily and PARA Notes**: Open or create daily journals and create, browse, and open notes and other files connected to Projects, Areas, and Resources, alongside event-linked notes.
 - **Recurring Meetings**: Handle common RRULE schedules, cancellations, and moved occurrences, then append a fresh page using the configured template to the series notebook.
 - **Repeat Controls**: Create daily, weekly, monthly, or yearly series; choose intervals and weekly days; end on a date or after a count; edit a series; and delete one occurrence or the entire series.
 - **Auto-Launch**: Immediately open a newly created note or appended page on device so you can start handwriting right away.
+- **E-Ink-Friendly Controls**: Use tap-based date, time, duration, recurrence, and folder controls with larger touch targets. A startup status banner makes it clear when calendars and tasks are still loading.
 
 ---
 
@@ -46,7 +53,7 @@ SNFolio works without an online account. Calendar connections and PARA organizat
    - Tap **Add Plugin** and select `SNFolio.snplg`.
 4. Open any **NOTE** or **DOC** file. You will see the **SNFolio** plugin button on your toolbar.
 
-If you previously installed Compass, install SNFolio as its update. The internal plugin identity is unchanged, so your existing settings, calendars, PARA data, note links, and `/Note/Compass/` folders remain available. New PARA items use `/Note/SNFolio/` by default.
+On first use, Supernote may ask for network or file permissions when a feature first needs them. Network access is used only for configured feeds and CalDAV connections. File read/write access is required to browse PARA folders and create or open notes. If loading takes a moment, SNFolio displays **Loading calendar and tasks…** until saved data and the opening refresh are ready.
 
 ---
 
@@ -85,13 +92,13 @@ Rules worth knowing:
 - **No date or time found → it becomes an undated task**, rather than inventing an appointment or due date.
 - Ambiguous dates such as `09/10` are flagged with a warning, since they could be Sep 10 or
   9 Oct. Dates like `22/09` resolve themselves. The order used for ambiguous dates follows your
-  device's region setting by default, and can be overridden in **Feeds / Config**.
+  device's region setting by default, and can be overridden under **⚙ → Connections & Settings**.
 - Numeric dates accept `/`, `-` and `.` separators; times accept `10:00A`, `10am`, `14:00` and
   `14h00`.
 
 ### 1. Subscribe to Your Calendar Feeds
 1. Tap the **SNFolio** icon on your toolbar to open the plugin panel.
-2. Tap **Feeds / Config** in the top-right corner.
+2. Tap the **⚙** button and choose **Connections & Settings**.
 3. Paste an HTTPS `.ics` feed URL from Google Calendar, Outlook, or Apple Calendar, then tap **Subscribe**. `webcal://` URLs are accepted and upgraded to HTTPS; plaintext HTTP is rejected.
 
 To avoid typing long private feed addresses on the device, create a text file (.txt) on a computer, move it to your Supernote device and import it with **Import Setup or Calendar File**. Use one feed per line, either as a bare address or `Calendar Name|https://…`. Blank lines and lines beginning with `#` are ignored. Delete the setup file after confirming the feeds, because it contains the private addresses in plaintext. You can also import an `.ics` file directly; the plugin keeps a private app-owned copy so the calendar remains available after the original file is moved.
@@ -103,7 +110,7 @@ Private subscription URLs and CalDAV passwords are stored through Android Keysto
 
 ### CalDAV Events and Tasks
 
-Use **Feeds / Config → Calendars & Sync** to connect iCloud or another CalDAV server for events. **Sync Now** pushes local changes first and then pulls remote changes.
+Use **⚙ → Connections & Settings → Calendars & Sync** to connect iCloud or another CalDAV server for events. Choose **Sync Now** from the ⚙ menu to push local changes first and then pull remote changes.
 
 Modern iCloud Reminders lists are not exposed through iCloud's CalDAV endpoint. Although iCloud may advertise and accept writes to a legacy collection named `Reminders`, those tasks do not appear in the current Reminders app. To synchronize tasks through VTODO, configure the plugin's separate **Task CalDAV Account** using a provider that supports VTODO, and add that same account to the Reminders app on the Apple device. Existing iCloud reminders are not moved. Alternatively, keep tasks local and enable the task-to-calendar event mirror for dated tasks. Mirrored events include an alert at the due time; date-only tasks use 9:00 AM.
 
@@ -119,16 +126,25 @@ Time entry is tap-only for device usability: choose an hour, quarter-hour minute
 
 The **PARA** tab now represents all four categories:
 
-- **Projects** are actionable outcomes with due dates, progress, tasks, linked meeting notes, and a folder of supporting files. **Finish** records completion; **Archive** removes unfinished work from the active view without claiming it was completed.
+- **Projects** are actionable outcomes with due dates, progress, tasks, assigned events, linked meeting notes, and a folder of supporting files. Each Project card separates open and upcoming items from completed tasks. **Finish** records completion; **Archive** removes unfinished work from the active view without claiming it was completed.
 - **Areas** are ongoing responsibilities that contain active projects and can carry their own folder of notes and reference files. Archiving an Area asks whether its active Projects should also be archived or should remain active and become unfiled.
 - **Resources** are non-actionable reference topics backed by folders. Link an existing folder by choosing any file inside it; SNFolio lists the same regular files the device exposes, including `.note`, PDF, EPUB, Office, text, and image files. SNFolio can also create additional `.note` files. New Resources default to `/Note/SNFolio/Resources/<Resource name>`.
 - **Archive** combines finished or archived Projects, retired Areas, and archived Resources. Each can be restored; restoring a Project also restores its Area when necessary.
 - Projects, Areas, and Resources share the same **Refresh Files**, **+ New Note**, and **Choose Folder** workflow. Defaults are `/Note/SNFolio/Projects/<name>`, `/Note/SNFolio/Areas/<name>`, and `/Note/SNFolio/Resources/<name>`; existing Project notebooks migrate to their current containing folder.
 - The left pane follows PARA order—Projects, Areas, Resources, Archive—and each section expands into its items. Selecting an Area opens its projects; selecting a Resource lists the actual files in its folder on the right.
+- Choose **Reorder Projects** and use the arrow controls to save a preferred Project order in both panes.
+- Open a Project and tap its Area button to choose an Area directly, remove the assignment with **No Area**, or create and assign a new Area with **Add Area**.
 - Archiving an Area asks whether its active Projects should also be archived or should remain active and become unfiled.
 
-### 2. Navigate Your Schedule
-- Use the **‹ Prev** and **Next ›** buttons to move between days, or tap the date title to return to **Today**.
+### 2. Navigate the Calendar and Planner
+
+- Tap **Calendar ▾** and choose **Month View** or **Week View**.
+- Tap **Planner ▾** and choose **Day Planner** or **Weekly Review**.
+- Use the previous and next controls to move by the current view's natural interval: month, week, or day. Tap **Today** to return to the current date.
+- Configure the starting weekday and five- or seven-day Week View under **⚙ → Connections & Settings → App & View → Calendar Week Layout**. The selected starting day is also used by Month View, date pickers, and Weekly Review.
+- Month View shows events and dated tasks, plus quick access to work that would otherwise be invisible on a date grid: today, upcoming, no-date, and past-due tasks.
+- Week View shows events and tasks by day, Project labels where available, Weekly Focus, work due that week, unscheduled tasks, progress, and the Weekly Review note.
+- Day Planner shows the selected day's schedule, journal, three focus tasks, grouped Tasks & Deliverables, Projects needing attention, and Tomorrow's Schedule.
 - Meetings display start/end times, locations, attendee lists, and agenda previews.
 
 ### 3. Create a Single Meeting Note
@@ -147,7 +163,7 @@ By default, meeting notes are saved in:
 /storage/emulated/0/Note/Meetings/
 ```
 
-You can change the meeting-note folder and template under **Feeds / Config → Notes & Storage**. Event types can use their own folder and template.
+You can change the meeting-note folder and template under **⚙ → Connections & Settings → Notes & Storage**. Event types can use their own folder and template.
 
 
 

@@ -6,21 +6,23 @@ import { projectOverdue, projectProgress, ProjectLookup } from '../domain/taskLi
 import { ParaFilesPanel } from './ParaFilesPanel';
 import { ParaFolderEntry } from '../supernote/exportService';
 import { HandwritingTextInput, HandwritingTextInputHandle } from './HandwritingTextInput';
+import { deriveProjectShortLabel, normalizeProjectShortLabel } from '../domain/projectLabel';
 
 interface ProjectDetailViewProps {
   project: Project;
   area?: Area;
+  areas: Area[];
   tasks: CalendarTask[];
   projectOf: (uid: string) => string | undefined;
   /** Notes belonging to this project's events: the meeting ledger. */
   linkedNotes: Array<{ label: string; path: string }>;
   onBack: () => void;
   onSetDue: () => void;
-  /** Moves the project to the next area. Shown in the breadcrumb, where the
-   *  wrong one is noticed. */
-  onCycleArea: () => void;
+  /** Assigns the project directly to the selected Area, or removes its Area. */
+  onAssignArea: (areaId?: string) => void;
+  onCreateArea: (name: string) => string | undefined;
   /** A project is renamed, finished and deleted here, where it lives. */
-  onRename: (name: string) => void;
+  onRename: (name: string, shortLabel?: string) => void;
   onToggleStatus: () => void;
   onArchive: () => void;
   /** Repairs a PARA classification without deleting and recreating files. */
@@ -47,12 +49,14 @@ interface ProjectDetailViewProps {
 export function ProjectDetailView({
   project,
   area,
+  areas,
   tasks,
   projectOf,
   linkedNotes,
   onBack,
   onSetDue,
-  onCycleArea,
+  onAssignArea,
+  onCreateArea,
   onRename,
   onToggleStatus,
   onArchive,
@@ -75,33 +79,49 @@ export function ProjectDetailView({
 
   const [renaming, setRenaming] = React.useState<boolean>(false);
   const [draftName, setDraftName] = React.useState<string>(project.name);
+  const [draftShortLabel, setDraftShortLabel] = React.useState<string>(project.shortLabel || '');
   const draftNameInputRef = React.useRef<HandwritingTextInputHandle>(null);
+  const draftShortLabelInputRef = React.useRef<HandwritingTextInputHandle>(null);
   const [confirmingDelete, setConfirmingDelete] = React.useState<boolean>(false);
   const [confirmingConversion, setConfirmingConversion] = React.useState<boolean>(false);
+  const [areaPickerOpen, setAreaPickerOpen] = React.useState<boolean>(false);
+  const [addingArea, setAddingArea] = React.useState<boolean>(false);
+  const [newAreaName, setNewAreaName] = React.useState<string>('');
+  const newAreaInputRef = React.useRef<HandwritingTextInputHandle>(null);
 
   const commitRename = () => {
     const next = (draftNameInputRef.current?.getValue() ?? draftName).trim();
+    const nextShortLabel = normalizeProjectShortLabel(
+      draftShortLabelInputRef.current?.getValue() ?? draftShortLabel
+    );
     // A blank field is a mistake, not a request to lose the name.
-    if (next && next !== project.name) onRename(next);
+    if (next) {
+      onRename(next, nextShortLabel);
+    }
     setRenaming(false);
   };
 
   return (
     <View style={styles.root}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={onBack}>
+        <View style={styles.headerControls}>
+        <TouchableOpacity style={styles.backBtn} onPress={onBack}>
           <Text allowFontScaling={false} style={styles.breadcrumb}>
             ‹ Back
           </Text>
         </TouchableOpacity>
 
-        {/* Settable here, where a wrong area is actually noticed — the
-            breadcrumb already names it, so it should also change it. */}
-        <TouchableOpacity style={styles.areaBtn} onPress={onCycleArea}>
+        <TouchableOpacity
+          style={styles.areaBtn}
+          activeOpacity={1}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          onPressIn={() => setAreaPickerOpen(true)}
+        >
           <Text allowFontScaling={false} style={styles.areaBtnText} numberOfLines={1}>
-            {area ? `${area.icon ? `${area.icon} ` : ''}${area.name}` : 'No Area'} ›
+            {area ? `${area.icon ? `${area.icon} ` : ''}${area.name}` : 'No Area'}  {areaPickerOpen ? '▴' : '▾'}
           </Text>
         </TouchableOpacity>
+        </View>
         {renaming ? (
           <>
             <HandwritingTextInput
@@ -109,8 +129,18 @@ export function ProjectDetailView({
               style={styles.titleInput}
               value={draftName}
               onChangeText={setDraftName}
+              placeholder="Project name"
+              placeholderTextColor="#707070"
               autoCorrect={false}
-              onEndEditing={commitRename}
+            />
+            <HandwritingTextInput
+              ref={draftShortLabelInputRef}
+              style={styles.shortLabelInput}
+              value={draftShortLabel}
+              onChangeText={setDraftShortLabel}
+              placeholder={`Day label: ${deriveProjectShortLabel(draftName)}`}
+              placeholderTextColor="#707070"
+              autoCorrect={false}
             />
             <TouchableOpacity style={styles.headBtn} onPress={commitRename}>
               <Text allowFontScaling={false} style={styles.headBtnText}>
@@ -124,6 +154,69 @@ export function ProjectDetailView({
           </Text>
         )}
       </View>
+
+      {areaPickerOpen && (
+        <View style={styles.areaPicker}>
+          <Text allowFontScaling={false} style={styles.areaPickerTitle}>Assign Project to Area</Text>
+          <View style={styles.areaOptions}>
+            <TouchableOpacity
+              style={[styles.areaOption, styles.areaOptionNoArea, !area && styles.areaOptionSelected]}
+              onPress={() => { onAssignArea(undefined); setAreaPickerOpen(false); }}
+            >
+              <Text allowFontScaling={false} style={styles.areaOptionText}>{!area ? '● ' : '○ '}No Area</Text>
+            </TouchableOpacity>
+            {areas.filter(candidate => !candidate.archived).map(candidate => {
+              const selected = candidate.id === area?.id;
+              return (
+                <TouchableOpacity
+                  key={candidate.id}
+                  style={[styles.areaOption, selected && styles.areaOptionSelected]}
+                  onPress={() => { onAssignArea(candidate.id); setAreaPickerOpen(false); }}
+                >
+                  <Text allowFontScaling={false} style={styles.areaOptionText} numberOfLines={1}>
+                    {selected ? '● ' : '○ '}{candidate.icon ? `${candidate.icon} ` : ''}{candidate.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+            {!addingArea && (
+              <TouchableOpacity style={[styles.areaOption, styles.addAreaOption]} onPress={() => setAddingArea(true)}>
+                <Text allowFontScaling={false} style={styles.areaOptionText}>＋ Add Area</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {addingArea && (
+            <View style={styles.addAreaRow}>
+              <HandwritingTextInput
+                ref={newAreaInputRef}
+                style={styles.addAreaInput}
+                value={newAreaName}
+                onChangeText={setNewAreaName}
+                placeholder="New Area name"
+                placeholderTextColor="#707070"
+                autoCorrect={false}
+              />
+              <TouchableOpacity
+                style={styles.addAreaButton}
+                onPress={() => {
+                  const name = (newAreaInputRef.current?.getValue() ?? newAreaName).trim();
+                  if (!name) return;
+                  const id = onCreateArea(name);
+                  if (id) onAssignArea(id);
+                  setNewAreaName('');
+                  setAddingArea(false);
+                  setAreaPickerOpen(false);
+                }}
+              >
+                <Text allowFontScaling={false} style={styles.areaOptionText}>Add</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.addAreaButton} onPress={() => { setNewAreaName(''); setAddingArea(false); }}>
+                <Text allowFontScaling={false} style={styles.areaOptionText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      )}
 
       <View style={styles.metaRow}>
         <TouchableOpacity style={styles.dueBtn} onPress={onSetDue}>
@@ -146,6 +239,7 @@ export function ProjectDetailView({
             style={styles.headBtn}
             onPress={() => {
               setDraftName(project.name);
+              setDraftShortLabel(project.shortLabel || '');
               setRenaming(true);
             }}
           >
@@ -295,23 +389,34 @@ function bar(percent: number): string {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
     borderBottomWidth: 2,
     borderBottomColor: '#000000',
     paddingBottom: 6,
   },
-  breadcrumb: { fontSize: 13, fontWeight: 'bold', color: '#000000', marginRight: 8 },
+  headerControls: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  backBtn: { minHeight: 42, minWidth: 104, borderWidth: 1, borderColor: '#000000', borderRadius: 5, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  breadcrumb: { fontSize: 14, fontWeight: 'bold', color: '#000000' },
   areaBtn: {
     borderWidth: 1,
     borderColor: '#000000',
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    marginRight: 10,
-    maxWidth: 180,
+    borderRadius: 5,
+    minHeight: 42,
+    width: 104,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
   },
-  areaBtnText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
+  areaBtnText: { fontSize: 14, fontWeight: 'bold', color: '#000000' },
+  areaPicker: { borderWidth: 2, borderColor: '#000000', borderRadius: 5, padding: 8, marginBottom: 8, backgroundColor: '#ffffff' },
+  areaPickerTitle: { fontSize: 13, fontWeight: 'bold', color: '#000000', marginBottom: 6 },
+  areaOptions: { flexDirection: 'row', flexWrap: 'wrap' },
+  areaOption: { minHeight: 40, minWidth: 150, borderWidth: 1, borderColor: '#000000', borderRadius: 4, justifyContent: 'center', paddingHorizontal: 10, marginRight: 6, marginBottom: 6 },
+  areaOptionNoArea: { minWidth: 0, width: 112 },
+  addAreaOption: { minWidth: 0, width: 150, backgroundColor: '#eeeeee' },
+  areaOptionSelected: { backgroundColor: '#e2e2e2', borderWidth: 2 },
+  areaOptionText: { fontSize: 13, fontWeight: 'bold', color: '#000000' },
+  addAreaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
+  addAreaInput: { flex: 1, minHeight: 40, borderWidth: 1, borderColor: '#000000', paddingHorizontal: 8, fontSize: 13, color: '#000000' },
+  addAreaButton: { minHeight: 40, minWidth: 76, borderWidth: 1, borderColor: '#000000', alignItems: 'center', justifyContent: 'center', marginLeft: 6, paddingHorizontal: 8 },
   title: { flex: 1, fontSize: 16, fontWeight: 'bold', color: '#000000' },
   titleInput: {
     flex: 1,
@@ -322,6 +427,17 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     fontSize: 15,
     fontWeight: 'bold',
+    color: '#000000',
+  },
+  shortLabelInput: {
+    width: 150,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    marginLeft: 6,
+    fontSize: 13,
     color: '#000000',
   },
   headBtn: {

@@ -103,6 +103,12 @@ export class MeetingNoteService {
     settings: CalendarSettings
   ): Promise<{ success: boolean; error?: string }> {
     try {
+      const separator = notePath.lastIndexOf('/');
+      const directory = separator > 0 ? notePath.slice(0, separator) : '';
+      if (!directory || !(await this.ensureDirectory(directory))) {
+        return { success: false, error: 'File write access was not allowed.' };
+      }
+
       // A journal page wants its own background, not the meeting-note one.
       const createRes = await this.createNoteWithTemplate(
         notePath,
@@ -139,7 +145,9 @@ export class MeetingNoteService {
     template: string
   ): Promise<{ success: boolean; notePath?: string; error?: string }> {
     const dir = folder || '/storage/emulated/0/Note';
-    await this.ensureDirectory(dir);
+    if (!(await this.ensureDirectory(dir))) {
+      return { success: false, error: 'File write access was not allowed.' };
+    }
 
     const safe = projectName.replace(/[/\\?%*:|"<>]/g, '').replace(/\s+/g, ' ').trim() || 'Project';
     const notePath = `${dir}/${safe}.note`;
@@ -170,13 +178,20 @@ export class MeetingNoteService {
     });
 
     const targetDir = destination.folder;
-    await this.ensureDirectory(targetDir);
-
     const templateValue = destination.template;
 
     const isRecurringSeries = Boolean(event.recurringSeriesId && !forceNewFile);
     const filename = generateNoteFilename(event, isRecurringSeries, settings.seriesNotebookPrefix, kind);
     const notePath = `${targetDir}/${filename}`;
+    if (!(await this.ensureDirectory(targetDir))) {
+      return {
+        success: false,
+        notePath,
+        pageNum: 1,
+        isNewFile: false,
+        error: 'File write access was not allowed.',
+      };
+    }
 
     try {
       let pageNum = 1;

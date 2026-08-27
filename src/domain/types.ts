@@ -44,6 +44,10 @@ export type ProjectStatus = 'active' | 'done' | 'archived';
 export interface Project {
   id: string;
   name: string;
+  /** User-controlled order in the PARA project list; absent for legacy projects. */
+  sortOrder?: number;
+  /** Compact label used where the full project name would crowd a task row. */
+  shortLabel?: string;
   /** The Area this project serves, if any. */
   areaId?: string;
   dueDate?: Date;
@@ -319,6 +323,10 @@ export interface CalendarSettings {
    */
   scheduleStartHour?: number;
   scheduleEndHour?: number;
+  /** First displayed weekday, using JavaScript's 0=Sunday through 6=Saturday. */
+  weekStartsOn?: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  /** Number of consecutive days shown by Calendar Week View. */
+  calendarWeekLength?: 5 | 7;
 }
 
 /**

@@ -51,14 +51,14 @@ export async function ensurePluginPermission(
 export function ensureFileReadPermission(): Promise<boolean> {
   return ensurePluginPermission(
     FILE_READ_PERMISSION,
-    'Allow SNFolio to browse and open files used by its PARA workspace.',
+    'Allow SNFolio to find and open journal, event, and PARA workspace files.',
   );
 }
 
 export function ensureFileWritePermission(): Promise<boolean> {
   return ensurePluginPermission(
     FILE_WRITE_PERMISSION,
-    'Allow SNFolio to create files used by its PARA workspace.',
+    'Allow SNFolio to create journal, event, and PARA workspace notes.',
   );
 }
 

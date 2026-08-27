@@ -1,6 +1,6 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Area, CalendarTask, Project, Resource } from '../domain/types';
+import { Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Area, CalendarEvent, CalendarTask, Project, Resource } from '../domain/types';
 import { isDone, statusGlyph, taskStatus } from '../domain/taskModel';
 import { ICON_CHOICES } from '../domain/noteTemplates';
 import { ParaFilesPanel } from './ParaFilesPanel';
@@ -16,6 +16,7 @@ import {
   projectsByArea,
   ProjectLookup,
 } from '../domain/taskListView';
+import { projectOverviewItems } from '../domain/projectOverview';
 
 interface ParaViewProps {
   /** Opens a just-converted Project at its new location instead of Projects. */
@@ -25,7 +26,9 @@ interface ParaViewProps {
   projects: Project[];
   resources: Resource[];
   tasks: CalendarTask[];
+  events: CalendarEvent[];
   projectOf: (uid: string) => string | undefined;
+  projectOfEvent: (event: CalendarEvent) => string | undefined;
   areaOf: (uid: string) => string | undefined;
   onNewProject: (name: string, areaId?: string) => void;
   onNewArea: (name: string) => void;
@@ -52,7 +55,9 @@ interface ParaViewProps {
   onRestoreResource: (resource: Resource) => void;
   onToggleTask: (task: CalendarTask) => void;
   onEditTask: (task: CalendarTask) => void;
+  onEditEvent: (event: CalendarEvent) => void;
   onAddTaskToProject: (project: Project) => void;
+  onMoveProject: (project: Project, direction: 'up' | 'down') => void;
 }
 
 /**
@@ -71,7 +76,9 @@ export function ParaView({
   projects,
   resources,
   tasks,
+  events,
   projectOf,
+  projectOfEvent,
   areaOf,
   onNewProject,
   onNewArea,
@@ -96,7 +103,9 @@ export function ParaView({
   onRestoreResource,
   onToggleTask,
   onEditTask,
+  onEditEvent,
   onAddTaskToProject,
+  onMoveProject,
 }: ParaViewProps): React.JSX.Element {
   const lookup: ProjectLookup = {
     projectOf,
@@ -122,6 +131,7 @@ export function ParaView({
     resources: true,
     archive: false,
   });
+  const [reorderProjects, setReorderProjects] = React.useState<boolean>(false);
 
   const selectedAreaId = section === 'areas' ? selectedItemId : null;
   const selectedProjectId = section === 'projects' ? selectedItemId : null;
@@ -133,7 +143,7 @@ export function ParaView({
   );
   const grouped = projectsByArea(shown, activeAreas);
 
-  const tasksOf = (projectId: string) => tasks.filter(t => projectOf(t.uid) === projectId);
+  const useProjectColumns = Dimensions.get('window').width >= 1000;
   const selectedArea = activeAreas.find(a => a.id === selectedAreaId);
   const selectedAreaTasks = selectedArea
     ? directTasksInArea(tasks, selectedArea.id, areaOf, projectOf)
@@ -204,6 +214,9 @@ export function ParaView({
           </TouchableOpacity>
           <TouchableOpacity style={styles.topBtn} onPress={() => setAdding('resource')}>
             <Text allowFontScaling={false} style={styles.topBtnText}>+ Resource</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.topBtn, reorderProjects && styles.topBtnActive]} onPress={() => setReorderProjects(value => !value)}>
+            <Text allowFontScaling={false} style={styles.topBtnText}>{reorderProjects ? 'Done Reordering' : 'Reorder Projects'}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -603,12 +616,28 @@ export function ParaView({
 
                 {group.projects.map(project => {
                   const progress = projectProgress(tasks, project.id, lookup);
-                  const projectTasks = tasksOf(project.id);
+                  const { openTasks, completedTasks, upcomingEvents: projectEvents } = projectOverviewItems(
+                    project.id,
+                    tasks,
+                    events,
+                    projectOf,
+                    projectOfEvent
+                  );
                   const overdue = projectOverdue(project);
 
                   return (
                     <View key={project.id} style={styles.projectCard}>
                       <View style={styles.projectHead}>
+                        {reorderProjects && (
+                          <View style={styles.reorderBtns}>
+                            <TouchableOpacity style={styles.reorderBtn} onPress={() => onMoveProject(project, 'up')}>
+                              <Text allowFontScaling={false} style={styles.reorderBtnText}>↑</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.reorderBtn} onPress={() => onMoveProject(project, 'down')}>
+                              <Text allowFontScaling={false} style={styles.reorderBtnText}>↓</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
                         <TouchableOpacity
                           style={styles.projectNameBtn}
                           onPress={() => onOpenProject(project)}
@@ -634,13 +663,6 @@ export function ParaView({
                               : '📅 Due…'}
                           </Text>
                         </TouchableOpacity>
-                      </View>
-
-                      <View style={styles.projectHead}>
-                        <Text allowFontScaling={false} style={styles.projectMeta}>
-                          {progressBar(progress.percent)} {progress.done}/{progress.total} tasks (
-                          {progress.percent}%)
-                        </Text>
                         <TouchableOpacity style={styles.projectNoteBtn} onPress={() => {
                           onArchiveProject(project);
                           if (selectedProjectId === project.id) setSelectedItemId(null);
@@ -649,36 +671,72 @@ export function ParaView({
                         </TouchableOpacity>
                       </View>
 
-                      {projectTasks.map((task, idx) => (
-                        <View key={task.uid} style={styles.taskRow}>
-                          <Text allowFontScaling={false} style={styles.treeStem}>
-                            {idx === projectTasks.length - 1 ? '└─' : '├─'}
-                          </Text>
-                          <TouchableOpacity onPress={() => onToggleTask(task)}>
-                            <Text allowFontScaling={false} style={styles.taskGlyph}>
-                              {statusGlyph(taskStatus(task))}
-                            </Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity style={styles.taskBody} onPress={() => onEditTask(task)}>
-                            <Text
-                              allowFontScaling={false}
-                              numberOfLines={1}
-                              style={[styles.taskText, isDone(task) && styles.taskTextDone]}
-                            >
-                              {task.title}
-                            </Text>
+                      <View style={styles.projectMetaRow}>
+                        <Text allowFontScaling={false} style={styles.projectMeta}>
+                          {progressBar(progress.percent)} {progress.done}/{progress.total} tasks (
+                          {progress.percent}%)
+                        </Text>
+                      </View>
+
+                      <View style={useProjectColumns ? styles.projectWorkColumns : styles.projectWorkStack}>
+                        <View style={[styles.projectWorkColumn, useProjectColumns && styles.projectWorkColumnOpen]}>
+                          <Text allowFontScaling={false} style={styles.projectColumnHeading}>OPEN &amp; UPCOMING</Text>
+                          {openTasks.length === 0 && projectEvents.length === 0 ? (
+                            <Text allowFontScaling={false} style={styles.projectColumnEmpty}>Nothing open.</Text>
+                          ) : null}
+                          {openTasks.map(task => (
+                            <View key={task.uid} style={styles.projectItemRow}>
+                              <TouchableOpacity onPress={() => onToggleTask(task)}>
+                                <Text allowFontScaling={false} style={styles.taskGlyph}>{statusGlyph(taskStatus(task))}</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity style={styles.taskBody} onPress={() => onEditTask(task)}>
+                                <Text allowFontScaling={false} numberOfLines={1} style={styles.projectItemText}>{task.title}</Text>
+                                {task.dueDate ? (
+                                  <Text allowFontScaling={false} style={styles.projectItemMeta}>
+                                    {task.dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                  </Text>
+                                ) : null}
+                              </TouchableOpacity>
+                            </View>
+                          ))}
+                          {projectEvents.map(event => (
+                            <TouchableOpacity key={`${event.uid}-${event.start.toISOString()}`} style={styles.projectItemRow} onPress={() => onEditEvent(event)}>
+                              <Text allowFontScaling={false} style={styles.eventGlyph}>○</Text>
+                              <View style={styles.taskBody}>
+                                <Text allowFontScaling={false} numberOfLines={1} style={styles.projectItemText}>{event.summary}</Text>
+                                <Text allowFontScaling={false} style={styles.projectItemMeta}>
+                                  {event.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                  {event.allDay ? ' · All day' : ` · ${event.start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`}
+                                </Text>
+                              </View>
+                            </TouchableOpacity>
+                          ))}
+                          <TouchableOpacity style={styles.addTaskRow} onPress={() => onAddTaskToProject(project)}>
+                            <Text allowFontScaling={false} style={styles.addTaskText}>+ Add task…</Text>
                           </TouchableOpacity>
                         </View>
-                      ))}
 
-                      <TouchableOpacity
-                        style={styles.addTaskRow}
-                        onPress={() => onAddTaskToProject(project)}
-                      >
-                        <Text allowFontScaling={false} style={styles.addTaskText}>
-                          {'   + Add task to project…'}
-                        </Text>
-                      </TouchableOpacity>
+                        <View style={styles.projectWorkColumn}>
+                          <Text allowFontScaling={false} style={styles.projectColumnHeading}>COMPLETED ({completedTasks.length})</Text>
+                          {completedTasks.length === 0 ? (
+                            <Text allowFontScaling={false} style={styles.projectColumnEmpty}>Nothing completed yet.</Text>
+                          ) : completedTasks.slice(0, 3).map(task => (
+                            <View key={task.uid} style={styles.projectItemRow}>
+                              <TouchableOpacity onPress={() => onToggleTask(task)}>
+                                <Text allowFontScaling={false} style={styles.taskGlyph}>{statusGlyph(taskStatus(task))}</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity style={styles.taskBody} onPress={() => onEditTask(task)}>
+                                <Text allowFontScaling={false} numberOfLines={1} style={[styles.projectItemText, styles.taskTextDone]}>{task.title}</Text>
+                              </TouchableOpacity>
+                            </View>
+                          ))}
+                          {completedTasks.length > 3 ? (
+                            <TouchableOpacity onPress={() => onOpenProject(project)}>
+                              <Text allowFontScaling={false} style={styles.viewCompletedText}>View all {completedTasks.length} completed ›</Text>
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
+                      </View>
                       {selectedProjectId === project.id && (
                         <ParaFilesPanel
                           itemKey={project.id}
@@ -922,6 +980,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   topBtnText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
+  topBtnActive: { backgroundColor: '#e0e0e0' },
   areaTap: { flex: 1 },
   areaEditLink: { fontSize: 11, fontWeight: 'bold', color: '#000000', paddingLeft: 6 },
   areaEditing: {
@@ -1057,30 +1116,47 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  reorderBtns: { flexDirection: 'row', marginRight: 6 },
+  reorderBtn: { minWidth: 34, minHeight: 34, borderWidth: 1, borderColor: '#000000', alignItems: 'center', justifyContent: 'center', marginRight: 4 },
+  reorderBtnText: { fontSize: 20, fontWeight: 'bold', color: '#000000' },
   projectNameBtn: { flex: 1, paddingRight: 6 },
-  projectName: { fontSize: 14, fontWeight: 'bold', color: '#000000' },
+  projectName: { fontSize: 16, fontWeight: 'bold', color: '#000000' },
   projectDueBtn: {
     borderWidth: 1,
     borderColor: '#000000',
     borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginLeft: 6,
   },
-  projectDueText: { fontSize: 11, fontWeight: 'bold', color: '#000000' },
+  projectDueText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
   projectNoteBtn: {
     borderWidth: 1,
     borderColor: '#000000',
     borderRadius: 4,
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 5,
+    marginLeft: 6,
   },
-  projectNoteText: { fontSize: 11, fontWeight: 'bold', color: '#000000' },
+  projectNoteText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
   treeStem: { fontSize: 11, color: '#606060', marginRight: 4 },
-  projectMeta: { fontSize: 11, color: '#303030', marginTop: 2 },
+  projectMeta: { fontSize: 12, color: '#303030', marginTop: 4 },
+  projectMetaRow: { flexDirection: 'row', alignItems: 'center', paddingBottom: 5 },
+  projectWorkColumns: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: '#000000' },
+  projectWorkStack: { flexDirection: 'column', borderTopWidth: 1, borderTopColor: '#000000' },
+  projectWorkColumn: { flex: 2, paddingHorizontal: 8, paddingVertical: 7 },
+  projectWorkColumnOpen: { flex: 3, borderRightWidth: 1, borderRightColor: '#000000' },
+  projectColumnHeading: { fontSize: 13, fontWeight: 'bold', color: '#000000', marginBottom: 4 },
+  projectColumnEmpty: { fontSize: 12, color: '#505050', paddingVertical: 5 },
+  projectItemRow: { flexDirection: 'row', alignItems: 'center', minHeight: 42, borderBottomWidth: 1, borderBottomColor: '#d0d0d0', paddingVertical: 4 },
+  projectItemText: { fontSize: 14, color: '#000000' },
+  projectItemMeta: { fontSize: 12, color: '#404040', marginTop: 2 },
+  eventGlyph: { width: 23, fontSize: 17, fontWeight: 'bold', color: '#000000' },
+  viewCompletedText: { fontSize: 12, fontWeight: 'bold', color: '#000000', paddingVertical: 8 },
   taskRow: { flexDirection: 'row', alignItems: 'center', marginTop: 5 },
-  taskGlyph: { fontSize: 14, color: '#000000', marginRight: 6 },
+  taskGlyph: { fontSize: 16, color: '#000000', marginRight: 7 },
   taskBody: { flex: 1 },
-  taskText: { fontSize: 12, color: '#000000' },
+  taskText: { fontSize: 14, color: '#000000' },
   taskTextDone: { textDecorationLine: 'line-through', color: '#606060' },
   addTaskRow: { marginTop: 6 },
   addTaskText: { fontSize: 11, color: '#505050' },

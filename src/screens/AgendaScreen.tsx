@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
   Modal,
@@ -49,7 +49,6 @@ import { meetingNoteService } from '../supernote/meetingNoteService';
 import { resolveArea, resolveAreaId } from '../domain/membership';
 import { calendarStorage } from '../storage/calendarStorage';
 import { generateNoteFilename, noteIdentity } from '../domain/meetingSnapshot';
-import { formatTimeOfDay, minutesFromDate } from '../domain/timeOfDay';
 import {
   caldavService,
   CalendarCollection,
@@ -80,9 +79,14 @@ import { MonthGridView } from './MonthGridView';
 import { TaskListModal } from './TaskListModal';
 import { ParaView } from './ParaView';
 import { ProjectDetailView } from './ProjectDetailView';
-import { activeProjects, projectProgress } from '../domain/taskListView';
+import { projectProgress } from '../domain/taskListView';
 import { fetchCalendarFeed, normaliseFeedUrl, refreshCalendarFeeds } from '../domain/feedService';
 import { isIcsCalendarContent, parseCalendarSetupFile } from '../domain/calendarImport';
+import { projectDisplayLabel } from '../domain/projectLabel';
+import { tomorrowScheduleSummary } from '../domain/tomorrowSchedule';
+import { dailyFocusTasks, plannerWeekRange, projectsNeedingAttention } from '../domain/plannerReview';
+import { WeeklyReviewView } from './WeeklyReviewView';
+import { CalendarWeekView } from './CalendarWeekView';
 
 type CalendarFileBridge = {
   readTextFile(pathOrUri: string): Promise<string>;
@@ -95,6 +99,11 @@ const CalendarFile = NativeModules.CalendarFile as CalendarFileBridge | undefine
 function blockBar(percent: number): string {
   const filled = Math.round((percent / 100) * 5);
   return '█'.repeat(filled) + '░'.repeat(5 - filled);
+}
+
+function weeklyReviewNotePath(folder: string, date: Date, weekStartsOn: number): string {
+  const start = plannerWeekRange(date, weekStartsOn).start;
+  return `${folder.replace(/\/+$/, '')}/Week of ${dateKey(start)}.note`;
 }
 
 import { DayScheduleGrid } from './DayScheduleGrid';
@@ -178,11 +187,17 @@ function countPendingSyncItems(): number {
 }
 
 export function AgendaScreen(): React.JSX.Element {
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [viewMode, setViewMode] = useState<CalendarViewMode>('month');
+  const [calendarMode, setCalendarMode] = useState<'month' | 'week'>('month');
+  const [plannerMode, setPlannerMode] = useState<'day' | 'week'>('day');
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
 
   // Modals & Popups (Defaults to FALSE on launch)
   const [showDatePickerModal, setShowDatePickerModal] = useState<boolean>(false);
+  const [showPlannerMenu, setShowPlannerMenu] = useState<boolean>(false);
+  const [showCalendarMenu, setShowCalendarMenu] = useState<boolean>(false);
+  const [showAppMenu, setShowAppMenu] = useState<boolean>(false);
   const [showDateActionSheet, setShowDateActionSheet] = useState<boolean>(false);
   const [showItemCreationModal, setShowItemCreationModal] = useState<boolean>(false);
   const [creationType, setCreationType] = useState<'event' | 'task'>('event');
@@ -253,11 +268,15 @@ export function AgendaScreen(): React.JSX.Element {
   const [typeTemplatePicker, setTypeTemplatePicker] = useState<EventType | null>(null);
   const [scheduleStartHour, setScheduleStartHour] = useState<number>(8);
   const [scheduleEndHour, setScheduleEndHour] = useState<number>(20);
+  const [weekStartsOn, setWeekStartsOn] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6>(0);
+  const [calendarWeekLength, setCalendarWeekLength] = useState<5 | 7>(7);
   const [dailyNoteFolder, setDailyNoteFolder] = useState<string>('/storage/emulated/0/Note/Daily Notes');
   const [dailyNoteFormat, setDailyNoteFormat] = useState<string>('YYYY-MM-DD');
   // null while the existence check is in flight, so the button never claims
   // "Create" for a note that is actually there.
   const [dailyNoteExists, setDailyNoteExists] = useState<boolean | null>(null);
+  const [weeklyNoteExists, setWeeklyNoteExists] = useState<boolean | null>(null);
+  const [weekJournalDates, setWeekJournalDates] = useState<Date[]>([]);
   /** Local date keys in the visible month that have a daily note on disk. */
   const [dailyNoteDates, setDailyNoteDates] = useState<Set<string>>(new Set());
   /** The task open in the edit modal, so its pickers open on real values. */
@@ -332,6 +351,8 @@ export function AgendaScreen(): React.JSX.Element {
     setDefaultView(settings.defaultViewMode || 'month');
     setScheduleStartHour(settings.scheduleStartHour ?? 8);
     setScheduleEndHour(settings.scheduleEndHour ?? 20);
+    setWeekStartsOn(settings.weekStartsOn ?? 0);
+    setCalendarWeekLength(settings.calendarWeekLength ?? 7);
     setDailyNoteFolder(settings.dailyNoteFolder || '/storage/emulated/0/Note/Daily Notes');
     setDailyNoteFormat(settings.dailyNoteFormat || 'YYYY-MM-DD');
     setCaldavCustomUrl(settings.caldavCustomUrl || '');
@@ -428,7 +449,7 @@ export function AgendaScreen(): React.JSX.Element {
       }
     };
 
-    void init();
+    void init().finally(() => setIsLoading(false));
 
     return () => {
       cancelled = true;
@@ -460,8 +481,12 @@ export function AgendaScreen(): React.JSX.Element {
 
   const handlePrevDay = () => {
     const d = new Date(selectedDate);
-    if (viewMode === 'month') {
+    if (viewMode === 'month' && calendarMode === 'month') {
       d.setMonth(d.getMonth() - 1);
+    } else if (viewMode === 'month' && calendarMode === 'week') {
+      d.setDate(d.getDate() - 7);
+    } else if (viewMode === 'agenda' && plannerMode === 'week') {
+      d.setDate(d.getDate() - 7);
     } else {
       d.setDate(d.getDate() - 1);
     }
@@ -470,8 +495,12 @@ export function AgendaScreen(): React.JSX.Element {
 
   const handleNextDay = () => {
     const d = new Date(selectedDate);
-    if (viewMode === 'month') {
+    if (viewMode === 'month' && calendarMode === 'month') {
       d.setMonth(d.getMonth() + 1);
+    } else if (viewMode === 'month' && calendarMode === 'week') {
+      d.setDate(d.getDate() + 7);
+    } else if (viewMode === 'agenda' && plannerMode === 'week') {
+      d.setDate(d.getDate() + 7);
     } else {
       d.setDate(d.getDate() + 1);
     }
@@ -1782,6 +1811,27 @@ export function AgendaScreen(): React.JSX.Element {
     });
   })();
 
+  // Project cards show the next two months of assigned events, including
+  // expanded recurring occurrences. A bounded window keeps PARA responsive.
+  const paraUpcomingEvents = useMemo(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const seen = new Set<string>();
+    const result: CalendarEvent[] = [];
+    for (let offset = 0; offset < 60; offset++) {
+      const day = new Date(start);
+      day.setDate(day.getDate() + offset);
+      for (const event of expandEventsForDate(allParsedEvents, day)) {
+        if (event.isTask || event.isTaskMirror) continue;
+        const key = `${event.uid}-${event.start.toISOString()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        result.push(event);
+      }
+    }
+    return result.sort((a, b) => a.start.getTime() - b.start.getTime());
+  }, [allParsedEvents]);
+
   /**
    * Opens the day's journal note, creating it if absent. The plugin cannot
    * list a directory (FileUtils.listFiles is unavailable), so the path is
@@ -1812,6 +1862,39 @@ export function AgendaScreen(): React.JSX.Element {
       cancelled = true;
     };
   }, [selectedDate, dailyNoteFolder, dailyNoteFormat]);
+
+  // Weekly Review reuses the daily-note folder and template, but has its own
+  // deterministic file. The seven daily paths are checked individually so the
+  // review can link to journal entries without requiring a directory scan.
+  useEffect(() => {
+    let cancelled = false;
+    const range = plannerWeekRange(selectedDate, weekStartsOn);
+    const days = Array.from({ length: 7 }, (_, offset) => {
+      const day = new Date(range.start);
+      day.setDate(day.getDate() + offset);
+      return day;
+    });
+
+    setWeeklyNoteExists(null);
+    Promise.all([
+      Promise.resolve(FileUtils.exists(weeklyReviewNotePath(dailyNoteFolder, selectedDate, weekStartsOn)))
+        .then(Boolean)
+        .catch(() => false),
+      Promise.all(days.map(async day => {
+        try {
+          return await FileUtils.exists(dailyNotePath(dailyNoteFolder, dailyNoteFormat, day)) ? day : null;
+        } catch (_error) {
+          return null;
+        }
+      })),
+    ]).then(([weeklyExists, journalDays]) => {
+      if (cancelled) return;
+      setWeeklyNoteExists(weeklyExists);
+      setWeekJournalDates(journalDays.filter((day): day is Date => day !== null));
+    });
+
+    return () => { cancelled = true; };
+  }, [selectedDate, dailyNoteFolder, dailyNoteFormat, weekStartsOn]);
 
   // Mappings are the only record of which events have notes; unlike the daily
   // check this costs nothing, since they are already in memory. Rebuilt when
@@ -1911,12 +1994,17 @@ export function AgendaScreen(): React.JSX.Element {
     };
   }, [events, targetNotesDir, refreshState]);
 
-  const handleOpenDailyNote = async () => {
+  const handleOpenDailyNoteForDate = async (targetDate: Date) => {
     const settings = calendarStorage.getSettings();
     const folder = settings.dailyNoteFolder || '/storage/emulated/0/Note/Daily Notes';
     const format = settings.dailyNoteFormat || 'YYYY-MM-DD';
-    const fileName = formatDailyNoteName(format, selectedDate);
-    const path = dailyNotePath(folder, format, selectedDate);
+    const fileName = formatDailyNoteName(format, targetDate);
+    const path = dailyNotePath(folder, format, targetDate);
+
+    if (!(await ensureFileReadPermission())) {
+      setStatusMsg('Could not open daily note: File read access was not allowed.');
+      return;
+    }
 
     try {
       const exists = await FileUtils.exists(path);
@@ -1936,8 +2024,8 @@ export function AgendaScreen(): React.JSX.Element {
     }
     // The month check ran before this note existed, so add it now rather than
     // making the user page away and back to see the badge.
-    setDailyNoteExists(true);
-    setDailyNoteDates(prev => new Set(prev).add(dateKey(selectedDate)));
+    if (dateKey(targetDate) === dateKey(selectedDate)) setDailyNoteExists(true);
+    setDailyNoteDates(prev => new Set(prev).add(dateKey(targetDate)));
 
     await prepareForNativeFileOpen();
     const opened = await openNoteInEditor(path);
@@ -1945,9 +2033,48 @@ export function AgendaScreen(): React.JSX.Element {
     if (opened.success) closePanel();
   };
 
+  const handleOpenDailyNote = () => handleOpenDailyNoteForDate(selectedDate);
+
+  const handleOpenWeeklyNote = async () => {
+    const settings = calendarStorage.getSettings();
+    const folder = settings.dailyNoteFolder || '/storage/emulated/0/Note/Daily Notes';
+    const path = weeklyReviewNotePath(folder, selectedDate, weekStartsOn);
+    const fileName = path.split('/').pop() || 'Weekly Review.note';
+
+    if (!(await ensureFileReadPermission())) {
+      setStatusMsg('Could not open weekly review: File read access was not allowed.');
+      return;
+    }
+    try {
+      if (await FileUtils.exists(path)) {
+        await handleOpenExistingNote(path);
+        return;
+      }
+    } catch (_error) {}
+
+    setStatusMsg(`Creating ${fileName}...`);
+    const res = await meetingNoteService.createDailyNote(path, settings);
+    if (!res.success) {
+      setStatusMsg(`Could not create weekly review: ${res.error}`);
+      return;
+    }
+    setWeeklyNoteExists(true);
+    await prepareForNativeFileOpen();
+    const opened = await openNoteInEditor(path);
+    setStatusMsg(opened.success ? `Created and opened ${fileName}` : opened.message);
+    if (opened.success) closePanel();
+  };
+
   // Tasks are grouped by the day being viewed. Past Due and No Date only
   // surface on today — see sectionTasksForDay for why.
   const daySections = sectionTasksForDay(tasks, selectedDate);
+  const focusTasks = dailyFocusTasks(tasks, selectedDate);
+  const attentionProjects = projectsNeedingAttention(
+    projects,
+    tasks,
+    uid => calendarStorage.getMembership(uid).projectId,
+    selectedDate
+  );
   // Always relative to today, regardless of which month the grid is showing.
   const todayTaskSections = sectionTasksForDay(tasks, new Date());
 
@@ -2580,10 +2707,10 @@ export function AgendaScreen(): React.JSX.Element {
     setAreas([...calendarStorage.getAreas()]);
   };
 
-  const handleRenameProject = (projectId: string, name: string) => {
+  const handleRenameProject = (projectId: string, name: string, shortLabel?: string) => {
     const existing = calendarStorage.getProjects().find(p => p.id === projectId);
     if (!existing) return;
-    calendarStorage.upsertProject({ ...existing, name });
+    calendarStorage.upsertProject({ ...existing, name, shortLabel });
     setProjects([...calendarStorage.getProjects()]);
   };
 
@@ -2671,18 +2798,30 @@ export function AgendaScreen(): React.JSX.Element {
     setStatusMsg(`Restored resource "${resource.name}".`);
   };
 
-  const handleCycleProjectArea = (projectId: string) => {
+  const handleAssignProjectArea = (projectId: string, areaId?: string) => {
     const existing = calendarStorage.getProjects().find(p => p.id === projectId);
     if (!existing) return;
 
-    const ids: Array<string | undefined> = [...calendarStorage.getAreas().map(a => a.id), undefined];
-    const at = ids.indexOf(existing.areaId);
-    const moved = { ...existing, areaId: ids[(at + 1) % ids.length] };
+    const moved = { ...existing, areaId };
     calendarStorage.upsertProject(moved);
     setProjects([...calendarStorage.getProjects()]);
     // The detail screen holds its own copy, so it has to be told, or the
     // breadcrumb keeps naming the area the project just left.
     setOpenProject(current => (current && current.id === moved.id ? moved : current));
+  };
+
+  const handleMoveProject = (project: Project, direction: 'up' | 'down') => {
+    const current = calendarStorage.getProjects();
+    const ordered = current
+      .map((item, index) => ({ item, index }))
+      .filter(entry => entry.item.status === 'active')
+      .sort((a, b) => (a.item.sortOrder ?? a.index) - (b.item.sortOrder ?? b.index));
+    const index = ordered.findIndex(entry => entry.item.id === project.id);
+    const target = direction === 'up' ? index - 1 : index + 1;
+    if (index < 0 || target < 0 || target >= ordered.length) return;
+    [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
+    ordered.forEach((entry, order) => calendarStorage.upsertProject({ ...entry.item, sortOrder: order }));
+    setProjects([...calendarStorage.getProjects()]);
   };
 
   const handleDeleteProject = (projectId: string) => {
@@ -2756,12 +2895,14 @@ export function AgendaScreen(): React.JSX.Element {
     return area ? `[${area.name}]` : '';
   };
 
-  /**
-   * Tomorrow in one line: its first event and how much is due.
-   *
-   * Deliberately a summary rather than a second schedule — the point is to
-   * know whether tomorrow needs thinking about tonight, not to plan it here.
-   */
+  /** Project is the most useful task context; Area remains the unfiled fallback. */
+  const taskContextTagFor = (uid: string): string => {
+    const projectId = calendarStorage.getMembership(uid).projectId;
+    const project = projectId ? projects.find(candidate => candidate.id === projectId) : undefined;
+    return project ? projectDisplayLabel(project) : areaTagFor(uid);
+  };
+
+  /** Tomorrow's first calendar event; tasks already have a richer section above. */
   const lookaheadSummary = (() => {
     const tomorrow = new Date(selectedDate);
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -2774,19 +2915,7 @@ export function AgendaScreen(): React.JSX.Element {
       }),
       tomorrow
     );
-    const due = tasks.filter(t => !isDone(t) && t.dueDate && isSameCalendarDay(t.dueDate, tomorrow));
-
-    if (evts.length === 0 && due.length === 0) return 'Nothing scheduled.';
-
-    const first = evts[0];
-    const eventPart = first
-      ? `${formatTimeOfDay(minutesFromDate(first.start))} ${first.summary}${
-          evts.length > 1 ? ` (+${evts.length - 1})` : ''
-        }`
-      : '';
-    const taskPart = due.length > 0 ? `${due.length} Task${due.length === 1 ? '' : 's'}` : '';
-
-    return [eventPart, taskPart].filter(Boolean).join(' · ');
+    return tomorrowScheduleSummary(evts);
   })();
 
   /** Display name of an event's type, for status lines and schedule blocks. */
@@ -3204,15 +3333,27 @@ export function AgendaScreen(): React.JSX.Element {
     calendarStorage.updateSettings({ hideSoloEvents: val });
   };
 
-  const dateHeading =
-    viewMode === 'month'
-      ? selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-      : selectedDate.toLocaleDateString('en-US', {
-          weekday: 'long',
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric',
-        });
+  const dateHeading = (() => {
+    if (viewMode === 'month' && calendarMode === 'month') {
+      return selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    }
+    if ((viewMode === 'month' && calendarMode === 'week') || (viewMode === 'agenda' && plannerMode === 'week')) {
+      const { start } = plannerWeekRange(selectedDate, weekStartsOn);
+      const end = new Date(start);
+      end.setDate(end.getDate() + (viewMode === 'month' && calendarMode === 'week' ? calendarWeekLength - 1 : 6));
+      const startText = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const endText = start.getMonth() === end.getMonth()
+        ? `${end.getDate()}, ${end.getFullYear()}`
+        : end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      return `${startText}–${endText}`;
+    }
+    return selectedDate.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  })();
 
   return (
     <SafeAreaView style={styles.root}>
@@ -3223,19 +3364,19 @@ export function AgendaScreen(): React.JSX.Element {
           <View style={styles.viewSwitcherBar}>
             <TouchableOpacity
               style={[styles.switcherBtn, viewMode === 'month' && styles.switcherBtnActive]}
-              onPress={() => setViewMode('month')}
+              onPress={() => setShowCalendarMenu(true)}
             >
               <Text allowFontScaling={false} style={[styles.switcherBtnText, viewMode === 'month' && styles.switcherBtnTextActive]}>
-                📅 Month
+                📅 {viewMode === 'month' ? (calendarMode === 'month' ? 'Month' : 'Week') : 'Calendar'} ▾
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.switcherBtn, viewMode === 'agenda' && styles.switcherBtnActive]}
-              onPress={() => setViewMode('agenda')}
+              onPress={() => setShowPlannerMenu(true)}
             >
               <Text allowFontScaling={false} style={[styles.switcherBtnText, viewMode === 'agenda' && styles.switcherBtnTextActive]}>
-                📋 Day View
+                📋 {viewMode === 'agenda' ? (plannerMode === 'day' ? 'Day' : 'Week') : 'Planner'} ▾
               </Text>
             </TouchableOpacity>
 
@@ -3244,7 +3385,10 @@ export function AgendaScreen(): React.JSX.Element {
                 what made it feel bolted on. */}
             <TouchableOpacity
               style={[styles.switcherBtn, viewMode === 'para' && styles.switcherBtnActive]}
-              onPress={() => setViewMode('para')}
+              onPress={() => {
+                setViewMode('para');
+                setShowSettings(false);
+              }}
             >
               <Text allowFontScaling={false}
                 style={[styles.switcherBtnText, viewMode === 'para' && styles.switcherBtnTextActive]}
@@ -3255,21 +3399,109 @@ export function AgendaScreen(): React.JSX.Element {
           </View>
         </View>
 
-        <View style={styles.headerBtnGroup}>
-          {(caldavEnabled || taskCaldavEnabled || hasSubscribedFeeds) && (
-            <TouchableOpacity style={styles.syncNowBtn} onPress={handleSyncNow}>
-              <Text allowFontScaling={false} style={styles.syncNowBtnText}>🔄 Sync Now</Text>
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity style={styles.settingsBtn} onPress={() => setShowSettings(!showSettings)}>
-            <Text allowFontScaling={false} style={styles.settingsBtnText}>{showSettings ? 'Close Feeds' : 'Feeds / Config'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.closePluginBtn} onPress={handleClosePlugin}>
-            <Text allowFontScaling={false} style={styles.closePluginBtnText}>✕ Exit</Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity style={styles.appMenuBtn} onPress={() => setShowAppMenu(true)}>
+          <Text allowFontScaling={false} style={styles.appMenuBtnText}>
+            {syncPhase === 'success' ? '✓ ' : syncPhase === 'error' || syncPhase === 'partial' ? '! ' : ''}⚙
+          </Text>
+        </TouchableOpacity>
       </View>
+
+      {isLoading && (
+        <View style={styles.loadingBanner}>
+          <Text allowFontScaling={false} style={styles.loadingBannerText}>Loading calendar and tasks…</Text>
+        </View>
+      )}
+
+      <Modal visible={showCalendarMenu} transparent animationType="fade">
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowCalendarMenu(false)}>
+          <View style={styles.actionSheetContentCompact}>
+            <Text allowFontScaling={false} style={styles.actionSheetTitle}>Calendar View</Text>
+            <TouchableOpacity style={styles.actionSheetBtn} onPress={() => {
+              setCalendarMode('month');
+              setViewMode('month');
+              setShowSettings(false);
+              setShowCalendarMenu(false);
+            }}>
+              <Text allowFontScaling={false} style={styles.actionSheetBtnText}>📅 Month View</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionSheetBtn} onPress={() => {
+              setCalendarMode('week');
+              setViewMode('month');
+              setShowSettings(false);
+              setShowCalendarMenu(false);
+            }}>
+              <Text allowFontScaling={false} style={styles.actionSheetBtnText}>🗓 Week View</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowCalendarMenu(false)}>
+              <Text allowFontScaling={false} style={styles.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal visible={showPlannerMenu} transparent animationType="fade">
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowPlannerMenu(false)}>
+          <View style={styles.actionSheetContentCompact}>
+            <Text allowFontScaling={false} style={styles.actionSheetTitle}>Planner View</Text>
+            <TouchableOpacity style={styles.actionSheetBtn} onPress={() => {
+              setPlannerMode('day');
+              setViewMode('agenda');
+              setShowSettings(false);
+              setShowPlannerMenu(false);
+            }}>
+              <Text allowFontScaling={false} style={styles.actionSheetBtnText}>📋 Day Planner</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionSheetBtn} onPress={() => {
+              setPlannerMode('week');
+              setViewMode('agenda');
+              setShowSettings(false);
+              setShowPlannerMenu(false);
+            }}>
+              <Text allowFontScaling={false} style={styles.actionSheetBtnText}>🗓 Weekly Review</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowPlannerMenu(false)}>
+              <Text allowFontScaling={false} style={styles.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal visible={showAppMenu} transparent animationType="fade">
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowAppMenu(false)}>
+          <View style={styles.actionSheetContentCompact}>
+            <Text allowFontScaling={false} style={styles.actionSheetTitle}>SNFolio</Text>
+            <TouchableOpacity
+              style={styles.actionSheetBtn}
+              disabled={!(caldavEnabled || taskCaldavEnabled || hasSubscribedFeeds)}
+              onPress={() => {
+                setShowAppMenu(false);
+                void handleSyncNow();
+              }}
+            >
+              <Text allowFontScaling={false} style={styles.actionSheetBtnText}>
+                🔄 {caldavEnabled || taskCaldavEnabled || hasSubscribedFeeds ? 'Sync Now' : 'Sync Not Configured'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionSheetBtn} onPress={() => {
+              setShowAppMenu(false);
+              setShowSettings(value => !value);
+            }}>
+              <Text allowFontScaling={false} style={styles.actionSheetBtnText}>
+                ⚙ {showSettings ? 'Close Settings' : 'Connections & Settings'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.deleteOptionBtnDanger} onPress={() => {
+              setShowAppMenu(false);
+              handleClosePlugin();
+            }}>
+              <Text allowFontScaling={false} style={styles.deleteOptionBtnTextDanger}>✕ Exit SNFolio</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowAppMenu(false)}>
+              <Text allowFontScaling={false} style={styles.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {statusMsg !== '' && (
         <View style={styles.statusBanner}>
@@ -3398,6 +3630,7 @@ export function AgendaScreen(): React.JSX.Element {
       <DatePickerModal
         visible={projectDueTarget !== null}
         value={projectDueTarget?.dueDate || new Date()}
+        weekStartsOn={weekStartsOn}
         onSelect={date => {
           if (!projectDueTarget) return;
           calendarStorage.upsertProject({ ...projectDueTarget, dueDate: date });
@@ -4181,6 +4414,45 @@ export function AgendaScreen(): React.JSX.Element {
             </TouchableOpacity>
           </View>
 
+          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Calendar Week Layout</Text>
+          <Text allowFontScaling={false} style={styles.bodyText}>
+            Week View shows five or seven consecutive days beginning on the selected weekday.
+            The same starting day is used by Month View, Weekly Review, and date pickers.
+          </Text>
+          <Text allowFontScaling={false} style={styles.fieldLabel}>Week begins on</Text>
+          <View style={styles.weekOptionRow}>
+            {(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const).map((label, index) => (
+              <TouchableOpacity
+                key={label}
+                style={[styles.weekOption, weekStartsOn === index && styles.weekOptionActive]}
+                onPress={() => {
+                  const next = index as 0 | 1 | 2 | 3 | 4 | 5 | 6;
+                  setWeekStartsOn(next);
+                  calendarStorage.updateSettings({ weekStartsOn: next });
+                }}
+              >
+                <Text allowFontScaling={false} style={[styles.weekOptionText, weekStartsOn === index && styles.weekOptionTextActive]}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text allowFontScaling={false} style={styles.fieldLabel}>Calendar Week View</Text>
+          <View style={styles.weekOptionRow}>
+            {([5, 7] as const).map(length => (
+              <TouchableOpacity
+                key={length}
+                style={[styles.weekLengthOption, calendarWeekLength === length && styles.weekOptionActive]}
+                onPress={() => {
+                  setCalendarWeekLength(length);
+                  calendarStorage.updateSettings({ calendarWeekLength: length });
+                }}
+              >
+                <Text allowFontScaling={false} style={[styles.weekOptionText, calendarWeekLength === length && styles.weekOptionTextActive]}>
+                  {length} days
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
           <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Day View Schedule Hours</Text>
           <Text allowFontScaling={false} style={styles.bodyText}>
             Which hours the Day View draws. Anything outside is still shown, pulled to the nearest
@@ -4354,7 +4626,9 @@ export function AgendaScreen(): React.JSX.Element {
           <View style={styles.dateNavRow}>
             <View style={styles.dateNavSide}>
               <TouchableOpacity style={styles.navBtn} onPress={handlePrevDay}>
-                <Text allowFontScaling={false} style={styles.navBtnText}>‹ Prev</Text>
+                <Text allowFontScaling={false} style={styles.navBtnText}>
+                  {(viewMode === 'agenda' && plannerMode === 'week') || (viewMode === 'month' && calendarMode === 'week') ? '‹ Week' : '‹ Prev'}
+                </Text>
               </TouchableOpacity>
             </View>
 
@@ -4368,7 +4642,9 @@ export function AgendaScreen(): React.JSX.Element {
               </TouchableOpacity>
 
               <TouchableOpacity style={styles.navBtn} onPress={handleNextDay}>
-                <Text allowFontScaling={false} style={styles.navBtnText}>Next ›</Text>
+                <Text allowFontScaling={false} style={styles.navBtnText}>
+                  {(viewMode === 'agenda' && plannerMode === 'week') || (viewMode === 'month' && calendarMode === 'week') ? 'Week ›' : 'Next ›'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -4462,6 +4738,7 @@ export function AgendaScreen(): React.JSX.Element {
           <DatePickerModal
             visible={showDatePickerModal}
             value={selectedDate}
+            weekStartsOn={weekStartsOn}
             onSelect={setSelectedDate}
             onClose={() => setShowDatePickerModal(false)}
           />
@@ -4491,6 +4768,7 @@ export function AgendaScreen(): React.JSX.Element {
             visible={showItemCreationModal}
             type={creationType}
             targetDate={lassoDraftDate ?? selectedDate}
+            weekStartsOn={weekStartsOn}
             initialTitle={lassoDraftTitle}
             initialParsed={lassoDraftParsed}
             editingEvent={editingEvent}
@@ -4534,7 +4812,7 @@ export function AgendaScreen(): React.JSX.Element {
               Previously both competed for a fixed screen height, so shrinking
               the cells only revealed a strip that was still clipped and could
               never show more than a row. */}
-          {viewMode === 'month' && (
+          {viewMode === 'month' && calendarMode === 'month' && (
             <ScrollView
               style={styles.monthScroll}
               contentContainerStyle={styles.monthScrollContent}
@@ -4542,6 +4820,7 @@ export function AgendaScreen(): React.JSX.Element {
             >
             <MonthGridView
               allTasks={tasks}
+              weekStartsOn={weekStartsOn}
               currentDate={selectedDate}
               selectedDate={selectedDate}
               dailyNoteDates={dailyNoteDates}
@@ -4609,19 +4888,46 @@ export function AgendaScreen(): React.JSX.Element {
             </ScrollView>
           )}
 
+          {viewMode === 'month' && calendarMode === 'week' && (
+            <CalendarWeekView
+              selectedDate={selectedDate}
+              weekStartsOn={weekStartsOn}
+              dayCount={calendarWeekLength}
+              events={filterEvents(allParsedEvents, {
+                ...calendarStorage.getSettings(),
+                hideAllDayEvents: hideAllDay,
+                hideSoloEvents: hideSolo,
+              })}
+              tasks={tasks}
+              onOpenDay={date => {
+                setSelectedDate(date);
+                setPlannerMode('day');
+                setViewMode('agenda');
+              }}
+              onOpenEvent={handleOpenEventDetails}
+              onToggleTask={handleToggleTask}
+              onEditTask={handleEditTask}
+              taskContextLabel={taskContextTagFor}
+              weeklyNoteExists={Boolean(weeklyNoteExists)}
+              onOpenWeeklyNote={() => void handleOpenWeeklyNote()}
+            />
+          )}
+
           {viewMode === 'para' && openProject && (
             <ProjectDetailView
               project={openProject}
               area={areas.find(a => a.id === openProject.areaId)}
+              areas={areas}
               tasks={tasks}
               projectOf={projectOfTask}
               linkedNotes={linkedNotesForProject(openProject)}
               onBack={() => setOpenProject(null)}
               onSetDue={() => setProjectDueTarget(openProject)}
-              onCycleArea={() => handleCycleProjectArea(openProject.id)}
-              onRename={name => {
-                handleRenameProject(openProject.id, name);
-                setOpenProject({ ...openProject, name });
+              onAssignArea={areaId => handleAssignProjectArea(openProject.id, areaId)}
+              onCreateArea={handleCreateArea}
+              onRename={(name, shortLabel) => {
+                handleRenameProject(openProject.id, name, shortLabel);
+                setOpenProject({ ...openProject, name, shortLabel });
               }}
               onToggleStatus={() => {
                 const next = openProject.status === 'active' ? 'done' : 'active';
@@ -4663,7 +4969,9 @@ export function AgendaScreen(): React.JSX.Element {
               projects={projects}
               resources={resources}
               tasks={tasks}
+              events={paraUpcomingEvents}
               projectOf={projectOfTask}
+              projectOfEvent={event => calendarStorage.getMembership(noteIdentity(event)).projectId}
               areaOf={areaOfTask}
               onNewProject={(name, areaId) => handleCreateProject(name, areaId)}
               onNewArea={name => handleCreateArea(name)}
@@ -4691,6 +4999,7 @@ export function AgendaScreen(): React.JSX.Element {
               onRestoreResource={handleRestoreResource}
               onToggleTask={handleToggleTask}
               onEditTask={handleEditTask}
+              onEditEvent={handleOpenEventDetails}
               onAddTaskToProject={project => {
                 // Opens the task form already filed under this project, so
                 // adding from inside a project does not mean re-selecting it.
@@ -4702,13 +5011,14 @@ export function AgendaScreen(): React.JSX.Element {
                 setPendingProjectId(project.id);
                 setShowItemCreationModal(true);
               }}
+              onMoveProject={handleMoveProject}
             />
           )}
 
           {/* ── Day View: planner layout ─────────────────────────────
               Two framed panels side by side on a Manta; stacked on a Nomad,
               where 1404px cannot carry two columns without wrapping badly. */}
-          {viewMode === 'agenda' && (
+          {viewMode === 'agenda' && plannerMode === 'day' && (
             <ScrollView style={styles.agendaViewList} keyboardShouldPersistTaps="handled">
               {/* Weekday strip for jumping within the current week. */}
               <View style={styles.weekStrip}>
@@ -4744,7 +5054,7 @@ export function AgendaScreen(): React.JSX.Element {
                 <View style={[styles.panel, isWideScreen && styles.panelHalf]}>
                   <View style={styles.panelHeader}>
                     <Text allowFontScaling={false} style={styles.panelHeaderText}>
-                      📅 TODAY'S SCHEDULE ({events.length})
+                      📅 SCHEDULE ({events.length})
                     </Text>
                     <TouchableOpacity
                       onPress={() => {
@@ -4800,10 +5110,30 @@ export function AgendaScreen(): React.JSX.Element {
                     </Text>
                     <TouchableOpacity style={styles.journalBtn} onPress={handleOpenDailyNote}>
                       <Text allowFontScaling={false} style={styles.journalBtnText}>
-                        {dailyNoteExists === false ? '📂 Create' : '📂 Open'} Today's Journal Note
+                        {dailyNoteExists === false ? '📂 Create' : '📂 Open'} This Day's Journal Note
                       </Text>
                     </TouchableOpacity>
                   </View>
+
+                  <View style={styles.subHeader}>
+                    <Text allowFontScaling={false} style={styles.subHeaderText}>★ FOCUS FOR THIS DAY</Text>
+                    <Text allowFontScaling={false} style={styles.subHeaderMeta}>Top priorities</Text>
+                  </View>
+                  {focusTasks.length === 0 ? (
+                    <Text allowFontScaling={false} style={styles.panelEmpty}>No open tasks.</Text>
+                  ) : (
+                    <View style={isWideScreen ? styles.focusPriorityRow : styles.focusPriorityStack}>
+                      {focusTasks.map((task, index) => {
+                        const contextTag = taskContextTagFor(task.uid);
+                        return (
+                          <TouchableOpacity key={task.uid} style={styles.focusPriorityItem} onPress={() => handleEditTask(task)}>
+                            <Text allowFontScaling={false} style={styles.focusPriorityNumber}>{index + 1}{contextTag ? ` · ${contextTag}` : ''}</Text>
+                            <Text allowFontScaling={false} style={styles.focusPriorityTitle} numberOfLines={2}>{task.title}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
 
                   <View style={styles.subHeader}>
                     <Text allowFontScaling={false} style={styles.subHeaderText}>
@@ -4844,52 +5174,46 @@ export function AgendaScreen(): React.JSX.Element {
                       items.length === 0 ? null : (
                         <View key={label || 'due'}>
                           {label ? <Text allowFontScaling={false} style={styles.taskGroupLabel}>{label}</Text> : null}
-                          {items.map(task => (
-                            <View key={task.uid} style={styles.focusTaskRow}>
-                              <TouchableOpacity
-                                onPress={() => handleToggleTask(task)}
-                              >
-                                <Text allowFontScaling={false} style={styles.focusCheck}>{statusGlyph(taskStatus(task))}</Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity style={styles.focusTaskBody} onPress={() => handleEditTask(task)}>
-                                <Text allowFontScaling={false}
-                                  style={[styles.focusTaskText, task.completed && styles.focusTaskDone]}
-                                  numberOfLines={1}
+                          {items.map(task => {
+                            const contextTag = taskContextTagFor(task.uid);
+                            return (
+                              <View key={task.uid} style={styles.focusTaskRow}>
+                                <TouchableOpacity
+                                  onPress={() => handleToggleTask(task)}
                                 >
-                                  {taskRowLabel(task, showDate)}
-                                </Text>
-                              </TouchableOpacity>
+                                  <Text allowFontScaling={false} style={styles.focusCheck}>{statusGlyph(taskStatus(task))}</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={styles.focusTaskBody} onPress={() => handleEditTask(task)}>
+                                  <Text allowFontScaling={false}
+                                    style={[styles.focusTaskText, task.completed && styles.focusTaskDone]}
+                                    numberOfLines={1}
+                                  >
+                                    {taskRowLabel(task, showDate, contextTag)}
+                                  </Text>
+                                </TouchableOpacity>
 
-                              {/* The area shown where the work is, so filing
-                                  a task has a visible consequence rather than
-                                  only mattering inside the PARA view. */}
-                              {areaTagFor(task.uid) ? (
-                                <Text allowFontScaling={false} style={styles.areaTag} numberOfLines={1}>
-                                  {areaTagFor(task.uid)}
-                                </Text>
-                              ) : null}
-
-                              <TouchableOpacity
-                                style={styles.focusTaskDelete}
-                                onPress={() => handleDeleteTask(task)}
-                              >
-                                <Text allowFontScaling={false} style={styles.focusTaskDeleteText}>✕</Text>
-                              </TouchableOpacity>
-                            </View>
-                          ))}
+                                <TouchableOpacity
+                                  style={styles.focusTaskDelete}
+                                  onPress={() => handleDeleteTask(task)}
+                                >
+                                  <Text allowFontScaling={false} style={styles.focusTaskDeleteText}>✕</Text>
+                                </TouchableOpacity>
+                              </View>
+                            );
+                          })}
                         </View>
                       )
                     )
                   )}
 
                   <View style={styles.subHeader}>
-                    <Text allowFontScaling={false} style={styles.subHeaderText}>🚀 ACTIVE PROJECTS (PARA)</Text>
+                    <Text allowFontScaling={false} style={styles.subHeaderText}>🚀 PROJECTS NEEDING ATTENTION</Text>
                   </View>
 
-                  {activeProjects(projects).length === 0 ? (
-                    <Text allowFontScaling={false} style={styles.panelEmpty}>No active projects.</Text>
+                  {attentionProjects.length === 0 ? (
+                    <Text allowFontScaling={false} style={styles.panelEmpty}>No projects need attention.</Text>
                   ) : (
-                    activeProjects(projects).map(project => {
+                    attentionProjects.map(project => {
                       const progress = projectProgress(tasks, project.id, {
                         projectOf: projectOfTask,
                         nameOf: () => project.name,
@@ -4911,15 +5235,39 @@ export function AgendaScreen(): React.JSX.Element {
                     })
                   )}
 
-                  {/* Tomorrow at a glance. Without it the planner stops dead at
-                      midnight, which is not how anyone plans an evening. */}
+                  {/* A calendar preview and direct route to tomorrow. Tasks are
+                      already named and actionable in the section above. */}
                   <View style={styles.subHeader}>
-                    <Text allowFontScaling={false} style={styles.subHeaderText}>🔮 LOOKAHEAD (TOMORROW)</Text>
+                    <Text allowFontScaling={false} style={styles.subHeaderText}>🔮 TOMORROW'S SCHEDULE</Text>
                   </View>
-                  <Text allowFontScaling={false} style={styles.lookaheadText}>{lookaheadSummary}</Text>
+                  <TouchableOpacity style={styles.lookaheadRow} onPress={handleNextDay}>
+                    <Text allowFontScaling={false} style={styles.lookaheadText} numberOfLines={2}>
+                      {lookaheadSummary}
+                    </Text>
+                    <Text allowFontScaling={false} style={styles.lookaheadAction}>View ›</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             </ScrollView>
+          )}
+
+          {viewMode === 'agenda' && plannerMode === 'week' && (
+            <WeeklyReviewView
+              selectedDate={selectedDate}
+              weekStartsOn={weekStartsOn}
+              tasks={tasks}
+              projects={projects}
+              projectOf={projectOfTask}
+              journalDates={weekJournalDates}
+              weeklyNoteExists={weeklyNoteExists}
+              onOpenWeeklyNote={() => void handleOpenWeeklyNote()}
+              onEditTask={handleEditTask}
+              onOpenProject={project => {
+                setOpenProject(project);
+                setViewMode('para');
+              }}
+              onOpenJournal={date => void handleOpenDailyNoteForDate(date)}
+            />
           )}
 
 
@@ -4984,6 +5332,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  appMenuBtn: {
+    width: 48,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    backgroundColor: '#ffffff',
+  },
+  appMenuBtnText: { color: '#000000', fontSize: 20, fontWeight: 'bold' },
   syncNowBtn: {
     backgroundColor: '#000000',
     borderRadius: 6,
@@ -5469,6 +5828,31 @@ const styles = StyleSheet.create({
   formatPresetActive: { backgroundColor: '#000000' },
   formatPresetText: { fontSize: 11, fontFamily: 'monospace', color: '#000000' },
   formatPresetTextActive: { color: '#ffffff' },
+  weekOptionRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 6, marginBottom: 6 },
+  weekOption: {
+    minWidth: 58,
+    minHeight: 42,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 5,
+    marginBottom: 5,
+  },
+  weekLengthOption: {
+    minWidth: 110,
+    minHeight: 42,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 7,
+  },
+  weekOptionActive: { backgroundColor: '#000000' },
+  weekOptionText: { fontSize: 13, fontWeight: 'bold', color: '#000000' },
+  weekOptionTextActive: { color: '#ffffff' },
   previewBox: { alignSelf: 'flex-start', maxWidth: 560, borderWidth: 2, borderColor: '#000000', borderRadius: 6, padding: 8, marginTop: 4, backgroundColor: '#f5f5f5' },
   previewLabel: { fontSize: 11, fontWeight: 'bold', color: '#303030' },
   previewPath: { fontSize: 12, fontFamily: 'monospace', color: '#000000', marginVertical: 3 },
@@ -5522,18 +5906,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   journalBtnText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
-  areaTag: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    color: '#303030',
-    backgroundColor: '#ececec',
-    borderRadius: 3,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    marginLeft: 6,
-    maxWidth: 96,
-    overflow: 'hidden',
-  },
   dayProjectRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -5606,7 +5978,28 @@ const styles = StyleSheet.create({
   },
   nudgeText: { fontSize: 14, fontWeight: 'bold', color: '#000000' },
   hourValue: { fontSize: 13, fontWeight: 'bold', color: '#000000', width: 58, textAlign: 'center' },
-  lookaheadText: { fontSize: 12, color: '#000000', paddingHorizontal: 10, paddingVertical: 6 },
+  lookaheadRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+  },
+  lookaheadText: { flex: 1, fontSize: 15, color: '#000000', marginRight: 12 },
+  lookaheadAction: { fontSize: 13, fontWeight: 'bold', color: '#000000' },
+  subHeaderMeta: { fontSize: 12, color: '#303030' },
+  focusPriorityRow: { flexDirection: 'row' },
+  focusPriorityStack: { flexDirection: 'column' },
+  focusPriorityItem: {
+    flex: 1,
+    minHeight: 72,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#000000',
+  },
+  focusPriorityNumber: { fontSize: 12, fontWeight: 'bold', color: '#303030' },
+  focusPriorityTitle: { fontSize: 14, fontWeight: 'bold', color: '#000000', marginTop: 5 },
   focusSummary: { fontSize: 13, fontWeight: 'bold', color: '#000000', padding: 10 },
   subHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#000000', paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#f2f2f2' },
   subHeaderText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
@@ -5961,8 +6354,11 @@ const styles = StyleSheet.create({
     borderColor: '#000000',
     borderRadius: 8,
     padding: 16,
-    width: '65%',
+    width: '48%',
+    maxWidth: 420,
   },
+  loadingBanner: { borderWidth: 1, borderColor: '#000000', backgroundColor: '#eeeeee', marginHorizontal: 8, marginBottom: 6, paddingVertical: 9, alignItems: 'center' },
+  loadingBannerText: { fontSize: 13, fontWeight: 'bold', color: '#000000' },
   actionSheetTitle: {
     fontSize: 15,
     fontWeight: 'bold',
