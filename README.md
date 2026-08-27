@@ -1,9 +1,9 @@
 # SNFolio for Supernote
 
 
+https://github.com/user-attachments/assets/83200e64-08d4-444a-adb7-5c56df30a18a
 
 
-https://github.com/user-attachments/assets/2210d5dc-8747-49cf-9a3f-dfa9c3068829
 
 
 
