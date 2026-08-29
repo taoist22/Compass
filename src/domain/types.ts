@@ -316,6 +316,11 @@ export interface CalendarSettings {
   classTemplate?: string;
   /** Where class notes are filed. Meeting notes use notesDirectory. */
   classNotesDirectory?: string;
+  /** Configurable PARA roots. Existing installs retain the original SNFolio paths. */
+  projectsDirectory?: string;
+  areasDirectory?: string;
+  resourcesDirectory?: string;
+  archiveDirectory?: string;
   /**
    * Hours the Day View's schedule grid draws, 0–23. Anything outside is
    * clamped into view rather than hidden, but a day that starts at 6am is

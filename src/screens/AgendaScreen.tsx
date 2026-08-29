@@ -87,6 +87,15 @@ import { tomorrowScheduleSummary } from '../domain/tomorrowSchedule';
 import { dailyFocusTasks, plannerWeekRange, projectsNeedingAttention } from '../domain/plannerReview';
 import { WeeklyReviewView } from './WeeklyReviewView';
 import { CalendarWeekView } from './CalendarWeekView';
+import { FolderPickerModal } from './FolderPickerModal';
+import { ExistingParaFoldersModal } from './ExistingParaFoldersModal';
+import {
+  PARA_ROOT_KINDS,
+  PARA_ROOT_SETTING,
+  ParaRootKind,
+  paraChildFolder,
+  paraRoot,
+} from '../domain/paraStorage';
 
 type CalendarFileBridge = {
   readTextFile(pathOrUri: string): Promise<string>;
@@ -111,7 +120,7 @@ import { hourLabel } from '../domain/dayGrid';
 import { ItemCreationModal } from './ItemCreationModal';
 import { EventDetailsModal } from './EventDetailsModal';
 import { DatePickerModal } from './DatePickerModal';
-import { listParaFolderEntries, openNoteInEditor, openResourceFile } from '../supernote/exportService';
+import { listParaFolderEntries, openNoteInEditor, openResourceFile, ParaFolderEntry } from '../supernote/exportService';
 import {
   ensureFileDeletePermission,
   ensureFileReadPermission,
@@ -221,6 +230,7 @@ export function AgendaScreen(): React.JSX.Element {
   const [targetNotesDir, setTargetNotesDir] = useState<string>('/storage/emulated/0/Note/Meetings');
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('sync');
+  const settingsScrollRef = useRef<ScrollView>(null);
   const [statusMsg, setStatusMsg] = useState<string>('');
   const [syncPhase, setSyncPhase] = useState<'idle' | 'syncing' | 'success' | 'partial' | 'error'>('idle');
   const [lastSuccessfulSync, setLastSuccessfulSync] = useState<string>('');
@@ -556,9 +566,18 @@ export function AgendaScreen(): React.JSX.Element {
   const [kindPromptEvent, setKindPromptEvent] = useState<CalendarEvent | null>(null);
   /** In-progress folder edits, so typing is not fought by the stored value. */
   const [folderDrafts, setFolderDrafts] = useState<Partial<Record<NoteKind, string>>>({});
+  const [folderPickerTarget, setFolderPickerTarget] = useState<NoteKind | ParaRootKind | null>(null);
+  const [paraImportKind, setParaImportKind] = useState<ParaRootKind | null>(null);
+  const [paraImportFolders, setParaImportFolders] = useState<ParaFolderEntry[]>([]);
   const [systemTemplates, setSystemTemplates] = useState<SystemTemplate[]>([]);
   /** Bumped on every template/folder write so the settings rows re-read. */
   const [templateRevision, setTemplateRevision] = useState<number>(0);
+
+  useEffect(() => {
+    if (!showSettings) return;
+    const timer = setTimeout(() => settingsScrollRef.current?.scrollTo({ y: 0, animated: false }), 0);
+    return () => clearTimeout(timer);
+  }, [showSettings, settingsTab]);
 
   /**
    * Swaps in a freshly fetched batch of feed events.
@@ -1610,41 +1629,7 @@ export function AgendaScreen(): React.JSX.Element {
    * note you are in. A folder that does not exist yet cannot be reached at
    * all this way, which is why the path is editable above.
    */
-  const handleChooseNoteFolder = async (kind: NoteKind) => {
-    try {
-      if (!RattaFileSelector || !RattaFileSelector.selectFile) {
-        setStatusMsg('Native file picker unavailable on this device.');
-        return;
-      }
-
-      const result: any = await RattaFileSelector.selectFile({
-        // selectType MUST be 0. Mode 1 ("single file") opens the picked file
-        // in the NOTE app and never resolves the promise — root-caused in
-        // sn-pages 2026-07-12 after it broke sn-merge the same way.
-        selectType: 0,
-        maxNum: 1,
-        title: `Pick any file in the ${kind} notes folder`,
-        rightButtonText: 'Use folder',
-        needSelectFolder: noteFolderFor(kind),
-      });
-
-      const chosen = parentFolderFromPicker(result);
-      if (!chosen) {
-        setStatusMsg('No file chosen — folder unchanged.');
-        return;
-      }
-
-      if (chosen === '/storage/emulated/0') {
-        setStatusMsg('Could not determine a usable folder from that file.');
-        return;
-      }
-
-      applyNoteFolder(kind, chosen);
-
-    } catch (e: any) {
-      setStatusMsg(`Folder picker error: ${e?.message || 'Picker closed'}`);
-    }
-  };
+  const handleChooseNoteFolder = (kind: NoteKind) => setFolderPickerTarget(kind);
 
   const applyNoteFolder = (kind: NoteKind, folder: string) => {
     if (kind === 'daily') {
@@ -1660,6 +1645,84 @@ export function AgendaScreen(): React.JSX.Element {
     setFolderDrafts(prev => ({ ...prev, [kind]: folder }));
     setTemplateRevision(n => n + 1);
     setStatusMsg(`${kind} notes folder: ${folder}`);
+  };
+
+  const paraRootFor = (kind: ParaRootKind): string => {
+    void templateRevision;
+    return paraRoot(calendarStorage.getSettings(), kind);
+  };
+
+  const applyParaRoot = (kind: ParaRootKind, folder: string) => {
+    calendarStorage.updateSettings({ [PARA_ROOT_SETTING[kind]]: folder });
+    setTemplateRevision(n => n + 1);
+    setStatusMsg(`${kind[0].toUpperCase()}${kind.slice(1)} root: ${folder}`);
+  };
+
+  const scanParaRoot = async (kind: ParaRootKind) => {
+    try {
+      const folders = (await listParaFolderEntries(paraRootFor(kind))).filter(entry => entry.isFolder);
+      setParaImportFolders(folders);
+      setParaImportKind(kind);
+    } catch (e: any) {
+      setStatusMsg(`Could not read ${kind}: ${e?.message || 'folder unavailable'}`);
+    }
+  };
+
+  const importParaFolder = (
+    kind: ParaRootKind,
+    entry: ParaFolderEntry,
+    archiveAs?: 'project' | 'area' | 'resource',
+  ) => {
+    const now = new Date();
+    const effectiveKind = kind === 'archive'
+      ? archiveAs === 'project' ? 'projects' : archiveAs === 'area' ? 'areas' : archiveAs === 'resource' ? 'resources' : undefined
+      : kind;
+    if (!effectiveKind) return;
+    if (effectiveKind === 'projects') {
+      const existing = calendarStorage.getProjects().find(item => item.name.toLowerCase() === entry.name.toLowerCase());
+      calendarStorage.upsertProject(existing ? {
+        ...existing,
+        folder: entry.path,
+        status: kind === 'archive' ? 'archived' : existing.status,
+      } : {
+        id: `proj-${Date.now()}`,
+        name: entry.name,
+        folder: entry.path,
+        status: kind === 'archive' ? 'archived' : 'active',
+        createdAt: now,
+      });
+      setProjects([...calendarStorage.getProjects()]);
+    } else if (effectiveKind === 'areas') {
+      const existing = calendarStorage.getAreas().find(item => item.name.toLowerCase() === entry.name.toLowerCase());
+      calendarStorage.upsertArea(existing ? {
+        ...existing,
+        folder: entry.path,
+        archived: kind === 'archive' ? true : existing.archived,
+      } : {
+        id: `area-${Date.now()}`,
+        name: entry.name,
+        folder: entry.path,
+        createdAt: now,
+        archived: kind === 'archive' ? true : undefined,
+      });
+      setAreas([...calendarStorage.getAreas()]);
+    } else {
+      const existing = calendarStorage.getResources().find(item => item.name.toLowerCase() === entry.name.toLowerCase());
+      calendarStorage.upsertResource(existing ? {
+        ...existing,
+        folder: entry.path,
+        notePath: undefined,
+        archived: kind === 'archive' ? true : existing.archived,
+      } : {
+        id: `resource-${Date.now()}`,
+        name: entry.name,
+        folder: entry.path,
+        createdAt: now,
+        archived: kind === 'archive' ? true : undefined,
+      });
+      setResources([...calendarStorage.getResources()]);
+    }
+    setStatusMsg(`${kind === 'archive' ? 'Imported archived' : 'Associated'} ${entry.name} with ${entry.path}.`);
   };
 
   const handleChooseCustomTemplate = async (kind: NoteKind) => {
@@ -2776,13 +2839,18 @@ export function AgendaScreen(): React.JSX.Element {
   };
 
   const handleCreateResource = (name: string): string => {
+    const folder = paraChildFolder(calendarStorage.getSettings(), 'resources', name);
     const resource: Resource = {
       id: `resource-${Date.now()}`,
       name,
+      folder,
       createdAt: new Date(),
     };
     calendarStorage.upsertResource(resource);
     setResources([...calendarStorage.getResources()]);
+    void meetingNoteService.ensureDirectory(folder).catch((e: any) => {
+      setStatusMsg(`Resource saved, but its folder could not be created: ${e?.message || 'write failed'}`);
+    });
     return resource.id;
   };
 
@@ -2990,12 +3058,8 @@ export function AgendaScreen(): React.JSX.Element {
         if (slash > 0) return legacyPath.slice(0, slash);
       }
     }
-    const safeName = item.name
-      .replace(/[/\\?%*:|"<>]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim() || 'Untitled';
-    const section = kind === 'project' ? 'Projects' : kind === 'area' ? 'Areas' : 'Resources';
-    return `/storage/emulated/0/Note/SNFolio/${section}/${safeName}`;
+    const rootKind = kind === 'project' ? 'projects' : kind === 'area' ? 'areas' : 'resources';
+    return paraChildFolder(calendarStorage.getSettings(), rootKind, item.name);
   };
 
   const persistParaFolder = (kind: ParaFolderKind, item: ParaFolderItem, folder: string) => {
@@ -3133,6 +3197,7 @@ export function AgendaScreen(): React.JSX.Element {
   };
 
   const handleCreateProject = (name: string, areaId?: string): string => {
+    const folder = paraChildFolder(calendarStorage.getSettings(), 'projects', name);
     const project: Project = {
       id: `proj-${Date.now()}`,
       name,
@@ -3140,18 +3205,26 @@ export function AgendaScreen(): React.JSX.Element {
       // while looking at Home belongs to Home; making that a second step is
       // how one ends up unfiled and hard to find.
       areaId,
+      folder,
       status: 'active',
       createdAt: new Date(),
     };
     calendarStorage.upsertProject(project);
     setProjects([...calendarStorage.getProjects()]);
+    void meetingNoteService.ensureDirectory(folder).catch((e: any) => {
+      setStatusMsg(`Project saved, but its folder could not be created: ${e?.message || 'write failed'}`);
+    });
     return project.id;
   };
 
   const handleCreateArea = (name: string): string => {
-    const area: Area = { id: `area-${Date.now()}`, name, createdAt: new Date() };
+    const folder = paraChildFolder(calendarStorage.getSettings(), 'areas', name);
+    const area: Area = { id: `area-${Date.now()}`, name, folder, createdAt: new Date() };
     calendarStorage.upsertArea(area);
     setAreas([...calendarStorage.getAreas()]);
+    void meetingNoteService.ensureDirectory(folder).catch((e: any) => {
+      setStatusMsg(`Area saved, but its folder could not be created: ${e?.message || 'write failed'}`);
+    });
     return area.id;
   };
 
@@ -3728,11 +3801,53 @@ export function AgendaScreen(): React.JSX.Element {
           </TouchableOpacity>
         </Modal>
 
+        <FolderPickerModal
+          visible={folderPickerTarget !== null}
+          title={folderPickerTarget && (['daily', 'meeting', 'class'] as string[]).includes(folderPickerTarget)
+            ? `Choose ${folderPickerTarget} notes folder`
+            : `Choose ${folderPickerTarget || 'PARA'} root`}
+          initialPath={folderPickerTarget && (['daily', 'meeting', 'class'] as string[]).includes(folderPickerTarget)
+            ? noteFolderFor(folderPickerTarget as NoteKind)
+            : folderPickerTarget ? paraRootFor(folderPickerTarget as ParaRootKind) : '/storage/emulated/0'}
+          onCancel={() => setFolderPickerTarget(null)}
+          onSelect={async folder => {
+            const target = folderPickerTarget;
+            if (!target) return;
+            if ((['daily', 'meeting', 'class'] as string[]).includes(target)) {
+              applyNoteFolder(target as NoteKind, folder);
+            } else {
+              applyParaRoot(target as ParaRootKind, folder);
+            }
+            const persistenceError = await calendarStorage.flush();
+            if (persistenceError) throw new Error(persistenceError);
+            setFolderPickerTarget(null);
+          }}
+        />
+
+        <ExistingParaFoldersModal
+          visible={paraImportKind !== null}
+          kind={paraImportKind || 'projects'}
+          root={paraImportKind ? paraRootFor(paraImportKind) : ''}
+          folders={paraImportFolders}
+          existing={paraImportKind === 'projects'
+            ? projects
+            : paraImportKind === 'areas'
+            ? areas
+            : paraImportKind === 'resources'
+            ? resources
+            : [...projects, ...areas, ...resources]}
+          onClose={() => setParaImportKind(null)}
+          onImport={(entry, archiveAs) => {
+            if (paraImportKind) importParaFolder(paraImportKind, entry, archiveAs);
+          }}
+        />
+
       {showSettings ? (
         <ScrollView
+          ref={settingsScrollRef}
           style={styles.settingsContainer}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={styles.settingsContent}
+          contentContainerStyle={settingsTab === 'notes' ? styles.settingsContentCompact : styles.settingsContent}
         >
           <View style={styles.settingsHeader}>
             <Text allowFontScaling={false} style={styles.settingsHeaderTitle}>⚙️ SETTINGS &amp; CONFIGURATION</Text>
@@ -4134,136 +4249,107 @@ export function AgendaScreen(): React.JSX.Element {
 
           {settingsTab === 'notes' && (
             <>
-          {/* Named for the filename alone: the folder and template for daily
-              notes live in the per-kind blocks below, alongside meeting and
-              class, so there is only one place to set each. */}
-          <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 15 }]}>Daily Note Filename</Text>
-          <Text allowFontScaling={false} style={styles.bodyText}>
-            The Day View's Daily Log button opens that day's journal note, creating it only if it
-            isn't already there. The plugin cannot search your folders, so this has to match your
-            existing filenames exactly. Check the preview below against a real note first.
-          </Text>
-          <Text allowFontScaling={false} style={styles.bodyText}>
-            Two rules: leave off the <Text allowFontScaling={false} style={styles.bodyStrong}>.note</Text> extension — it is
-            added for you — and put any literal word in{' '}
-            <Text allowFontScaling={false} style={styles.bodyStrong}>[square brackets]</Text>, or its letters get read as
-            date codes. "Daily" becomes "5aily" on the 5th; write{' '}
-            <Text allowFontScaling={false} style={styles.bodyStrong}>[Daily] YYYY-MM-DD</Text> instead.
-          </Text>
-
-          <Text allowFontScaling={false} style={styles.fieldLabel}>Filename format</Text>
-          <HandwritingTextInput
-            style={styles.textInput}
-            value={dailyNoteFormat}
-            onChangeText={value => {
-              setDailyNoteFormat(value);
-              calendarStorage.updateSettings({ dailyNoteFormat: value });
-            }}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor="#707070"
-            autoCapitalize="none"
-          />
-
-          <View style={styles.formatPresetRow}>
-            {DAILY_NOTE_PRESETS.map(preset => (
-              <TouchableOpacity
-                key={preset}
-                style={[styles.formatPreset, dailyNoteFormat === preset && styles.formatPresetActive]}
-                onPress={() => {
-                  setDailyNoteFormat(preset);
-                  calendarStorage.updateSettings({ dailyNoteFormat: preset });
-                }}
-              >
-                <Text allowFontScaling={false}
-                  style={[
-                    styles.formatPresetText,
-                    dailyNoteFormat === preset && styles.formatPresetTextActive,
-                  ]}
-                >
-                  {preset}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Live preview: the single thing that tells the user whether this
-              will find their journal or create a duplicate beside it. */}
-          <View style={styles.previewBox}>
-            <Text allowFontScaling={false} style={styles.previewLabel}>Today would open</Text>
-            <Text allowFontScaling={false} style={styles.previewPath}>{dailyNotePath(dailyNoteFolder, dailyNoteFormat, new Date())}</Text>
-            {looksMangled(formatDailyNoteName(dailyNoteFormat, new Date())) ? (
-              <Text allowFontScaling={false} style={styles.previewWarn}>
-                ⚠ A word in your format is being read as date codes. Put it in [brackets].
-              </Text>
-            ) : null}
-            {/\.note$/i.test(dailyNoteFormat.trim()) ? (
-              <Text allowFontScaling={false} style={styles.previewWarn}>
-                ⚠ Remove ".note" from the format — the extension is added automatically.
-              </Text>
-            ) : null}
-            <Text allowFontScaling={false} style={styles.previewHint}>
-              Tokens: YYYY YY MMMM MMM MM M DD D dddd ddd · literal words go in [brackets]
-            </Text>
-          </View>
-
-          {/* One block per note kind: template first, then where the notes are
-              filed. Daily notes keep their own folder above, since that folder
-              usually predates the plugin. */}
-          <Text allowFontScaling={false} style={styles.previewHint}>
-            Folder: type a full path and it is created if it does not exist. Browse picks any
-            file and uses the folder it sits in — the device offers no folder picker.
-          </Text>
-          {(['daily', 'meeting', 'class'] as NoteKind[]).map(kind => {
-            const label = kind === 'daily' ? 'Daily' : kind === 'class' ? 'Class' : 'Meeting';
-            const value = noteTemplateFor(kind);
-            const folder = noteFolderFor(kind);
-
-            return (
-              <View key={kind} style={styles.templateBlock}>
-                <Text allowFontScaling={false} style={[styles.sectionTitle, { marginTop: 12 }]}>{label} Notes</Text>
-
-                {/* Template and folder side by side: stacked, the three kinds
-                    ran past the bottom of the page and forced a scroll. */}
-                <View style={styles.templateColumns}>
-                  <View style={styles.templateCol}>
-                    <Text allowFontScaling={false} style={styles.fieldLabel}>Template</Text>
-                    <Text allowFontScaling={false} style={styles.bodyText} numberOfLines={1}>
-                      {templateLabel(value)}
-                    </Text>
-                    <TouchableOpacity
-                      style={styles.pickerOpenBtn}
-                      onPress={() => setTemplatePickerKind(kind)}
-                    >
-                      <Text allowFontScaling={false} style={styles.pickerOpenBtnText}>🎨 Choose Template...</Text>
-                    </TouchableOpacity>
+          <View style={styles.notesSettingsStack}>
+            <View>
+              <Text allowFontScaling={false} style={styles.sectionTitle}>Daily Note Filename</Text>
+              <View style={styles.dailyFormatColumns}>
+                <View style={styles.dailyFormatColumn}>
+                  <Text allowFontScaling={false} style={styles.compactHelp}>
+                    Match existing filenames. Omit .note; wrap literal words in [brackets].
+                  </Text>
+                  <HandwritingTextInput
+                    style={[styles.textInput, styles.compactInput]}
+                    value={dailyNoteFormat}
+                    onChangeText={value => {
+                      setDailyNoteFormat(value);
+                      calendarStorage.updateSettings({ dailyNoteFormat: value });
+                    }}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor="#707070"
+                    autoCapitalize="none"
+                  />
+                  <View style={styles.formatPresetRow}>
+                    {DAILY_NOTE_PRESETS.map(preset => (
+                      <TouchableOpacity
+                        key={preset}
+                        style={[styles.formatPreset, dailyNoteFormat === preset && styles.formatPresetActive]}
+                        onPress={() => {
+                          setDailyNoteFormat(preset);
+                          calendarStorage.updateSettings({ dailyNoteFormat: preset });
+                        }}
+                      >
+                        <Text allowFontScaling={false} style={[styles.formatPresetText, dailyNoteFormat === preset && styles.formatPresetTextActive]}>{preset}</Text>
+                      </TouchableOpacity>
+                    ))}
                   </View>
+                </View>
+                <View style={[styles.previewBox, styles.dailyPreview]}>
+                  <Text allowFontScaling={false} style={styles.previewLabel}>Today would open</Text>
+                  <Text allowFontScaling={false} style={styles.previewPath} numberOfLines={2}>{dailyNotePath(dailyNoteFolder, dailyNoteFormat, new Date())}</Text>
+                  {looksMangled(formatDailyNoteName(dailyNoteFormat, new Date())) ? <Text allowFontScaling={false} style={styles.previewWarn}>⚠ Put literal words in [brackets].</Text> : null}
+                  {/\.note$/i.test(dailyNoteFormat.trim()) ? <Text allowFontScaling={false} style={styles.previewWarn}>⚠ Remove the .note extension.</Text> : null}
+                  <Text allowFontScaling={false} style={styles.previewHint}>YYYY · MMMM · MM · DD · dddd</Text>
+                </View>
+              </View>
 
-                  <View style={styles.templateCol}>
-                    <Text allowFontScaling={false} style={styles.fieldLabel}>Folder</Text>
+              <Text allowFontScaling={false} style={[styles.sectionTitle, styles.compactSectionTitle]}>Note Templates &amp; Folders</Text>
+              {(['daily', 'meeting', 'class'] as NoteKind[]).map(kind => {
+                const label = kind === 'daily' ? 'Daily' : kind === 'class' ? 'Class' : 'Meeting';
+                const value = noteTemplateFor(kind);
+                const folder = noteFolderFor(kind);
+                return (
+                  <View key={kind} style={styles.compactNoteRow}>
+                    <Text allowFontScaling={false} style={styles.compactNoteLabel}>{label}</Text>
+                    <TouchableOpacity style={styles.compactChoice} onPress={() => setTemplatePickerKind(kind)}>
+                      <Text allowFontScaling={false} style={styles.compactChoiceText} numberOfLines={1}>🎨 {templateLabel(value)}</Text>
+                    </TouchableOpacity>
                     <HandwritingTextInput
                       ref={input => { folderInputRefs.current[kind] = input; }}
-                      style={[styles.textInput, styles.folderInput]}
+                      style={[styles.textInput, styles.compactPathInput]}
                       value={folderDrafts[kind] ?? folder}
                       onChangeText={text => setFolderDrafts(prev => ({ ...prev, [kind]: text }))}
                       onEndEditing={() => saveNoteFolder(
                         kind,
                         folderInputRefs.current[kind]?.getValue() ?? folderDrafts[kind] ?? folder
                       )}
-                      placeholder="/storage/emulated/0/Note/..."
+                      placeholder="/storage/..."
                       autoCapitalize="none"
                       autoCorrect={false}
                     />
-                    <TouchableOpacity
-                      style={styles.pickerOpenBtn}
-                      onPress={() => handleChooseNoteFolder(kind)}
-                    >
-                      <Text allowFontScaling={false} style={styles.pickerOpenBtnText}>📁 Browse...</Text>
+                    <TouchableOpacity style={styles.compactBrowse} onPress={() => handleChooseNoteFolder(kind)}>
+                      <Text allowFontScaling={false} style={styles.compactBrowseText}>Browse</Text>
                     </TouchableOpacity>
                   </View>
-                </View>
+                );
+              })}
+            </View>
+
+            <View style={styles.paraRootsSection}>
+              <Text allowFontScaling={false} style={[styles.sectionTitle, styles.compactSectionTitle]}>PARA Folder Roots</Text>
+              <Text allowFontScaling={false} style={styles.compactHelp}>
+                New items get a subfolder here. Browse all mounted storage, including SD cards. Existing folders are linked only when you choose them.
+              </Text>
+              <View style={styles.paraRootGrid}>
+                {PARA_ROOT_KINDS.map(kind => (
+                  <View key={kind} style={[styles.paraRootCard, isWideScreen && styles.paraRootCardWide]}>
+                    <Text allowFontScaling={false} style={styles.paraRootLabel}>{kind}</Text>
+                    <Text allowFontScaling={false} style={styles.paraRootPath} numberOfLines={2}>{paraRootFor(kind)}</Text>
+                    <View style={styles.paraRootActions}>
+                      <TouchableOpacity style={styles.compactBrowse} onPress={() => setFolderPickerTarget(kind)}>
+                        <Text allowFontScaling={false} style={styles.compactBrowseText}>Browse</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.compactBrowse} onPress={() => void scanParaRoot(kind)}>
+                        <Text allowFontScaling={false} style={styles.compactBrowseText}>Find Existing</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))}
               </View>
-            );
-          })}
+              <Text allowFontScaling={false} style={styles.previewHint}>
+                Archive imports require you to classify each folder. Changing a root never relocates existing files.
+              </Text>
+            </View>
+          </View>
 
           {SHOW_DEV_PROBE && (
             <>
@@ -5823,6 +5909,34 @@ const styles = StyleSheet.create({
     color: '#404040',
   },
   fieldLabel: { fontSize: 12, fontWeight: 'bold', color: '#303030', marginTop: 8, marginBottom: 4 },
+  notesSettingsStack: { flex: 1 },
+  paraRootsSection: { marginTop: 7 },
+  dailyFormatColumns: { flexDirection: 'row', alignItems: 'stretch', marginBottom: 6 },
+  dailyFormatColumn: { flex: 1, minWidth: 0, marginRight: 8 },
+  compactHelp: { fontSize: 12, lineHeight: 15, color: '#303030', marginBottom: 5 },
+  compactInput: { paddingVertical: 4, fontSize: 13 },
+  dailyPreview: { flex: 1, marginTop: 0, padding: 6 },
+  compactSectionTitle: { marginTop: 5, marginBottom: 4 },
+  compactNoteRow: {
+    minHeight: 45,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#b0b0b0',
+    paddingVertical: 4,
+  },
+  compactNoteLabel: { width: 58, fontSize: 13, fontWeight: 'bold', color: '#000000' },
+  compactChoice: { width: 138, borderWidth: 1, borderColor: '#000000', borderRadius: 4, paddingVertical: 7, paddingHorizontal: 7, marginRight: 6 },
+  compactChoiceText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
+  compactPathInput: { minWidth: 80, paddingVertical: 3, paddingHorizontal: 6, fontSize: 11, marginRight: 6 },
+  compactBrowse: { borderWidth: 1, borderColor: '#000000', borderRadius: 4, paddingVertical: 7, paddingHorizontal: 9, marginRight: 5 },
+  compactBrowseText: { fontSize: 11, fontWeight: 'bold', color: '#000000' },
+  paraRootGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  paraRootCard: { width: '49%', borderWidth: 1, borderColor: '#707070', borderRadius: 5, padding: 7, marginBottom: 7, minHeight: 105 },
+  paraRootCardWide: { width: '24%' },
+  paraRootLabel: { fontSize: 13, fontWeight: 'bold', color: '#000000', textTransform: 'capitalize' },
+  paraRootPath: { minHeight: 30, fontSize: 10, lineHeight: 13, fontFamily: 'monospace', color: '#303030', marginVertical: 4 },
+  paraRootActions: { flexDirection: 'row', flexWrap: 'wrap' },
   formatPresetRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 },
   formatPreset: { borderWidth: 1, borderColor: '#000000', borderRadius: 4, paddingVertical: 4, paddingHorizontal: 8, marginRight: 6, marginBottom: 6 },
   formatPresetActive: { backgroundColor: '#000000' },
@@ -6513,6 +6627,9 @@ const styles = StyleSheet.create({
   // Room to lift the last settings field above the on-screen keyboard.
   settingsContent: {
     paddingBottom: 260,
+  },
+  settingsContentCompact: {
+    paddingBottom: 8,
   },
   templateScroll: {
     maxHeight: 360,

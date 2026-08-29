@@ -65,6 +65,10 @@ const DEFAULT_SETTINGS: CalendarSettings = {
   classTemplate: DEFAULT_SYSTEM_TEMPLATE,
   dailyNoteTemplate: DEFAULT_SYSTEM_TEMPLATE,
   classNotesDirectory: '/storage/emulated/0/Note/Classes',
+  projectsDirectory: '/storage/emulated/0/Note/SNFolio/Projects',
+  areasDirectory: '/storage/emulated/0/Note/SNFolio/Areas',
+  resourcesDirectory: '/storage/emulated/0/Note/SNFolio/Resources',
+  archiveDirectory: '/storage/emulated/0/Note/SNFolio/Archive',
   scheduleStartHour: 8,
   scheduleEndHour: 20,
   weekStartsOn: 0,
@@ -227,6 +231,8 @@ export class CalendarStorage {
   private pendingDeletes: string[] = [];
   private loaded = false;
   private lastPersistenceError = '';
+  /** Native storage writes must not race when several settings change quickly. */
+  private saveChain: Promise<void> = Promise.resolve();
 
   async load(): Promise<{ settings: CalendarSettings; mappings: Record<string, MeetingNoteMapping> }> {
     try {
@@ -397,7 +403,16 @@ export class CalendarStorage {
     return this.loaded;
   }
 
-  private async save(): Promise<void> {
+  private save(): Promise<void> {
+    const operation = this.saveChain.then(
+      () => this.performSave(),
+      () => this.performSave(),
+    );
+    this.saveChain = operation;
+    return operation;
+  }
+
+  private async performSave(): Promise<void> {
     try {
       // Strip the password on the way out. updateSettings already diverts it to
       // module scope; this is the second guard, so a future call site that sets

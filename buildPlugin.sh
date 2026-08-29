@@ -711,6 +711,15 @@ main() {
     fi
 
     if [[ "$should_build_native" -eq 0 ]]; then
+        # A genuinely clean build has no generated PackageList.java yet. Build
+        # Android first so Gradle creates the autolinking source, then derive
+        # reactPackages from that fresh file. Reading it before Gradle meant a
+        # clean package silently omitted AsyncStorage and failed at startup.
+        if ! build_android_apk "$project_root" "$gen_cfg"; then
+            write_color_output "APK build failed; refusing to package stale native output" "Red"
+            return 1
+        fi
+
         local autolink_pkgs
         autolink_pkgs="$(get_react_packages_from_autolinking_source "$project_root" "com.facebook.react.shell.MainReactPackage|com.ratta.supernote.note.plugincore.PluginPackage|com.ratta.supernote.pluginlib.PluginPackage" || true)"
 
@@ -718,10 +727,6 @@ main() {
         all_pkgs="$(printf "%s\n%s\n" "$project_react_pkgs" "$autolink_pkgs" | awk 'NF' | sort -u)"
         update_plugin_config_packages "$project_root" "$gen_dir" "$all_pkgs"
 
-        if ! build_android_apk "$project_root" "$gen_cfg"; then
-            write_color_output "APK build failed; refusing to package stale native output" "Red"
-            return 1
-        fi
         if ! copy_apk_and_update_config "$project_root" "$gen_dir" "$gen_cfg"; then
             write_color_output "APK packaging failed; refusing to create the plugin package" "Red"
             return 1

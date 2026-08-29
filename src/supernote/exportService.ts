@@ -8,6 +8,7 @@ type CalendarFileModule = {
   openDocument(path: string): Promise<boolean>;
   listNoteFiles(path: string): Promise<string[]>;
   listFolderEntries(path: string): Promise<ParaFolderEntry[]>;
+  getStorageRoots(): Promise<string[]>;
 };
 
 const CalendarFile = NativeModules.CalendarFile as CalendarFileModule | undefined;
@@ -32,6 +33,19 @@ export interface ParaFolderEntry {
   name: string;
   path: string;
   isFolder: boolean;
+}
+
+/** Mounted user-storage roots: internal storage followed by any SD cards. */
+export async function listStorageRoots(): Promise<string[]> {
+  const fallback = '/storage/emulated/0';
+  if (!CalendarFile?.getStorageRoots) return [fallback];
+  try {
+    const roots = await CalendarFile.getStorageRoots();
+    return Array.from(new Set([fallback, ...(Array.isArray(roots) ? roots : [])]))
+      .filter(root => typeof root === 'string' && root.startsWith('/storage/'));
+  } catch (_error) {
+    return [fallback];
+  }
 }
 
 /** One navigable level of a PARA folder, including subfolders and files. */

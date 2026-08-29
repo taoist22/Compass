@@ -20,6 +20,7 @@ NativeModules.CalendarFile = {
   storeImportedCalendar: jest.fn(async name => `/private/imports/${name}`),
   listNoteFiles: jest.fn(async () => []),
   listFolderEntries: jest.fn(async () => []),
+  getStorageRoots: jest.fn(async () => ['/storage/emulated/0']),
   openNote: jest.fn(async () => true),
   openDocument: jest.fn(async () => true),
 };

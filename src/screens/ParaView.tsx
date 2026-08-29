@@ -30,9 +30,9 @@ interface ParaViewProps {
   projectOf: (uid: string) => string | undefined;
   projectOfEvent: (event: CalendarEvent) => string | undefined;
   areaOf: (uid: string) => string | undefined;
-  onNewProject: (name: string, areaId?: string) => void;
-  onNewArea: (name: string) => void;
-  onNewResource: (name: string) => void;
+  onNewProject: (name: string, areaId?: string) => unknown;
+  onNewArea: (name: string) => unknown;
+  onNewResource: (name: string) => unknown;
   /** Editing an area happens on the area, not in a sheet about all of them. */
   onRenameArea: (areaId: string, name: string, icon?: string) => void;
   onDeleteArea: (areaId: string) => void;
@@ -164,6 +164,7 @@ export function ParaView({
   };
   const [adding, setAdding] = React.useState<'project' | 'area' | 'resource' | null>(null);
   const [newName, setNewName] = React.useState<string>('');
+  const [addingBusy, setAddingBusy] = React.useState<boolean>(false);
   const newItemInputRef = React.useRef<HandwritingTextInputHandle>(null);
   const [editingResourceId, setEditingResourceId] = React.useState<string | null>(null);
   const [resourceName, setResourceName] = React.useState<string>('');
@@ -246,19 +247,25 @@ export function ParaView({
           />
           <TouchableOpacity
             style={styles.topBtn}
-            onPress={() => {
+            disabled={addingBusy}
+            onPress={() => void (async () => {
               const name = (newItemInputRef.current?.getValue() ?? newName).trim();
               if (name) {
-                if (adding === 'project') onNewProject(name, selectedArea?.id);
-                else if (adding === 'area') onNewArea(name);
-                else onNewResource(name);
+                setAddingBusy(true);
+                try {
+                  if (adding === 'project') await onNewProject(name, selectedArea?.id);
+                  else if (adding === 'area') await onNewArea(name);
+                  else await onNewResource(name);
+                } finally {
+                  setAddingBusy(false);
+                }
               }
               setNewName('');
               setAdding(null);
-            }}
+            })()}
           >
             <Text allowFontScaling={false} style={styles.topBtnText}>
-              Add
+              {addingBusy ? 'Creating…' : 'Add'}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity

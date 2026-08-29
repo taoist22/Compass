@@ -9,6 +9,7 @@ import android.content.SharedPreferences;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
+import android.os.Environment;
 
 import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
@@ -29,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -56,6 +58,36 @@ public class CalendarFileModule extends ReactContextBaseJavaModule {
     @Override
     public String getName() {
         return "CalendarFile";
+    }
+
+    /**
+     * Returns user-storage volume roots without depending on a current
+     * Activity. SDK volume discovery uses getCurrentActivity(), which can be
+     * detached while the plugin panel is transitioning and can close it.
+     */
+    @ReactMethod
+    public void getStorageRoots(Promise promise) {
+        try {
+            LinkedHashSet<String> roots = new LinkedHashSet<>();
+            File primary = Environment.getExternalStorageDirectory();
+            if (primary != null) roots.add(primary.getAbsolutePath());
+
+            File[] appDirs = getReactApplicationContext().getExternalFilesDirs(null);
+            if (appDirs != null) {
+                for (File appDir : appDirs) {
+                    if (appDir == null) continue;
+                    String path = appDir.getAbsolutePath();
+                    int androidSegment = path.indexOf("/Android/");
+                    if (androidSegment > 0) roots.add(path.substring(0, androidSegment));
+                }
+            }
+
+            WritableArray result = new WritableNativeArray();
+            for (String root : roots) result.pushString(root);
+            promise.resolve(result);
+        } catch (Throwable error) {
+            promise.reject("E_STORAGE_ROOTS", error.getMessage(), error);
+        }
     }
 
     private SecretKey getOrCreateSecretKey() throws Exception {

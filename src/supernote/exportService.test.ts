@@ -1,5 +1,5 @@
 import { NativeModules } from 'react-native';
-import { listParaFolderEntries, listResourceFiles, openResourceFile, safeFileName } from './exportService';
+import { listParaFolderEntries, listResourceFiles, listStorageRoots, openResourceFile, safeFileName } from './exportService';
 
 // sn-plugin-lib resolves native modules at import time, which jest has none of.
 jest.mock('sn-plugin-lib', () => ({
@@ -80,6 +80,19 @@ describe('listParaFolderEntries', () => {
       { name: 'Desserts', path: '/storage/emulated/0/Note/Recipes/Desserts', isFolder: true },
       { name: 'Dinner.pdf', path: '/storage/emulated/0/Note/Recipes/Dinner.pdf', isFolder: false },
       { name: 'Soup.note', path: '/storage/emulated/0/Note/Recipes/Soup.note', isFolder: false },
+    ]);
+  });
+});
+
+describe('listStorageRoots', () => {
+  test('returns internal storage and detected SD-card roots without duplicates', async () => {
+    NativeModules.CalendarFile.getStorageRoots.mockResolvedValueOnce([
+      '/storage/emulated/0',
+      '/storage/1234-ABCD',
+    ]);
+    await expect(listStorageRoots()).resolves.toEqual([
+      '/storage/emulated/0',
+      '/storage/1234-ABCD',
     ]);
   });
 });
