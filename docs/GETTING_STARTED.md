@@ -9,7 +9,7 @@ SNFolio does not require an online account. Start with the pieces that solve a p
 3. Choose **Add Plugin** and select `SNFolio.snplg`.
 4. Open a note, document, or supported file and tap **SNFolio** in the plugin toolbar.
 
-SNFolio retains the internal identity of its former Compass name. Install it as an update to preserve existing settings, calendars, PARA data, and note links. Existing `/Note/Compass/` folders remain linked; new PARA items use `/Note/SNFolio/` by default. When producing a development build, clean the previous generated build artifacts first so stale native output cannot be packaged accidentally.
+SNFolio retains the original Calendar plugin's internal identity. Install it as an update to preserve existing settings, calendars, PARA data, and note links. Existing `/Note/Compass/` folders from the interim Compass release remain linked; new PARA items use `/Note/SNFolio/` by default. When producing a development build, clean the previous generated build artifacts first so stale native output cannot be packaged accidentally.
 
 ## Choose a calendar setup
 

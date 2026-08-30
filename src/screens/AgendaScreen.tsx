@@ -79,7 +79,7 @@ import { MonthGridView } from './MonthGridView';
 import { TaskListModal } from './TaskListModal';
 import { ParaView } from './ParaView';
 import { ProjectDetailView } from './ProjectDetailView';
-import { projectProgress } from '../domain/taskListView';
+import { moveActiveProject, projectProgress } from '../domain/taskListView';
 import { fetchCalendarFeed, normaliseFeedUrl, refreshCalendarFeeds } from '../domain/feedService';
 import { isIcsCalendarContent, parseCalendarSetupFile } from '../domain/calendarImport';
 import { projectDisplayLabel } from '../domain/projectLabel';
@@ -2880,15 +2880,11 @@ export function AgendaScreen(): React.JSX.Element {
 
   const handleMoveProject = (project: Project, direction: 'up' | 'down') => {
     const current = calendarStorage.getProjects();
-    const ordered = current
-      .map((item, index) => ({ item, index }))
-      .filter(entry => entry.item.status === 'active')
-      .sort((a, b) => (a.item.sortOrder ?? a.index) - (b.item.sortOrder ?? b.index));
-    const index = ordered.findIndex(entry => entry.item.id === project.id);
-    const target = direction === 'up' ? index - 1 : index + 1;
-    if (index < 0 || target < 0 || target >= ordered.length) return;
-    [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
-    ordered.forEach((entry, order) => calendarStorage.upsertProject({ ...entry.item, sortOrder: order }));
+    const reordered = moveActiveProject(current, project.id, direction);
+    if (reordered === current) return;
+    reordered
+      .filter(candidate => candidate.status === 'active')
+      .forEach(candidate => calendarStorage.upsertProject(candidate));
     setProjects([...calendarStorage.getProjects()]);
   };
 

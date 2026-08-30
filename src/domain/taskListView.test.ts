@@ -7,11 +7,11 @@ import {
   groupTasks,
   groupingLabel,
   activeProjects,
+  moveActiveProject,
   archivedProjects,
   areaProjectCounts,
   projectOverdue,
   projectProgress,
-  projectsByArea,
   projectsInArea,
   scopeLabel,
 } from './taskListView';
@@ -329,7 +329,6 @@ describe('projects', () => {
 });
 
 describe('areas contain projects', () => {
-  const area = (id: string, name: string): Area => ({ id, name, createdAt: new Date(2026, 0, 1) });
   const project = (id: string, name: string, over: Partial<Project> = {}): Project => ({
     id,
     name,
@@ -338,7 +337,6 @@ describe('areas contain projects', () => {
     ...over,
   });
 
-  const areas = [area('a-eng', 'ENG 102'), area('a-farm', 'Farm')];
   const projects = [
     project('p-paper', 'Term Paper', { areaId: 'a-eng' }),
     project('p-exam', 'Final Exam', { areaId: 'a-eng' }),
@@ -363,21 +361,6 @@ describe('areas contain projects', () => {
     expect(projectsInArea(projects, 'a-none')).toEqual([]);
   });
 
-  test('grouping follows the order of the areas themselves', () => {
-    const groups = projectsByArea(projects, areas);
-    expect(groups.map(g => g.label)).toEqual(['ENG 102', 'Farm', 'No Area']);
-  });
-
-  test('a project whose area was deleted falls into No Area', () => {
-    const orphan = [project('p-x', 'Orphan', { areaId: 'a-gone' })];
-    expect(projectsByArea(orphan, areas).map(g => g.label)).toEqual(['No Area']);
-  });
-
-  test('empty area groups are omitted', () => {
-    const onlyEng = projects.filter(p => p.areaId === 'a-eng');
-    expect(projectsByArea(onlyEng, areas).map(g => g.label)).toEqual(['ENG 102']);
-  });
-
   test('active filters out finished and archived work', () => {
     const mixed = [
       project('p1', 'Live'),
@@ -385,6 +368,20 @@ describe('areas contain projects', () => {
       project('p3', 'Filed away', { status: 'archived' }),
     ];
     expect(activeProjects(mixed).map(p => p.name)).toEqual(['Live']);
+  });
+
+  test('a project in second position can move into first position', () => {
+    const moved = moveActiveProject(projects, 'p-exam', 'up');
+    expect(activeProjects(moved).map(p => p.id)).toEqual([
+      'p-exam',
+      'p-paper',
+      'p-solar',
+      'p-loose',
+    ]);
+  });
+
+  test('moving past the first position is a no-op', () => {
+    expect(moveActiveProject(projects, 'p-paper', 'up')).toBe(projects);
   });
 });
 

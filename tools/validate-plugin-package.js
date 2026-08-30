@@ -8,6 +8,7 @@ const args = new Set(process.argv.slice(2));
 const requireNative = args.has('--native');
 const projectRoot = process.cwd();
 const configPath = path.join(projectRoot, 'PluginConfig.json');
+const appConfigPath = path.join(projectRoot, 'app.json');
 
 function fail(message) {
   console.error(`Package validation failed: ${message}`);
@@ -27,6 +28,7 @@ if (!fs.existsSync(configPath)) {
 }
 
 const config = readJson(configPath);
+const appConfig = readJson(appConfigPath);
 const requiredFields = [
   'name',
   'desc',
@@ -42,6 +44,15 @@ for (const field of requiredFields) {
   if (!config[field] || typeof config[field] !== 'string') {
     fail(`PluginConfig.json is missing string field "${field}".`);
   }
+}
+
+// Supernote launches the registered React Native component by pluginKey.
+// The visible plugin name may change, but these runtime keys must stay equal
+// or the installed plugin button will do nothing when tapped.
+if (appConfig.name !== config.pluginKey) {
+  fail(
+    `app.json name "${appConfig.name}" must match PluginConfig.json pluginKey "${config.pluginKey}".`,
+  );
 }
 
 const requiredPermissions = [

@@ -13,7 +13,6 @@ import {
   directTasksInArea,
   projectOverdue,
   projectProgress,
-  projectsByArea,
   ProjectLookup,
 } from '../domain/taskListView';
 import { projectOverviewItems } from '../domain/projectOverview';
@@ -141,8 +140,6 @@ export function ParaView({
       (!selectedAreaId || project.areaId === selectedAreaId) &&
       (!selectedProjectId || project.id === selectedProjectId)
   );
-  const grouped = projectsByArea(shown, activeAreas);
-
   const useProjectColumns = Dimensions.get('window').width >= 1000;
   const selectedArea = activeAreas.find(a => a.id === selectedAreaId);
   const selectedAreaTasks = selectedArea
@@ -188,12 +185,6 @@ export function ParaView({
     selectSection(next);
   };
 
-
-  const areaIconFor = (areaId: string | null) => {
-    const icon = areaId ? areas.find(a => a.id === areaId)?.icon : undefined;
-    return icon ? `${icon} ` : '';
-  };
-
   return (
     <View style={styles.root}>
       <View style={styles.topBar}>
@@ -216,7 +207,14 @@ export function ParaView({
           <TouchableOpacity style={styles.topBtn} onPress={() => setAdding('resource')}>
             <Text allowFontScaling={false} style={styles.topBtnText}>+ Resource</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.topBtn, reorderProjects && styles.topBtnActive]} onPress={() => setReorderProjects(value => !value)}>
+          <TouchableOpacity
+            style={[styles.topBtn, reorderProjects && styles.topBtnActive]}
+            onPress={() => {
+              setSection('projects');
+              setSelectedItemId(null);
+              setReorderProjects(value => !value);
+            }}
+          >
             <Text allowFontScaling={false} style={styles.topBtnText}>{reorderProjects ? 'Done Reordering' : 'Reorder Projects'}</Text>
           </TouchableOpacity>
         </View>
@@ -606,7 +604,7 @@ export function ParaView({
               </View>
             )}
 
-            {showProjects && grouped.length === 0 && (
+            {showProjects && shown.length === 0 && (
               <Text allowFontScaling={false} style={styles.empty}>
                 {selectedAreaId
                   ? 'No active projects in this area.'
@@ -614,14 +612,9 @@ export function ParaView({
               </Text>
             )}
 
-            {showProjects && grouped.map(group => (
-              <View key={group.areaId || '__none'}>
-                <Text allowFontScaling={false} style={styles.groupHeading}>
-                  {areaIconFor(group.areaId)}
-                  {group.label}
-                </Text>
-
-                {group.projects.map(project => {
+            {showProjects && (
+              <View>
+                {shown.map((project, projectIndex) => {
                   const progress = projectProgress(tasks, project.id, lookup);
                   const { openTasks, completedTasks, upcomingEvents: projectEvents } = projectOverviewItems(
                     project.id,
@@ -631,17 +624,26 @@ export function ParaView({
                     projectOfEvent
                   );
                   const overdue = projectOverdue(project);
+                  const projectArea = areas.find(candidate => candidate.id === project.areaId);
 
                   return (
                     <View key={project.id} style={styles.projectCard}>
                       <View style={styles.projectHead}>
                         {reorderProjects && (
                           <View style={styles.reorderBtns}>
-                            <TouchableOpacity style={styles.reorderBtn} onPress={() => onMoveProject(project, 'up')}>
-                              <Text allowFontScaling={false} style={styles.reorderBtnText}>↑</Text>
+                            <TouchableOpacity
+                              style={[styles.reorderBtn, projectIndex === 0 && styles.reorderBtnDisabled]}
+                              disabled={projectIndex === 0}
+                              onPress={() => onMoveProject(project, 'up')}
+                            >
+                              <Text allowFontScaling={false} style={[styles.reorderBtnText, projectIndex === 0 && styles.reorderBtnTextDisabled]}>↑</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity style={styles.reorderBtn} onPress={() => onMoveProject(project, 'down')}>
-                              <Text allowFontScaling={false} style={styles.reorderBtnText}>↓</Text>
+                            <TouchableOpacity
+                              style={[styles.reorderBtn, projectIndex === shown.length - 1 && styles.reorderBtnDisabled]}
+                              disabled={projectIndex === shown.length - 1}
+                              onPress={() => onMoveProject(project, 'down')}
+                            >
+                              <Text allowFontScaling={false} style={[styles.reorderBtnText, projectIndex === shown.length - 1 && styles.reorderBtnTextDisabled]}>↓</Text>
                             </TouchableOpacity>
                           </View>
                         )}
@@ -651,6 +653,11 @@ export function ParaView({
                         >
                           <Text allowFontScaling={false} style={styles.projectName} numberOfLines={1}>
                             {project.name}
+                          </Text>
+                          <Text allowFontScaling={false} style={styles.projectAreaMeta} numberOfLines={1}>
+                            {projectArea
+                              ? `Area: ${projectArea.icon ? `${projectArea.icon} ` : ''}${projectArea.name}`
+                              : 'No Area'}
                           </Text>
                         </TouchableOpacity>
 
@@ -758,7 +765,7 @@ export function ParaView({
                   );
                 })}
               </View>
-            ))}
+            )}
 
             {showResources && resources.filter(item => !item.archived).length === 0 && (
               <Text allowFontScaling={false} style={styles.empty}>
@@ -1070,7 +1077,7 @@ const styles = StyleSheet.create({
   },
   rightPane: { flex: 1, paddingLeft: 10 },
   paneHeading: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: 'bold',
     color: '#000000',
     backgroundColor: '#e8e8e8',
@@ -1092,17 +1099,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   areaRowActive: { backgroundColor: '#000000' },
-  areaText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
+  areaText: { fontSize: 14, fontWeight: 'bold', color: '#000000' },
   areaTextActive: { color: '#ffffff' },
   treeRow: {
     marginLeft: 12,
-    paddingVertical: 5,
+    paddingVertical: 7,
     paddingHorizontal: 7,
     marginBottom: 2,
     borderRadius: 4,
   },
   treeRowActive: { backgroundColor: '#000000' },
-  treeRowText: { fontSize: 11, color: '#202020' },
+  treeRowText: { fontSize: 13, color: '#202020' },
   groupHeading: {
     fontSize: 11,
     fontWeight: 'bold',
@@ -1126,8 +1133,11 @@ const styles = StyleSheet.create({
   reorderBtns: { flexDirection: 'row', marginRight: 6 },
   reorderBtn: { minWidth: 34, minHeight: 34, borderWidth: 1, borderColor: '#000000', alignItems: 'center', justifyContent: 'center', marginRight: 4 },
   reorderBtnText: { fontSize: 20, fontWeight: 'bold', color: '#000000' },
+  reorderBtnDisabled: { borderColor: '#a0a0a0' },
+  reorderBtnTextDisabled: { color: '#a0a0a0' },
   projectNameBtn: { flex: 1, paddingRight: 6 },
   projectName: { fontSize: 16, fontWeight: 'bold', color: '#000000' },
+  projectAreaMeta: { fontSize: 13, color: '#404040', marginTop: 2 },
   projectDueBtn: {
     borderWidth: 1,
     borderColor: '#000000',

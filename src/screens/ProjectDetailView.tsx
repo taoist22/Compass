@@ -8,13 +8,53 @@ import { ParaFolderEntry } from '../supernote/exportService';
 import { HandwritingTextInput, HandwritingTextInputHandle } from './HandwritingTextInput';
 import { deriveProjectShortLabel, normalizeProjectShortLabel } from '../domain/projectLabel';
 
+const DELIVERABLE_PREVIEW_LIMIT = 4;
+
+interface DeliverableTaskRowProps {
+  task: CalendarTask;
+  index: number;
+  total: number;
+  onToggle: (task: CalendarTask) => void;
+  onEdit: (task: CalendarTask) => void;
+}
+
+function DeliverableTaskRow({
+  task,
+  index,
+  total,
+  onToggle,
+  onEdit,
+}: DeliverableTaskRowProps): React.JSX.Element {
+  return (
+    <View style={styles.taskRow}>
+      <Text allowFontScaling={false} style={styles.stem}>
+        {index === total - 1 ? '└─' : '├─'}
+      </Text>
+      <TouchableOpacity onPress={() => onToggle(task)}>
+        <Text allowFontScaling={false} style={styles.glyph}>
+          {statusGlyph(taskStatus(task))}
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.taskBody} onPress={() => onEdit(task)}>
+        <Text
+          allowFontScaling={false}
+          numberOfLines={1}
+          style={[styles.taskText, isDone(task) && styles.taskDone]}
+        >
+          {task.title}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 interface ProjectDetailViewProps {
   project: Project;
   area?: Area;
   areas: Area[];
   tasks: CalendarTask[];
   projectOf: (uid: string) => string | undefined;
-  /** Notes belonging to this project's events: the meeting ledger. */
+  /** Notes associated with this project's events. */
   linkedNotes: Array<{ label: string; path: string }>;
   onBack: () => void;
   onSetDue: () => void;
@@ -75,6 +115,10 @@ export function ProjectDetailView({
   const lookup: ProjectLookup = { projectOf, nameOf: () => project.name };
   const progress = projectProgress(tasks, project.id, lookup);
   const mine = tasks.filter(t => projectOf(t.uid) === project.id);
+  const actionableDeliverables = mine.filter(task => !isDone(task));
+  const completedDeliverables = mine
+    .filter(isDone)
+    .sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0));
   const overdue = projectOverdue(project);
 
   const [renaming, setRenaming] = React.useState<boolean>(false);
@@ -88,6 +132,7 @@ export function ProjectDetailView({
   const [addingArea, setAddingArea] = React.useState<boolean>(false);
   const [newAreaName, setNewAreaName] = React.useState<string>('');
   const newAreaInputRef = React.useRef<HandwritingTextInputHandle>(null);
+  const [deliverablesView, setDeliverablesView] = React.useState<'actionable' | 'completed' | null>(null);
 
   const commitRename = () => {
     const next = (draftNameInputRef.current?.getValue() ?? draftName).trim();
@@ -100,6 +145,50 @@ export function ProjectDetailView({
     }
     setRenaming(false);
   };
+
+  if (deliverablesView) {
+    const focusedTasks = deliverablesView === 'actionable'
+      ? actionableDeliverables
+      : completedDeliverables;
+    const focusedTitle = deliverablesView === 'actionable'
+      ? 'Actionable Deliverables'
+      : 'Completed Deliverables';
+
+    return (
+      <View style={styles.root}>
+        <View style={styles.focusedHeader}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => setDeliverablesView(null)}>
+            <Text allowFontScaling={false} style={styles.breadcrumb}>‹ Project</Text>
+          </TouchableOpacity>
+          <Text allowFontScaling={false} style={styles.focusedTitle} numberOfLines={1}>
+            {focusedTitle} ({focusedTasks.length})
+          </Text>
+          {deliverablesView === 'actionable' && (
+            <TouchableOpacity style={styles.addTaskBtn} onPress={onAddTask}>
+              <Text allowFontScaling={false} style={styles.addTask}>+ Add Task</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        <ScrollView style={styles.focusedList} keyboardShouldPersistTaps="always">
+          {focusedTasks.length === 0 && (
+            <Text allowFontScaling={false} style={styles.hint}>
+              {deliverablesView === 'actionable' ? 'Nothing to do yet.' : 'Nothing completed yet.'}
+            </Text>
+          )}
+          {focusedTasks.map((task, index) => (
+            <DeliverableTaskRow
+              key={task.uid}
+              task={task}
+              index={index}
+              total={focusedTasks.length}
+              onToggle={onToggleTask}
+              onEdit={onEditTask}
+            />
+          ))}
+        </ScrollView>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.root}>
@@ -318,11 +407,11 @@ export function ProjectDetailView({
         />
 
         <Text allowFontScaling={false} style={styles.sectionHeading}>
-          📝 Associated Meeting Notes
+          📝 Associated Notes
         </Text>
 
         {/* Notes from this project's events. Empty until events are filed
-            under it, which is what the ledger is: a record of what was said. */}
+            under it. */}
         {linkedNotes.map(note => (
           <TouchableOpacity key={note.path} style={styles.noteRow} onPress={() => onOpenNote(note.path)}>
             <Text allowFontScaling={false} style={styles.noteLabel} numberOfLines={1}>
@@ -333,48 +422,74 @@ export function ProjectDetailView({
 
         {linkedNotes.length === 0 && (
           <Text allowFontScaling={false} style={styles.hint}>
-            Meeting notes appear here once an event is filed under this project.
+            Notes appear here once an event is filed under this project.
           </Text>
         )}
 
-        <View style={styles.deliverablesHead}>
-          <Text allowFontScaling={false} style={styles.sectionHeading}>
-            ☑ Actionable Deliverables ({mine.length})
-          </Text>
-          <TouchableOpacity onPress={onAddTask}>
-            <Text allowFontScaling={false} style={styles.addTask}>
-              + Add Task
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {mine.length === 0 && (
-          <Text allowFontScaling={false} style={styles.hint}>
-            Nothing to do yet.
-          </Text>
-        )}
-
-        {mine.map((task, idx) => (
-          <View key={task.uid} style={styles.taskRow}>
-            <Text allowFontScaling={false} style={styles.stem}>
-              {idx === mine.length - 1 ? '└─' : '├─'}
-            </Text>
-            <TouchableOpacity onPress={() => onToggleTask(task)}>
-              <Text allowFontScaling={false} style={styles.glyph}>
-                {statusGlyph(taskStatus(task))}
+        <View style={styles.deliverableCards}>
+          <View style={[styles.deliverableCard, styles.deliverableCardFirst]}>
+            <View style={styles.deliverableCardHeader}>
+              <Text allowFontScaling={false} style={styles.deliverableCardTitle} numberOfLines={1}>
+                ☑ Actionable Deliverables ({actionableDeliverables.length})
               </Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.taskBody} onPress={() => onEditTask(task)}>
-              <Text
-                allowFontScaling={false}
-                numberOfLines={1}
-                style={[styles.taskText, isDone(task) && styles.taskDone]}
-              >
-                {task.title}
-              </Text>
-            </TouchableOpacity>
+              <TouchableOpacity style={styles.addTaskBtn} onPress={onAddTask}>
+                <Text allowFontScaling={false} style={styles.addTask}>+ Add Task</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.deliverablePreview}>
+              {actionableDeliverables.length === 0 && (
+                <Text allowFontScaling={false} style={styles.hint}>Nothing to do yet.</Text>
+              )}
+              {actionableDeliverables.slice(0, DELIVERABLE_PREVIEW_LIMIT).map((task, index) => (
+                <DeliverableTaskRow
+                  key={task.uid}
+                  task={task}
+                  index={index}
+                  total={Math.min(actionableDeliverables.length, DELIVERABLE_PREVIEW_LIMIT)}
+                  onToggle={onToggleTask}
+                  onEdit={onEditTask}
+                />
+              ))}
+            </View>
+            {actionableDeliverables.length > 0 && (
+              <TouchableOpacity style={styles.openDeliverablesBtn} onPress={() => setDeliverablesView('actionable')}>
+                <Text allowFontScaling={false} style={styles.openDeliverablesText}>
+                  Open all {actionableDeliverables.length} ›
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
-        ))}
+
+          <View style={styles.deliverableCard}>
+            <View style={styles.deliverableCardHeader}>
+              <Text allowFontScaling={false} style={styles.deliverableCardTitle} numberOfLines={1}>
+                ✓ Completed Deliverables ({completedDeliverables.length})
+              </Text>
+            </View>
+            <View style={styles.deliverablePreview}>
+              {completedDeliverables.length === 0 && (
+                <Text allowFontScaling={false} style={styles.hint}>Nothing completed yet.</Text>
+              )}
+              {completedDeliverables.slice(0, DELIVERABLE_PREVIEW_LIMIT).map((task, index) => (
+                <DeliverableTaskRow
+                  key={task.uid}
+                  task={task}
+                  index={index}
+                  total={Math.min(completedDeliverables.length, DELIVERABLE_PREVIEW_LIMIT)}
+                  onToggle={onToggleTask}
+                  onEdit={onEditTask}
+                />
+              ))}
+            </View>
+            {completedDeliverables.length > 0 && (
+              <TouchableOpacity style={styles.openDeliverablesBtn} onPress={() => setDeliverablesView('completed')}>
+                <Text allowFontScaling={false} style={styles.openDeliverablesText}>
+                  Open all {completedDeliverables.length} ›
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
       </ScrollView>
     </View>
   );
@@ -417,7 +532,7 @@ const styles = StyleSheet.create({
   addAreaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
   addAreaInput: { flex: 1, minHeight: 40, borderWidth: 1, borderColor: '#000000', paddingHorizontal: 8, fontSize: 13, color: '#000000' },
   addAreaButton: { minHeight: 40, minWidth: 76, borderWidth: 1, borderColor: '#000000', alignItems: 'center', justifyContent: 'center', marginLeft: 6, paddingHorizontal: 8 },
-  title: { flex: 1, fontSize: 16, fontWeight: 'bold', color: '#000000' },
+  title: { flex: 1, fontSize: 18, fontWeight: 'bold', color: '#000000' },
   titleInput: {
     flex: 1,
     borderWidth: 1,
@@ -448,7 +563,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     marginLeft: 6,
   },
-  headBtnText: { fontSize: 11, fontWeight: 'bold', color: '#000000' },
+  headBtnText: { fontSize: 13, fontWeight: 'bold', color: '#000000' },
   metaActions: { flexDirection: 'row', alignItems: 'center' },
   confirmRow: {
     borderWidth: 2,
@@ -458,7 +573,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     backgroundColor: '#ffffff',
   },
-  confirmText: { fontSize: 11, color: '#000000' },
+  confirmText: { fontSize: 14, color: '#000000' },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -472,11 +587,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
-  dueText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
-  progressText: { fontSize: 12, color: '#000000' },
+  dueText: { fontSize: 14, fontWeight: 'bold', color: '#000000' },
+  progressText: { fontSize: 14, color: '#000000' },
   body: { flex: 1 },
   sectionHeading: {
-    fontSize: 12,
+    fontSize: 15,
     fontWeight: 'bold',
     color: '#000000',
     backgroundColor: '#e8e8e8',
@@ -494,14 +609,54 @@ const styles = StyleSheet.create({
     marginBottom: 5,
     backgroundColor: '#ffffff',
   },
-  noteLabel: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
-  hint: { fontSize: 11, color: '#505050', paddingHorizontal: 4, paddingBottom: 6 },
-  deliverablesHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  addTask: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
-  taskRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5 },
-  stem: { fontSize: 11, color: '#606060', marginRight: 4 },
-  glyph: { fontSize: 15, color: '#000000', marginRight: 6 },
+  noteLabel: { fontSize: 14, fontWeight: 'bold', color: '#000000' },
+  hint: { fontSize: 14, color: '#505050', paddingHorizontal: 4, paddingBottom: 6 },
+  deliverableCards: { flexDirection: 'row', marginTop: 8, marginBottom: 8 },
+  deliverableCard: {
+    flex: 1,
+    height: 280,
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    padding: 8,
+    backgroundColor: '#ffffff',
+  },
+  deliverableCardFirst: { marginRight: 10 },
+  deliverableCardHeader: { minHeight: 40, flexDirection: 'row', alignItems: 'center' },
+  deliverableCardTitle: { flex: 1, fontSize: 15, fontWeight: 'bold', color: '#000000' },
+  deliverablePreview: { flex: 1 },
+  openDeliverablesBtn: {
+    minHeight: 36,
+    borderTopWidth: 1,
+    borderTopColor: '#000000',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  openDeliverablesText: { fontSize: 14, fontWeight: 'bold', color: '#000000' },
+  addTaskBtn: {
+    minHeight: 34,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    marginLeft: 8,
+  },
+  addTask: { fontSize: 14, fontWeight: 'bold', color: '#000000' },
+  taskRow: { flexDirection: 'row', alignItems: 'center', minHeight: 42, paddingVertical: 5 },
+  stem: { fontSize: 13, color: '#606060', marginRight: 4 },
+  glyph: { fontSize: 17, color: '#000000', marginRight: 6 },
   taskBody: { flex: 1 },
-  taskText: { fontSize: 13, color: '#000000' },
+  taskText: { fontSize: 15, color: '#000000' },
   taskDone: { textDecorationLine: 'line-through', color: '#606060' },
+  focusedHeader: {
+    minHeight: 54,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: '#000000',
+    paddingBottom: 6,
+  },
+  focusedTitle: { flex: 1, fontSize: 18, fontWeight: 'bold', color: '#000000' },
+  focusedList: { flex: 1, paddingTop: 8 },
 });

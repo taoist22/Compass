@@ -293,33 +293,23 @@ export function activeProjects(projects: Project[]): Project[] {
     .map(entry => entry.project);
 }
 
-/**
- * Projects grouped under the area that holds them, unfiled last.
- *
- * Areas are passed in rather than derived so the ordering follows the areas
- * themselves, and an area with no projects still reads as empty rather than
- * silently vanishing.
- */
-export function projectsByArea(
+/** Moves one active Project by one position in the single global Project order. */
+export function moveActiveProject(
   projects: Project[],
-  areas: Area[]
-): Array<{ areaId: string | null; label: string; projects: Project[] }> {
-  const groups = areas.map(area => ({
-    areaId: area.id as string | null,
-    label: area.name,
-    projects: projects.filter(p => p.areaId === area.id),
-  }));
+  projectId: string,
+  direction: 'up' | 'down'
+): Project[] {
+  const ordered = activeProjects(projects);
+  const index = ordered.findIndex(project => project.id === projectId);
+  const target = direction === 'up' ? index - 1 : index + 1;
+  if (index < 0 || target < 0 || target >= ordered.length) return projects;
 
-  const loose = projects.filter(p => !p.areaId || !areas.some(a => a.id === p.areaId));
-  if (loose.length > 0) {
-    groups.push({ areaId: null, label: 'No Area', projects: loose });
-  }
-  // Preserve the user's project order in the right-hand PARA cards too. The
-  // old implementation always put Areas first, which made reordering visible
-  // only in the left navigation tree.
-  return groups
-    .filter(g => g.projects.length > 0)
-    .sort((a, b) => projects.indexOf(a.projects[0]) - projects.indexOf(b.projects[0]));
+  [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
+  const sortOrderById = new Map(ordered.map((project, sortOrder) => [project.id, sortOrder]));
+  return projects.map(project => {
+    const sortOrder = sortOrderById.get(project.id);
+    return sortOrder === undefined ? project : { ...project, sortOrder };
+  });
 }
 
 /** True when a project's due date has passed and it is not finished. */
