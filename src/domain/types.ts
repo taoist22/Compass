@@ -37,6 +37,8 @@ export interface Area {
   createdAt: Date;
   /** PARA's Archive: kept for reference, hidden from active pickers. */
   archived?: boolean;
+  /** Original location when SNFolio moved this folder into Archive. */
+  archivedFromFolder?: string;
 }
 
 export type ProjectStatus = 'active' | 'done' | 'archived';
@@ -63,6 +65,8 @@ export interface Project {
   completedAt?: Date;
   /** Legacy single-notebook field; its containing folder is migrated on load. */
   notePath?: string;
+  /** Original location when SNFolio moved this folder into Archive. */
+  archivedFromFolder?: string;
 }
 
 /**

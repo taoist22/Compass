@@ -521,6 +521,43 @@ export class CalendarStorage {
     return this.mappings;
   }
 
+  /**
+   * Rewrites paths owned by SNFolio after a folder rename/move.
+   * Native Supernote links and other apps' records are intentionally outside
+   * this store and are covered by the warning shown before a move.
+   */
+  rewritePathPrefix(fromPath: string, toPath: string): void {
+    const from = fromPath.replace(/\/+$/, '');
+    const to = toPath.replace(/\/+$/, '');
+    if (!from || !to || from === to) return;
+    const rewrite = (value: string | undefined): string | undefined => {
+      if (!value) return value;
+      if (value === from) return to;
+      return value.startsWith(`${from}/`) ? `${to}${value.slice(from.length)}` : value;
+    };
+
+    this.mappings = Object.fromEntries(
+      Object.entries(this.mappings).map(([key, mapping]) => [
+        key,
+        { ...mapping, notePath: rewrite(mapping.notePath) || mapping.notePath },
+      ])
+    );
+    this.pendingDeletes = this.pendingDeletes.map(path => rewrite(path) || path);
+    this.areas = this.areas.map(area => ({ ...area, folder: rewrite(area.folder) }));
+    this.projects = this.projects.map(project => ({
+      ...project,
+      folder: rewrite(project.folder),
+      notePath: rewrite(project.notePath),
+    }));
+    this.resources = this.resources.map(resource => ({
+      ...resource,
+      folder: rewrite(resource.folder),
+      notePath: rewrite(resource.notePath),
+    }));
+    this.eventTypes = this.eventTypes.map(type => ({ ...type, folder: rewrite(type.folder) }));
+    void this.save();
+  }
+
   setMapping(mapping: MeetingNoteMapping): void {
     this.mappings[mapping.eventUid] = mapping;
     if (mapping.seriesId) {

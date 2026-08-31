@@ -366,6 +366,78 @@ public class CalendarFileModule extends ReactContextBaseJavaModule {
     }
 
     /**
+     * Renames one user folder without copying its contents. This is deliberately
+     * same-volume only: a recursive copy/delete would be slow, interruptible,
+     * and much harder to recover safely on an e-ink device.
+     */
+    @ReactMethod
+    public void moveFolder(String sourcePath, String destinationPath, Promise promise) {
+        if (TextUtils.isEmpty(sourcePath) || TextUtils.isEmpty(destinationPath)) {
+            promise.reject("E_PATH", "Both source and destination folders are required");
+            return;
+        }
+        try {
+            File source = new File(sourcePath).getCanonicalFile();
+            File destination = new File(destinationPath).getCanonicalFile();
+            String sourceCanonical = source.getPath();
+            String destinationCanonical = destination.getPath();
+
+            if (!sourceCanonical.startsWith("/storage/") || !destinationCanonical.startsWith("/storage/")) {
+                promise.reject("E_PATH", "Folders must be inside user storage");
+                return;
+            }
+            LinkedHashSet<String> protectedRoots = new LinkedHashSet<>();
+            File primary = Environment.getExternalStorageDirectory();
+            if (primary != null) protectedRoots.add(primary.getCanonicalPath());
+            File[] appDirs = getReactApplicationContext().getExternalFilesDirs(null);
+            if (appDirs != null) {
+                for (File appDir : appDirs) {
+                    if (appDir == null) continue;
+                    String path = appDir.getCanonicalPath();
+                    int androidSegment = path.indexOf("/Android/");
+                    if (androidSegment > 0) protectedRoots.add(path.substring(0, androidSegment));
+                }
+            }
+            for (String root : protectedRoots) {
+                if (sourceCanonical.equals(root)
+                        || (source.getParentFile() != null && source.getParentFile().getCanonicalPath().equals(root))) {
+                    promise.reject("E_PROTECTED", "A storage root or top-level folder cannot be moved");
+                    return;
+                }
+            }
+            if (sourceCanonical.equals(destinationCanonical)
+                    || destinationCanonical.startsWith(sourceCanonical + File.separator)) {
+                promise.reject("E_PATH", "A folder cannot be moved into itself");
+                return;
+            }
+            if (!source.exists()) {
+                promise.reject("E_NOT_FOUND", "Source folder does not exist: " + sourceCanonical);
+                return;
+            }
+            if (!source.isDirectory()) {
+                promise.reject("E_NOT_DIRECTORY", "Source path is not a folder: " + sourceCanonical);
+                return;
+            }
+            if (destination.exists()) {
+                promise.reject("E_EXISTS", "Archive destination already exists: " + destinationCanonical);
+                return;
+            }
+            File parent = destination.getParentFile();
+            if (parent == null || (!parent.exists() && !parent.mkdirs())) {
+                promise.reject("E_MKDIR", "Could not create archive folder: " + (parent == null ? "" : parent.getPath()));
+                return;
+            }
+            if (!source.renameTo(destination)) {
+                promise.reject("E_MOVE", "Folder move failed. Cross-storage moves are not supported.");
+                return;
+            }
+            promise.resolve(destinationCanonical);
+        } catch (Throwable error) {
+            promise.reject("E_MOVE", error.getMessage(), error);
+        }
+    }
+
+    /**
      * Writes UTF-8 text, creating parent directories as needed.
      * Resolves with the absolute path actually written so JS can report a
      * location the user can go and find, rather than one it assumed.

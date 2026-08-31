@@ -9,6 +9,7 @@ type CalendarFileModule = {
   listNoteFiles(path: string): Promise<string[]>;
   listFolderEntries(path: string): Promise<ParaFolderEntry[]>;
   getStorageRoots(): Promise<string[]>;
+  moveFolder(sourcePath: string, destinationPath: string): Promise<string>;
 };
 
 const CalendarFile = NativeModules.CalendarFile as CalendarFileModule | undefined;
@@ -33,6 +34,22 @@ export interface ParaFolderEntry {
   name: string;
   path: string;
   isFolder: boolean;
+}
+
+/** Fast, same-storage folder move. The native layer refuses overwrite/merge. */
+export async function moveParaFolder(sourcePath: string, destinationPath: string): Promise<ExportResult> {
+  if (!(await ensureFileWritePermission())) {
+    return { success: false, message: 'File access was not allowed.' };
+  }
+  if (!CalendarFile?.moveFolder) {
+    return { success: false, message: 'This build is missing folder-move support.' };
+  }
+  try {
+    const path = await CalendarFile.moveFolder(sourcePath, destinationPath);
+    return { success: true, path, message: `Moved folder to ${path}` };
+  } catch (e: any) {
+    return { success: false, message: e?.message || 'Folder move failed.' };
+  }
 }
 
 /** Mounted user-storage roots: internal storage followed by any SD cards. */

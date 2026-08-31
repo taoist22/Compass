@@ -730,6 +730,54 @@ describe('storage failure isolation', () => {
   });
 });
 
+describe('PARA folder moves', () => {
+  test('rewrites only SNFolio-owned paths inside the moved folder', () => {
+    const store = new CalendarStorage();
+    const from = '/storage/emulated/0/Note/Clients/Acme';
+    const to = '/storage/emulated/0/Note/Archive/Projects/Acme';
+    const createdAt = new Date('2026-08-30T12:00:00Z');
+
+    store.upsertArea({ id: 'area', name: 'Clients', folder: '/storage/emulated/0/Note/Clients', createdAt });
+    store.upsertProject({ id: 'project', name: 'Acme', folder: from, status: 'active', createdAt });
+    store.upsertResource({
+      id: 'resource', name: 'Brief', folder: `${from}/Research`, notePath: `${from}/Research/Brief.note`, createdAt,
+    });
+    store.upsertEventType({ id: 'type', name: 'Client', folder: `${from}/Meetings`, createdAt });
+    store.setMapping({
+      eventUid: 'event', seriesId: 'series', notePath: `${from}/Meetings/Kickoff.note`,
+      lastPageNum: 1, lastCreatedIso: createdAt.toISOString(),
+    });
+    store.queueNoteDeletion(`${from}/Old.note`);
+
+    store.rewritePathPrefix(from, to);
+
+    expect(store.getProjects()[0].folder).toBe(to);
+    expect(store.getResources()[0]).toEqual(expect.objectContaining({
+      folder: `${to}/Research`, notePath: `${to}/Research/Brief.note`,
+    }));
+    expect(store.getEventTypes()[0].folder).toBe(`${to}/Meetings`);
+    expect(store.getMapping('event')?.notePath).toBe(`${to}/Meetings/Kickoff.note`);
+    expect(store.getMapping('series')?.notePath).toBe(`${to}/Meetings/Kickoff.note`);
+    expect(store.getPendingNoteDeletions()).toEqual([`${to}/Old.note`]);
+    expect(store.getAreas()[0].folder).toBe('/storage/emulated/0/Note/Clients');
+  });
+
+  test('does not rewrite sibling folders with the same prefix', () => {
+    const store = new CalendarStorage();
+    const createdAt = new Date('2026-08-30T12:00:00Z');
+    store.upsertProject({
+      id: 'sibling', name: 'Acme Old', folder: '/storage/emulated/0/Note/Clients/Acme Old', status: 'active', createdAt,
+    });
+
+    store.rewritePathPrefix(
+      '/storage/emulated/0/Note/Clients/Acme',
+      '/storage/emulated/0/Note/Archive/Projects/Acme'
+    );
+
+    expect(store.getProjects()[0].folder).toBe('/storage/emulated/0/Note/Clients/Acme Old');
+  });
+});
+
 describe('task account lifecycle persistence', () => {
   beforeEach(async () => {
     await AsyncStorage.clear();

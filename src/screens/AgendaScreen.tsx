@@ -93,8 +93,10 @@ import {
   PARA_ROOT_KINDS,
   PARA_ROOT_SETTING,
   ParaRootKind,
+  normaliseFolderPath,
   paraChildFolder,
   paraRoot,
+  safeFolderName,
 } from '../domain/paraStorage';
 
 type CalendarFileBridge = {
@@ -120,7 +122,7 @@ import { hourLabel } from '../domain/dayGrid';
 import { ItemCreationModal } from './ItemCreationModal';
 import { EventDetailsModal } from './EventDetailsModal';
 import { DatePickerModal } from './DatePickerModal';
-import { listParaFolderEntries, openNoteInEditor, openResourceFile, ParaFolderEntry } from '../supernote/exportService';
+import { listParaFolderEntries, moveParaFolder, openNoteInEditor, openResourceFile, ParaFolderEntry } from '../supernote/exportService';
 import {
   ensureFileDeletePermission,
   ensureFileReadPermission,
@@ -129,6 +131,13 @@ import {
 import { firstPickedFilePath, parentFolderFromPicker } from '../domain/fileSelection';
 
 type SettingsTab = 'sync' | 'notes' | 'app' | 'help';
+
+type ArchiveFolderPrompt = {
+  mode: 'archive' | 'restore';
+  kind: 'project' | 'area';
+  item: Project | Area;
+  archiveProjects?: boolean;
+};
 
 const DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -302,6 +311,11 @@ export function AgendaScreen(): React.JSX.Element {
   const [projectDueTarget, setProjectDueTarget] = useState<Project | null>(null);
   /** Project open in the detail view; null shows the browser. */
   const [openProject, setOpenProject] = useState<Project | null>(null);
+  /** Confirmation before a PARA status change optionally moves user files. */
+  const [archiveFolderPrompt, setArchiveFolderPrompt] = useState<ArchiveFolderPrompt | null>(null);
+  /** User-selected Archive root; choosing one also makes it the future default. */
+  const [archiveDestinationRoot, setArchiveDestinationRoot] = useState<string | null>(null);
+  const [showArchiveRootPicker, setShowArchiveRootPicker] = useState<boolean>(false);
   /** Area to reveal after correcting a Project's PARA classification. */
   const [paraFocusAreaId, setParaFocusAreaId] = useState<string | null>(null);
   /** Project a new task should be filed under, when adding from inside one. */
@@ -2790,52 +2804,204 @@ export function AgendaScreen(): React.JSX.Element {
     setProjects([...calendarStorage.getProjects()]);
   };
 
-  const handleArchiveProject = (project: Project) => {
-    calendarStorage.upsertProject({ ...project, status: 'archived' });
-    setProjects([...calendarStorage.getProjects()]);
-    if (openProject?.id === project.id) setOpenProject(null);
-    setStatusMsg(`Archived project "${project.name}".`);
+  type ArchiveMove = {
+    kind: 'project' | 'area';
+    id: string;
+    name: string;
+    source: string;
+    destination: string;
   };
 
-  const handleRestoreProject = (project: Project) => {
-    const area = project.areaId
-      ? calendarStorage.getAreas().find(candidate => candidate.id === project.areaId)
-      : undefined;
-    if (area?.archived) {
-      calendarStorage.upsertArea({ ...area, archived: false });
-      setAreas([...calendarStorage.getAreas()]);
+  function folderForParaItem(kind: 'project' | 'area' | 'resource', item: Project | Area | Resource): string {
+    if (item.folder) return normaliseFolderPath(item.folder);
+    if (kind !== 'area') {
+      const legacyPath = (item as Project | Resource).notePath;
+      if (legacyPath) {
+        const slash = legacyPath.lastIndexOf('/');
+        if (slash > 0) return legacyPath.slice(0, slash);
+      }
     }
-    calendarStorage.upsertProject({ ...project, status: 'active', completedAt: undefined });
-    setProjects([...calendarStorage.getProjects()]);
-    setStatusMsg(`Restored project "${project.name}".`);
-  };
+    const rootKind = kind === 'project' ? 'projects' : kind === 'area' ? 'areas' : 'resources';
+    return paraChildFolder(calendarStorage.getSettings(), rootKind, item.name);
+  }
 
-  const handleArchiveArea = (area: Area, archiveProjects: boolean) => {
-    calendarStorage.upsertArea({ ...area, archived: true });
-    // The user chooses what happens to active work. Keeping it active detaches
-    // it from the retired Area; archiving it is an explicit separate choice.
-    for (const project of calendarStorage.getProjects()) {
-      if (project.areaId === area.id && project.status === 'active') {
+  const applyArchiveMetadata = (prompt: ArchiveFolderPrompt, moved: ArchiveMove[] = []) => {
+    const movedById = new Map(moved.map(move => [move.id, move]));
+    if (prompt.kind === 'project') {
+      const project = calendarStorage.getProjects().find(candidate => candidate.id === prompt.item.id);
+      if (!project) return;
+      const move = movedById.get(project.id);
+      if (prompt.mode === 'archive') {
         calendarStorage.upsertProject({
           ...project,
-          areaId: archiveProjects ? project.areaId : undefined,
-          status: archiveProjects ? 'archived' : 'active',
+          status: 'archived',
+          folder: move?.destination || project.folder,
+          archivedFromFolder: move?.source,
         });
+        if (openProject?.id === project.id) setOpenProject(null);
+      } else {
+        const area = project.areaId
+          ? calendarStorage.getAreas().find(candidate => candidate.id === project.areaId)
+          : undefined;
+        if (area?.archived) calendarStorage.upsertArea({ ...area, archived: false });
+        calendarStorage.upsertProject({
+          ...project,
+          status: 'active',
+          completedAt: undefined,
+          folder: move?.destination || project.folder,
+          archivedFromFolder: undefined,
+        });
+      }
+    } else {
+      const area = calendarStorage.getAreas().find(candidate => candidate.id === prompt.item.id);
+      if (!area) return;
+      const areaMove = movedById.get(area.id);
+      calendarStorage.upsertArea({
+        ...area,
+        archived: prompt.mode === 'archive',
+        folder: areaMove?.destination || area.folder,
+        archivedFromFolder: prompt.mode === 'archive' ? areaMove?.source : undefined,
+      });
+      if (prompt.mode === 'archive') {
+        for (const project of calendarStorage.getProjects()) {
+          if (project.areaId !== area.id || project.status !== 'active') continue;
+          const projectMove = movedById.get(project.id);
+          calendarStorage.upsertProject({
+            ...project,
+            areaId: prompt.archiveProjects ? project.areaId : undefined,
+            status: prompt.archiveProjects ? 'archived' : 'active',
+            folder: projectMove?.destination || project.folder,
+            archivedFromFolder: projectMove?.source,
+          });
+        }
       }
     }
     setAreas([...calendarStorage.getAreas()]);
     setProjects([...calendarStorage.getProjects()]);
-    setStatusMsg(
-      archiveProjects
-        ? `Archived area "${area.name}" and its active projects.`
-        : `Archived area "${area.name}"; its projects remain active and unfiled.`
+  };
+
+  const archiveMovesFor = (prompt: ArchiveFolderPrompt): ArchiveMove[] => {
+    if (prompt.mode === 'restore') {
+      const item = prompt.item;
+      const original = item.archivedFromFolder;
+      if (!original) return [];
+      return [{
+        kind: prompt.kind,
+        id: item.id,
+        name: item.name,
+        source: folderForParaItem(prompt.kind, item),
+        destination: normaliseFolderPath(original),
+      }];
+    }
+
+    const archiveRoot = archiveDestinationRoot || paraRoot(calendarStorage.getSettings(), 'archive');
+    const moves: ArchiveMove[] = [{
+      kind: prompt.kind,
+      id: prompt.item.id,
+      name: prompt.item.name,
+      source: folderForParaItem(prompt.kind, prompt.item),
+      destination: `${archiveRoot}/${prompt.kind === 'area' ? 'Areas' : 'Projects'}/${safeFolderName(prompt.item.name)}`,
+    }];
+    if (prompt.kind === 'area' && prompt.archiveProjects) {
+      for (const project of calendarStorage.getProjects()) {
+        if (project.areaId !== prompt.item.id || project.status !== 'active') continue;
+        moves.push({
+          kind: 'project',
+          id: project.id,
+          name: project.name,
+          source: folderForParaItem('project', project),
+          destination: `${archiveRoot}/Projects/${safeFolderName(project.name)}`,
+        });
+      }
+    }
+    return moves;
+  };
+
+  const finishArchiveChoice = async (moveFolders: boolean) => {
+    const prompt = archiveFolderPrompt;
+    if (!prompt) return;
+    setArchiveFolderPrompt(null);
+
+    if (!moveFolders) {
+      applyArchiveMetadata(prompt);
+      const verb = prompt.mode === 'archive' ? 'Archived' : 'Restored';
+      setStatusMsg(`${verb} ${prompt.kind} "${prompt.item.name}" without moving its folder.`);
+      return;
+    }
+
+    const moves = archiveMovesFor(prompt);
+    if (moves.length === 0) {
+      applyArchiveMetadata(prompt);
+      setStatusMsg(`Restored ${prompt.kind} "${prompt.item.name}". No previous folder location was recorded.`);
+      return;
+    }
+    const normalized = moves.map(move => ({
+      ...move,
+      source: normaliseFolderPath(move.source),
+      destination: normaliseFolderPath(move.destination),
+    }));
+    const sources = normalized.map(move => move.source);
+    const destinations = normalized.map(move => move.destination);
+    const overlaps = sources.some((source, index) =>
+      sources.some((other, otherIndex) => index !== otherIndex && other.startsWith(`${source}/`))
     );
+    if (overlaps || new Set(sources).size !== sources.length || new Set(destinations).size !== destinations.length) {
+      setStatusMsg('Folders overlap or share a destination. Archive without moving, or choose separate folders first.');
+      return;
+    }
+
+    const completed: ArchiveMove[] = [];
+    for (const move of normalized) {
+      const result = await moveParaFolder(move.source, move.destination);
+      if (!result.success) {
+        for (const prior of [...completed].reverse()) {
+          await moveParaFolder(prior.destination, prior.source);
+        }
+        setStatusMsg(`No archive changes were made. Could not move "${move.name}": ${result.message}`);
+        return;
+      }
+      completed.push(move);
+    }
+
+    for (const move of completed) calendarStorage.rewritePathPrefix(move.source, move.destination);
+    applyArchiveMetadata(prompt, completed);
+    setEventNotePaths(current => Object.fromEntries(
+      Object.entries(current).map(([key, value]) => {
+        let next = value;
+        for (const move of completed) {
+          if (next === move.source) next = move.destination;
+          else if (next.startsWith(`${move.source}/`)) next = `${move.destination}${next.slice(move.source.length)}`;
+        }
+        return [key, next];
+      })
+    ));
+    setEventTypes([...calendarStorage.getEventTypes()]);
+    setResources([...calendarStorage.getResources()]);
+    const persistenceError = await calendarStorage.flush();
+    if (persistenceError) {
+      setStatusMsg(`Folder moved, but SNFolio could not save all path updates: ${persistenceError}`);
+      return;
+    }
+    const verb = prompt.mode === 'archive' ? 'Archived' : 'Restored';
+    setStatusMsg(`${verb} ${prompt.kind} "${prompt.item.name}" and moved ${completed.length === 1 ? 'its folder' : `${completed.length} folders`}.`);
+  };
+
+  const handleArchiveProject = (project: Project) => {
+    setArchiveDestinationRoot(null);
+    setArchiveFolderPrompt({ mode: 'archive', kind: 'project', item: project });
+  };
+
+  const handleRestoreProject = (project: Project) => {
+    setArchiveFolderPrompt({ mode: 'restore', kind: 'project', item: project });
+  };
+
+  const handleArchiveArea = (area: Area, archiveProjects: boolean) => {
+    setArchiveDestinationRoot(null);
+    setArchiveFolderPrompt({ mode: 'archive', kind: 'area', item: area, archiveProjects });
   };
 
   const handleRestoreArea = (area: Area) => {
-    calendarStorage.upsertArea({ ...area, archived: false });
-    setAreas([...calendarStorage.getAreas()]);
-    setStatusMsg(`Restored area "${area.name}". Restore any projects you still need separately.`);
+    setArchiveFolderPrompt({ mode: 'restore', kind: 'area', item: area });
   };
 
   const handleCreateResource = (name: string): string => {
@@ -3046,16 +3212,7 @@ export function AgendaScreen(): React.JSX.Element {
   type ParaFolderItem = Project | Area | Resource;
 
   const paraFolder = (kind: ParaFolderKind, item: ParaFolderItem): string => {
-    if (item.folder) return item.folder.replace(/\/+$/, '');
-    if (kind !== 'area') {
-      const legacyPath = (item as Project | Resource).notePath;
-      if (legacyPath) {
-        const slash = legacyPath.lastIndexOf('/');
-        if (slash > 0) return legacyPath.slice(0, slash);
-      }
-    }
-    const rootKind = kind === 'project' ? 'projects' : kind === 'area' ? 'areas' : 'resources';
-    return paraChildFolder(calendarStorage.getSettings(), rootKind, item.name);
+    return folderForParaItem(kind, item);
   };
 
   const persistParaFolder = (kind: ParaFolderKind, item: ParaFolderItem, folder: string) => {
@@ -3571,6 +3728,96 @@ export function AgendaScreen(): React.JSX.Element {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      <Modal visible={archiveFolderPrompt !== null} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.archiveMoveModal}>
+            <Text allowFontScaling={false} style={styles.actionSheetTitle}>
+              {archiveFolderPrompt?.mode === 'restore' ? 'Restore from Archive' : 'Archive Folder?'}
+            </Text>
+            <Text allowFontScaling={false} style={styles.bodyTextCenter}>
+              {archiveFolderPrompt?.item.name}
+            </Text>
+            {archiveFolderPrompt && archiveMovesFor(archiveFolderPrompt).length > 0 && (
+              <>
+                <Text allowFontScaling={false} style={styles.archivePathLabel}>From</Text>
+                <Text allowFontScaling={false} style={styles.codePath} numberOfLines={2}>
+                  {archiveMovesFor(archiveFolderPrompt)[0].source}
+                </Text>
+                <Text allowFontScaling={false} style={styles.archivePathLabel}>To</Text>
+                <Text allowFontScaling={false} style={styles.codePath} numberOfLines={2}>
+                  {archiveMovesFor(archiveFolderPrompt)[0].destination}
+                </Text>
+                {archiveMovesFor(archiveFolderPrompt).length > 1 && (
+                  <Text allowFontScaling={false} style={styles.previewHint}>
+                    This will also move {archiveMovesFor(archiveFolderPrompt).length - 1} active Project folder(s).
+                  </Text>
+                )}
+              </>
+            )}
+            {archiveFolderPrompt?.mode === 'archive' && (
+              <TouchableOpacity
+                style={styles.archiveLocationBtn}
+                onPress={() => setShowArchiveRootPicker(true)}
+              >
+                <Text allowFontScaling={false} style={styles.archiveLocationBtnText}>
+                  📁 Choose a Different Archive Root…
+                </Text>
+                <Text allowFontScaling={false} style={styles.archiveLocationHint} numberOfLines={2}>
+                  Current: {archiveDestinationRoot || paraRoot(calendarStorage.getSettings(), 'archive')}
+                </Text>
+              </TouchableOpacity>
+            )}
+            <View style={styles.archiveWarning}>
+              <Text allowFontScaling={false} style={styles.archiveWarningText}>
+                ⚠ Moving folders can break links inside Supernote notes, Recent files, shortcuts,
+                and links saved by other apps. SNFolio can update only paths it owns. Close files
+                in these folders before continuing.
+              </Text>
+            </View>
+            <TouchableOpacity style={styles.actionSheetBtn} onPress={() => void finishArchiveChoice(false)}>
+              <Text allowFontScaling={false} style={styles.actionSheetBtnText}>
+                {archiveFolderPrompt?.mode === 'restore'
+                  ? 'Restore Only — Keep Folder Here'
+                  : 'Archive Only — Keep Folder Here'}
+              </Text>
+            </TouchableOpacity>
+            {archiveFolderPrompt && (
+              archiveFolderPrompt.mode === 'archive' || archiveMovesFor(archiveFolderPrompt).length > 0
+            ) && (
+              <TouchableOpacity style={styles.deleteOptionBtnDanger} onPress={() => void finishArchiveChoice(true)}>
+                <Text allowFontScaling={false} style={styles.deleteOptionBtnTextDanger}>
+                  {archiveFolderPrompt.mode === 'restore'
+                    ? 'Restore & Move Folder Back'
+                    : 'Archive & Move Folder'}
+                </Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => setArchiveFolderPrompt(null)}>
+              <Text allowFontScaling={false} style={styles.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <FolderPickerModal
+        visible={showArchiveRootPicker}
+        title="Choose Archive root folder"
+        initialPath={archiveDestinationRoot || paraRoot(calendarStorage.getSettings(), 'archive')}
+        onCancel={() => setShowArchiveRootPicker(false)}
+        onSelect={async folder => {
+          const selected = normaliseFolderPath(folder);
+          const previous = calendarStorage.getSettings().archiveDirectory;
+          calendarStorage.updateSettings({ archiveDirectory: selected });
+          const persistenceError = await calendarStorage.flush();
+          if (persistenceError) {
+            calendarStorage.updateSettings({ archiveDirectory: previous });
+            throw new Error(persistenceError);
+          }
+          setArchiveDestinationRoot(selected);
+          setShowArchiveRootPicker(false);
+        }}
+      />
 
       {statusMsg !== '' && (
         <View style={styles.statusBanner}>
@@ -6466,6 +6713,57 @@ const styles = StyleSheet.create({
     padding: 16,
     width: '48%',
     maxWidth: 420,
+  },
+  archiveMoveModal: {
+    backgroundColor: '#ffffff',
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 8,
+    padding: 16,
+    width: '62%',
+    maxWidth: 560,
+  },
+  archivePathLabel: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#505050',
+    marginTop: 6,
+    marginBottom: 2,
+  },
+  archiveLocationBtn: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    marginTop: 6,
+    backgroundColor: '#ffffff',
+  },
+  archiveLocationBtnText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#000000',
+    textAlign: 'center',
+  },
+  archiveLocationHint: {
+    fontSize: 10,
+    color: '#505050',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  archiveWarning: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    backgroundColor: '#eeeeee',
+    borderRadius: 6,
+    padding: 10,
+    marginVertical: 10,
+  },
+  archiveWarningText: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: 'bold',
+    color: '#000000',
   },
   loadingBanner: { borderWidth: 1, borderColor: '#000000', backgroundColor: '#eeeeee', marginHorizontal: 8, marginBottom: 6, paddingVertical: 9, alignItems: 'center' },
   loadingBannerText: { fontSize: 13, fontWeight: 'bold', color: '#000000' },

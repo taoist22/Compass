@@ -1,5 +1,12 @@
 import { NativeModules } from 'react-native';
-import { listParaFolderEntries, listResourceFiles, listStorageRoots, openResourceFile, safeFileName } from './exportService';
+import {
+  listParaFolderEntries,
+  listResourceFiles,
+  listStorageRoots,
+  moveParaFolder,
+  openResourceFile,
+  safeFileName,
+} from './exportService';
 
 // sn-plugin-lib resolves native modules at import time, which jest has none of.
 jest.mock('sn-plugin-lib', () => ({
@@ -94,6 +101,29 @@ describe('listStorageRoots', () => {
       '/storage/emulated/0',
       '/storage/1234-ABCD',
     ]);
+  });
+});
+
+describe('moveParaFolder', () => {
+  test('returns the destination reported by the native same-storage move', async () => {
+    const source = '/storage/emulated/0/Note/Projects/Acme';
+    const destination = '/storage/emulated/0/Note/Archive/Projects/Acme';
+
+    await expect(moveParaFolder(source, destination)).resolves.toEqual({
+      success: true,
+      path: destination,
+      message: `Moved folder to ${destination}`,
+    });
+    expect(NativeModules.CalendarFile.moveFolder).toHaveBeenCalledWith(source, destination);
+  });
+
+  test('surfaces a native collision without pretending the move succeeded', async () => {
+    NativeModules.CalendarFile.moveFolder.mockRejectedValueOnce(new Error('Destination already exists'));
+
+    await expect(moveParaFolder('/storage/source', '/storage/destination')).resolves.toEqual({
+      success: false,
+      message: 'Destination already exists',
+    });
   });
 });
 
