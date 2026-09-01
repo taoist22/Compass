@@ -3,6 +3,7 @@
   "version": "0.1.17",
   "description": "Plan time, organize work, and connect it with notes.",
   "author": "taoist22",
+  "license": "Apache-2.0",
   "private": true,
   "scripts": {
     "android": "react-native run-android",

@@ -171,3 +171,9 @@ You can change the standard Meeting/Class folders and templates under **⚙ → 
 
 - Author: `taoist22`
 - Icon: <a href="https://www.flaticon.com/free-icons/calendar" title="calendar icons">Calendar icons created by srip - Flaticon</a>
+
+---
+
+## License
+
+SNFolio is licensed under the [Apache License 2.0](LICENSE).
