@@ -28,6 +28,7 @@ interface ParaViewProps {
   events: CalendarEvent[];
   projectOf: (uid: string) => string | undefined;
   projectOfEvent: (event: CalendarEvent) => string | undefined;
+  areaOfEvent: (event: CalendarEvent) => string | undefined;
   areaOf: (uid: string) => string | undefined;
   onNewProject: (name: string, areaId?: string) => unknown;
   onNewArea: (name: string) => unknown;
@@ -78,6 +79,7 @@ export function ParaView({
   events,
   projectOf,
   projectOfEvent,
+  areaOfEvent,
   areaOf,
   onNewProject,
   onNewArea,
@@ -135,6 +137,16 @@ export function ParaView({
   const selectedAreaId = section === 'areas' ? selectedItemId : null;
   const selectedProjectId = section === 'projects' ? selectedItemId : null;
   const selectedResourceId = section === 'resources' ? selectedItemId : null;
+  React.useEffect(() => {
+    if (section === 'projects' && selectedItemId) {
+      const selected = projects.find(project => project.id === selectedItemId);
+      if (selected && selected.status !== 'active') setSelectedItemId(null);
+    }
+    if (section === 'areas' && selectedItemId) {
+      const selected = areas.find(area => area.id === selectedItemId);
+      if (selected?.archived) setSelectedItemId(null);
+    }
+  }, [areas, projects, section, selectedItemId]);
   const shown = activeProjects(projects).filter(
     project =>
       (!selectedAreaId || project.areaId === selectedAreaId) &&
@@ -144,6 +156,11 @@ export function ParaView({
   const selectedArea = activeAreas.find(a => a.id === selectedAreaId);
   const selectedAreaTasks = selectedArea
     ? directTasksInArea(tasks, selectedArea.id, areaOf, projectOf)
+    : [];
+  const selectedAreaEvents = selectedArea
+    ? events.filter(event =>
+        areaOfEvent(event) === selectedArea.id && !projectOfEvent(event)
+      )
     : [];
   const selectedProject = projects.find(project => project.id === selectedProjectId);
   const [editingAreaId, setEditingAreaId] = React.useState<string | null>(null);
@@ -513,14 +530,12 @@ export function ParaView({
                     <View style={styles.areaEditRow}>
                       <TouchableOpacity style={styles.rowBtn} onPress={() => {
                         onArchiveArea(selectedArea, false);
-                        setSelectedItemId(null);
                         closeAreaEditor();
                       }}>
                         <Text allowFontScaling={false} style={styles.rowBtnText}>Keep Projects Active</Text>
                       </TouchableOpacity>
                       <TouchableOpacity style={styles.rowBtn} onPress={() => {
                         onArchiveArea(selectedArea, true);
-                        setSelectedItemId(null);
                         closeAreaEditor();
                       }}>
                         <Text allowFontScaling={false} style={styles.rowBtnText}>Archive Projects Too</Text>
@@ -604,6 +619,31 @@ export function ParaView({
               </View>
             )}
 
+            {showAreas && selectedArea && selectedAreaEvents.length > 0 && (
+              <View style={styles.projectCard}>
+                <Text allowFontScaling={false} style={styles.groupHeading}>Upcoming Area Events</Text>
+                {selectedAreaEvents.map((event, idx) => (
+                  <TouchableOpacity
+                    key={`${event.uid}-${event.start.toISOString()}`}
+                    style={styles.taskRow}
+                    onPress={() => onEditEvent(event)}
+                  >
+                    <Text allowFontScaling={false} style={styles.treeStem}>
+                      {idx === selectedAreaEvents.length - 1 ? '└─' : '├─'}
+                    </Text>
+                    <View style={styles.taskBody}>
+                      <Text allowFontScaling={false} numberOfLines={1} style={styles.taskText}>
+                        {event.summary}
+                      </Text>
+                      <Text allowFontScaling={false} style={styles.projectItemMeta}>
+                        {event.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
             {showProjects && shown.length === 0 && (
               <Text allowFontScaling={false} style={styles.empty}>
                 {selectedAreaId
@@ -679,7 +719,6 @@ export function ParaView({
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.projectNoteBtn} onPress={() => {
                           onArchiveProject(project);
-                          if (selectedProjectId === project.id) setSelectedItemId(null);
                         }}>
                           <Text allowFontScaling={false} style={styles.projectNoteText}>Archive</Text>
                         </TouchableOpacity>

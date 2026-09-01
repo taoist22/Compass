@@ -65,6 +65,12 @@ const DEFAULT_SETTINGS: CalendarSettings = {
   classTemplate: DEFAULT_SYSTEM_TEMPLATE,
   dailyNoteTemplate: DEFAULT_SYSTEM_TEMPLATE,
   classNotesDirectory: '/storage/emulated/0/Note/Classes',
+  taskNotesDirectory: '/storage/emulated/0/Note/Task Notes',
+  taskNoteTemplate: DEFAULT_SYSTEM_TEMPLATE,
+  routeEventNotesToPara: false,
+  meetingParaSubpath: 'Meetings',
+  classParaSubpath: 'Classes',
+  eventAreaOverridesMigrated: false,
   projectsDirectory: '/storage/emulated/0/Note/SNFolio/Projects',
   areasDirectory: '/storage/emulated/0/Note/SNFolio/Areas',
   resourcesDirectory: '/storage/emulated/0/Note/SNFolio/Resources',
@@ -235,6 +241,7 @@ export class CalendarStorage {
   private saveChain: Promise<void> = Promise.resolve();
 
   async load(): Promise<{ settings: CalendarSettings; mappings: Record<string, MeetingNoteMapping> }> {
+    let shouldSaveAreaMigration = false;
     try {
       const [rawSettings, rawMappings, rawEvents, rawTasks, rawPushState, rawTaskPushState, rawCaldavEvents, rawEventKinds, rawAreas, rawProjects, rawResources, rawMembership, rawPendingDeletes, rawEventTypes, rawPendingTaskDeletes] =
         await Promise.all([
@@ -304,6 +311,20 @@ export class CalendarStorage {
       if (rawMembership) {
         const parsed = parseStored(rawMembership);
         this.membership = parsed && typeof parsed === 'object' ? parsed : {};
+      }
+      if (!this.settings.eventAreaOverridesMigrated) {
+        // Before events offered a direct Area picker, old builds sometimes
+        // copied an Event Type's default Area into membership. It was not an
+        // explicit user choice, so clear only those typed legacy values once;
+        // future explicit overrides are then safe to preserve.
+        this.membership = Object.fromEntries(
+          Object.entries(this.membership).map(([identity, entry]) => [
+            identity,
+            entry.typeId && !entry.projectId ? { ...entry, areaId: undefined } : entry,
+          ])
+        );
+        this.settings.eventAreaOverridesMigrated = true;
+        shouldSaveAreaMigration = true;
       }
       if (rawPendingDeletes) {
         const parsed = parseStored(rawPendingDeletes);
@@ -395,6 +416,7 @@ export class CalendarStorage {
     this.settings.caldavPassword = sessionPassword;
     this.settings.taskCaldavPassword = sessionTaskPassword;
     this.loaded = true;
+    if (shouldSaveAreaMigration) await this.save();
 
     return { settings: this.settings, mappings: this.mappings };
   }

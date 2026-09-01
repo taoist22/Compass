@@ -410,8 +410,7 @@ export function ProjectDetailView({
           📝 Associated Notes
         </Text>
 
-        {/* Notes from this project's events. Empty until events are filed
-            under it. */}
+        {/* Notes from this project's events and tasks. */}
         {linkedNotes.map(note => (
           <TouchableOpacity key={note.path} style={styles.noteRow} onPress={() => onOpenNote(note.path)}>
             <Text allowFontScaling={false} style={styles.noteLabel} numberOfLines={1}>
@@ -422,7 +421,7 @@ export function ProjectDetailView({
 
         {linkedNotes.length === 0 && (
           <Text allowFontScaling={false} style={styles.hint}>
-            Notes appear here once an event is filed under this project.
+            Notes appear here once an event or task is filed under this project.
           </Text>
         )}
 

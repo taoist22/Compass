@@ -114,9 +114,8 @@ export interface ItemMembership {
  * A user-defined kind of event: Class, Work, Personal, Client Visit.
  *
  * Replaces the hardcoded meeting/class dichotomy, which assumed everyone is
- * either in an office or at university. Carries where its notes are filed and
- * what they look like, so tagging an event is the whole decision — no prompt
- * when a note is created.
+ * either in an office or at university. Carries default filing and template
+ * choices that Create Note shows before the user confirms or overrides them.
  */
 export interface EventType {
   id: string;
@@ -320,6 +319,16 @@ export interface CalendarSettings {
   classTemplate?: string;
   /** Where class notes are filed. Meeting notes use notesDirectory. */
   classNotesDirectory?: string;
+  /** Defaults used by notes linked directly to tasks. */
+  taskNotesDirectory?: string;
+  taskNoteTemplate?: string;
+  /** Whether Create Note initially selects its Project/Area rather than its standard folder. */
+  routeEventNotesToPara?: boolean;
+  /** Relative subfolders used beneath a Project/Area; blank means its root. */
+  meetingParaSubpath?: string;
+  classParaSubpath?: string;
+  /** One-time cleanup for Area values written from Event Type defaults by older builds. */
+  eventAreaOverridesMigrated?: boolean;
   /** Configurable PARA roots. Existing installs retain the original SNFolio paths. */
   projectsDirectory?: string;
   areasDirectory?: string;

@@ -40,6 +40,7 @@ import {
   DEFAULT_SYSTEM_TEMPLATE,
   SystemTemplate,
   ICON_CHOICES,
+  resolveNoteDestination,
   templateLabel,
   templateSettingKey,
 } from '../domain/noteTemplates';
@@ -88,6 +89,7 @@ import { dailyFocusTasks, plannerWeekRange, projectsNeedingAttention } from '../
 import { WeeklyReviewView } from './WeeklyReviewView';
 import { CalendarWeekView } from './CalendarWeekView';
 import { FolderPickerModal } from './FolderPickerModal';
+import { CreateEventNoteModal, EventNoteChoice, LinkedNoteKind } from './CreateEventNoteModal';
 import { ExistingParaFoldersModal } from './ExistingParaFoldersModal';
 import {
   PARA_ROOT_KINDS,
@@ -129,14 +131,20 @@ import {
   ensureInternetPermission,
 } from '../supernote/pluginPermissions';
 import { firstPickedFilePath, parentFolderFromPicker } from '../domain/fileSelection';
+import { cleanRelativeNoteSubpath, paraEventNoteFolder } from '../domain/eventNoteRouting';
+import { areaArchiveState, projectArchiveState } from '../domain/paraArchive';
 
 type SettingsTab = 'sync' | 'notes' | 'app' | 'help';
+type ConfigurableNoteKind = NoteKind | 'task';
+const CONFIGURABLE_NOTE_KINDS: ConfigurableNoteKind[] = ['daily', 'meeting', 'class', 'task'];
 
 type ArchiveFolderPrompt = {
   mode: 'archive' | 'restore';
   kind: 'project' | 'area';
   item: Project | Area;
   archiveProjects?: boolean;
+  /** Active Project ids captured before an Area archive changes their status. */
+  projectIds?: string[];
 };
 
 const DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -281,7 +289,13 @@ export function AgendaScreen(): React.JSX.Element {
   const [defaultView, setDefaultView] = useState<CalendarViewMode>('month');
   const [newTypeName, setNewTypeName] = useState<string>('');
   const newTypeInputRef = useRef<HandwritingTextInputHandle>(null);
-  const folderInputRefs = useRef<Partial<Record<NoteKind, HandwritingTextInputHandle | null>>>({});
+  const folderInputRefs = useRef<Partial<Record<ConfigurableNoteKind, HandwritingTextInputHandle | null>>>({});
+  const meetingParaSubpathRef = useRef<HandwritingTextInputHandle>(null);
+  const classParaSubpathRef = useRef<HandwritingTextInputHandle>(null);
+  const [routeEventNotesToPara, setRouteEventNotesToPara] = useState<boolean>(false);
+  const [meetingParaSubpath, setMeetingParaSubpath] = useState<string>('Meetings');
+  const [classParaSubpath, setClassParaSubpath] = useState<string>('Classes');
+  const [showAdvancedParaNoteLayout, setShowAdvancedParaNoteLayout] = useState<boolean>(false);
   const [iconPickerTypeId, setIconPickerTypeId] = useState<string | null>(null);
   /** Event type whose template is being chosen, if any. */
   const [typeTemplatePicker, setTypeTemplatePicker] = useState<EventType | null>(null);
@@ -316,6 +330,8 @@ export function AgendaScreen(): React.JSX.Element {
   /** User-selected Archive root; choosing one also makes it the future default. */
   const [archiveDestinationRoot, setArchiveDestinationRoot] = useState<string | null>(null);
   const [showArchiveRootPicker, setShowArchiveRootPicker] = useState<boolean>(false);
+  const [archiveMoveError, setArchiveMoveError] = useState<string>('');
+  const [archiveMoveBusy, setArchiveMoveBusy] = useState<boolean>(false);
   /** Area to reveal after correcting a Project's PARA classification. */
   const [paraFocusAreaId, setParaFocusAreaId] = useState<string | null>(null);
   /** Project a new task should be filed under, when adding from inside one. */
@@ -379,6 +395,9 @@ export function AgendaScreen(): React.JSX.Element {
     setCalendarWeekLength(settings.calendarWeekLength ?? 7);
     setDailyNoteFolder(settings.dailyNoteFolder || '/storage/emulated/0/Note/Daily Notes');
     setDailyNoteFormat(settings.dailyNoteFormat || 'YYYY-MM-DD');
+    setRouteEventNotesToPara(Boolean(settings.routeEventNotesToPara));
+    setMeetingParaSubpath(settings.meetingParaSubpath ?? 'Meetings');
+    setClassParaSubpath(settings.classParaSubpath ?? 'Classes');
     setCaldavCustomUrl(settings.caldavCustomUrl || '');
     setLastSuccessfulSync(settings.lastSuccessfulSync || '');
 
@@ -575,12 +594,14 @@ export function AgendaScreen(): React.JSX.Element {
   /** Raw output of the template/device probe, shown verbatim under the chooser. */
   const [templateProbe, setTemplateProbe] = useState<string[]>([]);
   /** Which note kind's template chooser is open, if any. */
-  const [templatePickerKind, setTemplatePickerKind] = useState<NoteKind | null>(null);
-  /** Event awaiting a Meeting-or-Class answer before its note is created. */
-  const [kindPromptEvent, setKindPromptEvent] = useState<CalendarEvent | null>(null);
+  const [templatePickerKind, setTemplatePickerKind] = useState<ConfigurableNoteKind | null>(null);
+  /** Event awaiting note-kind and destination confirmation. */
+  const [noteCreationEvent, setNoteCreationEvent] = useState<CalendarEvent | null>(null);
+  /** Task awaiting a named linked-note destination confirmation. */
+  const [taskNoteCreationTarget, setTaskNoteCreationTarget] = useState<CalendarTask | null>(null);
   /** In-progress folder edits, so typing is not fought by the stored value. */
-  const [folderDrafts, setFolderDrafts] = useState<Partial<Record<NoteKind, string>>>({});
-  const [folderPickerTarget, setFolderPickerTarget] = useState<NoteKind | ParaRootKind | null>(null);
+  const [folderDrafts, setFolderDrafts] = useState<Partial<Record<ConfigurableNoteKind, string>>>({});
+  const [folderPickerTarget, setFolderPickerTarget] = useState<ConfigurableNoteKind | ParaRootKind | null>(null);
   const [paraImportKind, setParaImportKind] = useState<ParaRootKind | null>(null);
   const [paraImportFolders, setParaImportFolders] = useState<ParaFolderEntry[]>([]);
   const [systemTemplates, setSystemTemplates] = useState<SystemTemplate[]>([]);
@@ -1593,25 +1614,29 @@ export function AgendaScreen(): React.JSX.Element {
     setStatusMsg(`Probe complete (${lines.length} lines).`);
   };
 
-  const noteTemplateFor = (kind: NoteKind): string => {
+  const noteTemplateFor = (kind: ConfigurableNoteKind): string => {
     const settings = calendarStorage.getSettings();
     // templateRevision is read so the row re-renders after a write.
     void templateRevision;
+    if (kind === 'task') return settings.taskNoteTemplate || DEFAULT_SYSTEM_TEMPLATE;
     return (settings[templateSettingKey(kind)] as string) || DEFAULT_SYSTEM_TEMPLATE;
   };
 
-  const noteFolderFor = (kind: NoteKind): string => {
+  const noteFolderFor = (kind: ConfigurableNoteKind): string => {
     const settings = calendarStorage.getSettings();
     void templateRevision;
     if (kind === 'daily') return settings.dailyNoteFolder || '/storage/emulated/0/Note/Daily Notes';
     if (kind === 'class') {
       return settings.classNotesDirectory || '/storage/emulated/0/Note/Classes';
     }
+    if (kind === 'task') return settings.taskNotesDirectory || '/storage/emulated/0/Note/Task Notes';
     return settings.notesDirectory || '/storage/emulated/0/Note/Meetings';
   };
 
-  const setNoteTemplate = (kind: NoteKind, value: string) => {
-    calendarStorage.updateSettings({ [templateSettingKey(kind)]: value });
+  const setNoteTemplate = (kind: ConfigurableNoteKind, value: string) => {
+    calendarStorage.updateSettings(kind === 'task'
+      ? { taskNoteTemplate: value }
+      : { [templateSettingKey(kind)]: value });
     setTemplateRevision(n => n + 1);
     setTemplatePickerKind(null);
     setStatusMsg(`${kind} template set to ${templateLabel(value)}.`);
@@ -1622,7 +1647,7 @@ export function AgendaScreen(): React.JSX.Element {
    * available — the SDK exposes no folder-creation call of its own — so if it
    * cannot make a folder, ensureDirectory creates the chosen path anyway.
    */
-  const saveNoteFolder = async (kind: NoteKind, folder: string) => {
+  const saveNoteFolder = async (kind: ConfigurableNoteKind, folder: string) => {
     const trimmed = folder.trim().replace(/\/+$/, '');
     if (!trimmed.startsWith('/')) {
       setStatusMsg('Folder must be a full path, e.g. /storage/emulated/0/Note/Classes');
@@ -1643,14 +1668,16 @@ export function AgendaScreen(): React.JSX.Element {
    * note you are in. A folder that does not exist yet cannot be reached at
    * all this way, which is why the path is editable above.
    */
-  const handleChooseNoteFolder = (kind: NoteKind) => setFolderPickerTarget(kind);
+  const handleChooseNoteFolder = (kind: ConfigurableNoteKind) => setFolderPickerTarget(kind);
 
-  const applyNoteFolder = (kind: NoteKind, folder: string) => {
+  const applyNoteFolder = (kind: ConfigurableNoteKind, folder: string) => {
     if (kind === 'daily') {
       setDailyNoteFolder(folder);
       calendarStorage.updateSettings({ dailyNoteFolder: folder });
     } else if (kind === 'class') {
       calendarStorage.updateSettings({ classNotesDirectory: folder });
+    } else if (kind === 'task') {
+      calendarStorage.updateSettings({ taskNotesDirectory: folder });
     } else {
       setTargetNotesDir(folder);
       calendarStorage.updateSettings({ notesDirectory: folder });
@@ -1739,7 +1766,7 @@ export function AgendaScreen(): React.JSX.Element {
     setStatusMsg(`${kind === 'archive' ? 'Imported archived' : 'Associated'} ${entry.name} with ${entry.path}.`);
   };
 
-  const handleChooseCustomTemplate = async (kind: NoteKind) => {
+  const handleChooseCustomTemplate = async (kind: ConfigurableNoteKind) => {
     try {
       if (!RattaFileSelector || !RattaFileSelector.selectFile) {
         setStatusMsg('Native file picker unavailable on this device.');
@@ -1785,41 +1812,73 @@ export function AgendaScreen(): React.JSX.Element {
     }
   };
 
-  /**
-   * Creates a note, asking what kind it is the first time and remembering the
-   * answer. A recurring class is answered once rather than every week.
-   */
+  /** Opens note-specific choices at the moment the file is actually created. */
   const handleRequestNoteCreation = (event: CalendarEvent) => {
     setShowDateActionSheet(false);
-
-    // A typed event has already answered where its notes go and what they look
-    // like, so there is nothing to ask. The prompt survives only for events
-    // with no type, and disappears entirely once types are in use.
-    if (calendarStorage.getEventType(noteIdentity(event))) {
-      void handleExecuteNoteCreation(event);
-      return;
-    }
-
-    // Keyed on the series, so a weekly class is asked once rather than
-    // every occurrence.
-    const known = calendarStorage.getEventKind(noteIdentity(event));
-    if (known) {
-      void handleExecuteNoteCreation(event, known);
-      return;
-    }
-    setKindPromptEvent(event);
+    setNoteCreationEvent(event);
   };
 
-  const handleAnswerNoteKind = (kind: NoteKind) => {
-    const event = kindPromptEvent;
-    setKindPromptEvent(null);
-    if (!event) return;
+  const noteChoiceFor = (event: CalendarEvent, kind: 'meeting' | 'class'): EventNoteChoice => {
+    const settings = calendarStorage.getSettings();
+    const typeId = calendarStorage.getEventType(noteIdentity(event));
+    const eventType = typeId ? calendarStorage.getEventTypes().find(type => type.id === typeId) : undefined;
+    const fallbackFolder = kind === 'class'
+      ? settings.classNotesDirectory || settings.notesDirectory
+      : settings.notesDirectory;
+    const fallbackTemplate = (kind === 'class' ? settings.classTemplate : settings.meetingTemplate) || DEFAULT_SYSTEM_TEMPLATE;
+    const destination = resolveNoteDestination(eventType, {
+      folder: fallbackFolder || '/storage/emulated/0/Note/Meetings',
+      template: fallbackTemplate,
+    });
+    const membership = calendarStorage.getMembership(noteIdentity(event));
+    const project = membership.projectId
+      ? calendarStorage.getProjects().find(candidate => candidate.id === membership.projectId)
+      : undefined;
+    const area = resolveArea(
+      membership,
+      calendarStorage.getProjects(),
+      calendarStorage.getAreas(),
+      calendarStorage.getEventTypes()
+    );
+    const contextFolder = paraEventNoteFolder(
+      settings,
+      kind,
+      project ? folderForParaItem('project', project) : undefined,
+      area ? folderForParaItem('area', area) : undefined
+    );
+
+    return {
+      contextFolder,
+      contextLabel: project ? `Project: ${project.name}` : area ? `Area: ${area.name}` : undefined,
+      defaultFolder: normaliseFolderPath(destination.folder),
+      defaultLabel: eventType?.folder ? `Event Type: ${eventType.name}` : `Standard ${kind === 'class' ? 'Class' : 'Meeting'} folder`,
+      templateLabel: templateLabel(destination.template),
+    };
+  };
+
+  const suggestedEventNoteName = (event: CalendarEvent, kind: 'meeting' | 'class'): string =>
+    generateNoteFilename(
+      event,
+      Boolean(event.recurringSeriesId),
+      calendarStorage.getSettings().seriesNotebookPrefix,
+      kind
+    ).replace(/\.note$/i, '');
+
+  const handleConfirmNoteCreation = (kind: LinkedNoteKind, folder: string, name: string) => {
+    const event = noteCreationEvent;
+    setNoteCreationEvent(null);
+    if (!event || kind === 'task') return;
     calendarStorage.setEventKind(noteIdentity(event), kind);
     setNoteKindByEvent(prev => ({ ...prev, [noteIdentity(event)]: kind }));
-    void handleExecuteNoteCreation(event, kind);
+    void handleExecuteNoteCreation(event, kind, folder, name);
   };
 
-  const handleExecuteNoteCreation = async (event: CalendarEvent, kind: NoteKind = 'meeting') => {
+  const handleExecuteNoteCreation = async (
+    event: CalendarEvent,
+    kind: 'meeting' | 'class' = 'meeting',
+    selectedFolder?: string,
+    noteName?: string
+  ) => {
     setShowDateActionSheet(false);
     setStatusMsg(`Creating ${eventTypeName(event) || kind} note...`);
 
@@ -1830,7 +1889,9 @@ export function AgendaScreen(): React.JSX.Element {
       event,
       false,
       kind,
-      eventType
+      eventType,
+      selectedFolder,
+      noteName
     );
     if (result.success) {
       const actionText = result.isNewFile ? 'Created' : `Appended page ${result.pageNum} of`;
@@ -2636,15 +2697,15 @@ export function AgendaScreen(): React.JSX.Element {
     newEvent: CalendarEvent,
     targetFeedId: string,
     typeId?: string,
-    projectId?: string
+    projectId?: string,
+    areaId?: string
   ) => {
     // Stored beside the event rather than on it: a sync rebuilds the event
     // object from ICS, and anything held on it would be lost.
     const identity = noteIdentity(newEvent);
-    // No area is written. An event's area follows its project or its type,
-    // read fresh each time — storing it froze whichever type the event was
-    // tagged with first, with no way to correct it afterwards.
-    calendarStorage.setMembership(identity, { typeId, projectId, areaId: undefined });
+    // A Project owns its Area. Without a Project, an explicit Area wins over
+    // the Event Type's default; leaving it blank continues to follow the type.
+    calendarStorage.setMembership(identity, { typeId, projectId, areaId: projectId ? undefined : areaId });
     setMembershipRevision(n => n + 1);
 
     // Same uid means this is an edit: replace in place rather than appending a
@@ -2832,46 +2893,36 @@ export function AgendaScreen(): React.JSX.Element {
       if (!project) return;
       const move = movedById.get(project.id);
       if (prompt.mode === 'archive') {
-        calendarStorage.upsertProject({
-          ...project,
-          status: 'archived',
-          folder: move?.destination || project.folder,
-          archivedFromFolder: move?.source,
-        });
+        calendarStorage.upsertProject(projectArchiveState(project, 'archive', move));
         if (openProject?.id === project.id) setOpenProject(null);
       } else {
         const area = project.areaId
           ? calendarStorage.getAreas().find(candidate => candidate.id === project.areaId)
           : undefined;
         if (area?.archived) calendarStorage.upsertArea({ ...area, archived: false });
-        calendarStorage.upsertProject({
-          ...project,
-          status: 'active',
-          completedAt: undefined,
-          folder: move?.destination || project.folder,
-          archivedFromFolder: undefined,
-        });
+        calendarStorage.upsertProject(projectArchiveState(project, 'restore', move));
       }
     } else {
       const area = calendarStorage.getAreas().find(candidate => candidate.id === prompt.item.id);
       if (!area) return;
       const areaMove = movedById.get(area.id);
-      calendarStorage.upsertArea({
-        ...area,
-        archived: prompt.mode === 'archive',
-        folder: areaMove?.destination || area.folder,
-        archivedFromFolder: prompt.mode === 'archive' ? areaMove?.source : undefined,
-      });
+      calendarStorage.upsertArea(areaArchiveState(area, prompt.mode, areaMove));
       if (prompt.mode === 'archive') {
         for (const project of calendarStorage.getProjects()) {
-          if (project.areaId !== area.id || project.status !== 'active') continue;
+          const wasActiveWhenPrompted = prompt.projectIds
+            ? prompt.projectIds.includes(project.id)
+            : project.status === 'active';
+          if (
+            project.areaId !== area.id ||
+            (!wasActiveWhenPrompted && !movedById.has(project.id))
+          ) continue;
           const projectMove = movedById.get(project.id);
           calendarStorage.upsertProject({
             ...project,
             areaId: prompt.archiveProjects ? project.areaId : undefined,
             status: prompt.archiveProjects ? 'archived' : 'active',
             folder: projectMove?.destination || project.folder,
-            archivedFromFolder: projectMove?.source,
+            archivedFromFolder: projectMove?.source || project.archivedFromFolder,
           });
         }
       }
@@ -2903,8 +2954,9 @@ export function AgendaScreen(): React.JSX.Element {
       destination: `${archiveRoot}/${prompt.kind === 'area' ? 'Areas' : 'Projects'}/${safeFolderName(prompt.item.name)}`,
     }];
     if (prompt.kind === 'area' && prompt.archiveProjects) {
-      for (const project of calendarStorage.getProjects()) {
-        if (project.areaId !== prompt.item.id || project.status !== 'active') continue;
+      for (const projectId of prompt.projectIds || []) {
+        const project = calendarStorage.getProjects().find(candidate => candidate.id === projectId);
+        if (!project) continue;
         moves.push({
           kind: 'project',
           id: project.id,
@@ -2919,19 +2971,35 @@ export function AgendaScreen(): React.JSX.Element {
 
   const finishArchiveChoice = async (moveFolders: boolean) => {
     const prompt = archiveFolderPrompt;
-    if (!prompt) return;
-    setArchiveFolderPrompt(null);
+    if (!prompt || archiveMoveBusy) return;
+    setArchiveMoveError('');
+    setArchiveMoveBusy(true);
+
+    // Status is the core PARA action. Persist it before asking Android to
+    // touch files so a denied permission, unsupported rename, or plugin-panel
+    // transition can never leave the item active.
+    const moves = moveFolders ? archiveMovesFor(prompt) : [];
+    applyArchiveMetadata(prompt);
+    const statusPersistenceError = await calendarStorage.flush();
+    const verb = prompt.mode === 'archive' ? 'Archived' : 'Restored';
+    if (statusPersistenceError) {
+      const message = `${verb} for this session, but SNFolio could not save the status: ${statusPersistenceError}`;
+      setArchiveMoveError(message);
+      setStatusMsg(message);
+      setArchiveMoveBusy(false);
+      return;
+    }
 
     if (!moveFolders) {
-      applyArchiveMetadata(prompt);
-      const verb = prompt.mode === 'archive' ? 'Archived' : 'Restored';
+      setArchiveFolderPrompt(null);
+      setArchiveMoveBusy(false);
       setStatusMsg(`${verb} ${prompt.kind} "${prompt.item.name}" without moving its folder.`);
       return;
     }
 
-    const moves = archiveMovesFor(prompt);
     if (moves.length === 0) {
-      applyArchiveMetadata(prompt);
+      setArchiveFolderPrompt(null);
+      setArchiveMoveBusy(false);
       setStatusMsg(`Restored ${prompt.kind} "${prompt.item.name}". No previous folder location was recorded.`);
       return;
     }
@@ -2946,7 +3014,10 @@ export function AgendaScreen(): React.JSX.Element {
       sources.some((other, otherIndex) => index !== otherIndex && other.startsWith(`${source}/`))
     );
     if (overlaps || new Set(sources).size !== sources.length || new Set(destinations).size !== destinations.length) {
-      setStatusMsg('Folders overlap or share a destination. Archive without moving, or choose separate folders first.');
+      const message = 'Folders overlap or share a destination. Choose separate folders or archive without moving.';
+      setArchiveMoveError(message);
+      setStatusMsg(`${verb} ${prompt.kind} "${prompt.item.name}", but its folder stayed in place. ${message}`);
+      setArchiveMoveBusy(false);
       return;
     }
 
@@ -2954,10 +3025,18 @@ export function AgendaScreen(): React.JSX.Element {
     for (const move of normalized) {
       const result = await moveParaFolder(move.source, move.destination);
       if (!result.success) {
+        const rollbackFailures: string[] = [];
         for (const prior of [...completed].reverse()) {
-          await moveParaFolder(prior.destination, prior.source);
+          const rollback = await moveParaFolder(prior.destination, prior.source);
+          if (!rollback.success) rollbackFailures.push(prior.name);
         }
-        setStatusMsg(`No archive changes were made. Could not move "${move.name}": ${result.message}`);
+        const message = `Could not move "${move.name}": ${result.message}`;
+        const rollbackMessage = rollbackFailures.length > 0
+          ? ` Rollback also failed for: ${rollbackFailures.join(', ')}.`
+          : '';
+        setArchiveMoveError(`${verb} status was saved, but ${message}${rollbackMessage}`);
+        setStatusMsg(`${verb} ${prompt.kind} "${prompt.item.name}"; its folder stayed in place. ${message}${rollbackMessage}`);
+        setArchiveMoveBusy(false);
         return;
       }
       completed.push(move);
@@ -2979,28 +3058,47 @@ export function AgendaScreen(): React.JSX.Element {
     setResources([...calendarStorage.getResources()]);
     const persistenceError = await calendarStorage.flush();
     if (persistenceError) {
+      setArchiveFolderPrompt(null);
+      setArchiveMoveBusy(false);
       setStatusMsg(`Folder moved, but SNFolio could not save all path updates: ${persistenceError}`);
       return;
     }
-    const verb = prompt.mode === 'archive' ? 'Archived' : 'Restored';
+    setArchiveFolderPrompt(null);
+    setArchiveMoveBusy(false);
     setStatusMsg(`${verb} ${prompt.kind} "${prompt.item.name}" and moved ${completed.length === 1 ? 'its folder' : `${completed.length} folders`}.`);
   };
 
   const handleArchiveProject = (project: Project) => {
     setArchiveDestinationRoot(null);
+    setArchiveMoveError('');
+    setArchiveMoveBusy(false);
     setArchiveFolderPrompt({ mode: 'archive', kind: 'project', item: project });
   };
 
   const handleRestoreProject = (project: Project) => {
+    setArchiveMoveError('');
+    setArchiveMoveBusy(false);
     setArchiveFolderPrompt({ mode: 'restore', kind: 'project', item: project });
   };
 
   const handleArchiveArea = (area: Area, archiveProjects: boolean) => {
     setArchiveDestinationRoot(null);
-    setArchiveFolderPrompt({ mode: 'archive', kind: 'area', item: area, archiveProjects });
+    setArchiveMoveError('');
+    setArchiveMoveBusy(false);
+    setArchiveFolderPrompt({
+      mode: 'archive',
+      kind: 'area',
+      item: area,
+      archiveProjects,
+      projectIds: calendarStorage.getProjects()
+        .filter(project => project.areaId === area.id && project.status === 'active')
+        .map(project => project.id),
+    });
   };
 
   const handleRestoreArea = (area: Area) => {
+    setArchiveMoveError('');
+    setArchiveMoveBusy(false);
     setArchiveFolderPrompt({ mode: 'restore', kind: 'area', item: area });
   };
 
@@ -3160,6 +3258,60 @@ export function AgendaScreen(): React.JSX.Element {
     return calendarStorage.getMembership(uid).projectId;
   };
 
+  const taskNoteChoiceFor = (task: CalendarTask): EventNoteChoice => {
+    const settings = calendarStorage.getSettings();
+    const projectId = projectOfTask(task.uid);
+    const project = projectId ? projects.find(candidate => candidate.id === projectId) : undefined;
+    const areaId = areaOfTask(task.uid);
+    const area = areaId ? areas.find(candidate => candidate.id === areaId) : undefined;
+    return {
+      contextFolder: project
+        ? folderForParaItem('project', project)
+        : area
+          ? folderForParaItem('area', area)
+          : undefined,
+      contextLabel: project ? `Project: ${project.name}` : area ? `Area: ${area.name}` : undefined,
+      defaultFolder: normaliseFolderPath(settings.taskNotesDirectory || '/storage/emulated/0/Note/Task Notes'),
+      defaultLabel: 'Standard Task Notes folder',
+      templateLabel: templateLabel(settings.taskNoteTemplate || DEFAULT_SYSTEM_TEMPLATE),
+    };
+  };
+
+  const handleRequestTaskNote = (task: CalendarTask) => {
+    const existingPath = calendarStorage.getMapping(task.uid)?.notePath;
+    if (existingPath) {
+      void handleOpenExistingNote(existingPath);
+      return;
+    }
+    setShowItemCreationModal(false);
+    setTaskNoteCreationTarget(task);
+  };
+
+  const handleConfirmTaskNote = async (kind: LinkedNoteKind, folder: string, name: string) => {
+    const task = taskNoteCreationTarget;
+    setTaskNoteCreationTarget(null);
+    if (!task || kind !== 'task') return;
+    setStatusMsg(`Creating note for "${task.title}"...`);
+    const settings = calendarStorage.getSettings();
+    const result = await meetingNoteService.createTaskNote(
+      task,
+      name,
+      folder,
+      settings.taskNoteTemplate || DEFAULT_SYSTEM_TEMPLATE
+    );
+    if (!result.success) {
+      setStatusMsg(`Could not create task note: ${result.error || 'unknown error'}`);
+      return;
+    }
+    setMembershipRevision(value => value + 1);
+    await prepareForNativeFileOpen();
+    const opened = await openNoteInEditor(result.notePath);
+    setStatusMsg(opened.success
+      ? `Created ${result.notePath.split('/').pop()}`
+      : `Created ${result.notePath.split('/').pop()}, but could not open it: ${opened.message}`);
+    if (opened.success) closePanel();
+  };
+
   /** Folder for a type's notes. Same browse-a-file-take-its-parent as elsewhere. */
   const handleChooseTypeFolder = async (type: EventType) => {
     try {
@@ -3187,7 +3339,7 @@ export function AgendaScreen(): React.JSX.Element {
   };
 
   /**
-   * Notes written for this project's events — the meeting ledger.
+   * Notes written for this project's events and tasks.
    *
    * Read from the note mappings rather than the filesystem: the mapping is
    * what records that a note was made for a given event, including notes filed
@@ -3757,7 +3909,8 @@ export function AgendaScreen(): React.JSX.Element {
             )}
             {archiveFolderPrompt?.mode === 'archive' && (
               <TouchableOpacity
-                style={styles.archiveLocationBtn}
+                disabled={archiveMoveBusy}
+                style={[styles.archiveLocationBtn, archiveMoveBusy && styles.disabledBtn]}
                 onPress={() => setShowArchiveRootPicker(true)}
               >
                 <Text allowFontScaling={false} style={styles.archiveLocationBtnText}>
@@ -3772,10 +3925,20 @@ export function AgendaScreen(): React.JSX.Element {
               <Text allowFontScaling={false} style={styles.archiveWarningText}>
                 ⚠ Moving folders can break links inside Supernote notes, Recent files, shortcuts,
                 and links saved by other apps. SNFolio can update only paths it owns. Close files
-                in these folders before continuing.
+                in these folders before continuing. Supernote calls moving a folder “delete”
+                permission because the old path is removed; SNFolio does not delete its contents.
               </Text>
             </View>
-            <TouchableOpacity style={styles.actionSheetBtn} onPress={() => void finishArchiveChoice(false)}>
+            {archiveMoveError !== '' && (
+              <View style={styles.archiveErrorBox}>
+                <Text allowFontScaling={false} style={styles.archiveErrorText}>{archiveMoveError}</Text>
+              </View>
+            )}
+            <TouchableOpacity
+              disabled={archiveMoveBusy}
+              style={[styles.actionSheetBtn, archiveMoveBusy && styles.disabledBtn]}
+              onPress={() => void finishArchiveChoice(false)}
+            >
               <Text allowFontScaling={false} style={styles.actionSheetBtnText}>
                 {archiveFolderPrompt?.mode === 'restore'
                   ? 'Restore Only — Keep Folder Here'
@@ -3785,15 +3948,26 @@ export function AgendaScreen(): React.JSX.Element {
             {archiveFolderPrompt && (
               archiveFolderPrompt.mode === 'archive' || archiveMovesFor(archiveFolderPrompt).length > 0
             ) && (
-              <TouchableOpacity style={styles.deleteOptionBtnDanger} onPress={() => void finishArchiveChoice(true)}>
+              <TouchableOpacity
+                disabled={archiveMoveBusy}
+                style={[styles.deleteOptionBtnDanger, archiveMoveBusy && styles.disabledBtn]}
+                onPress={() => void finishArchiveChoice(true)}
+              >
                 <Text allowFontScaling={false} style={styles.deleteOptionBtnTextDanger}>
-                  {archiveFolderPrompt.mode === 'restore'
+                  {archiveMoveBusy ? 'Moving Folder…' : archiveFolderPrompt.mode === 'restore'
                     ? 'Restore & Move Folder Back'
                     : 'Archive & Move Folder'}
                 </Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity style={styles.cancelBtn} onPress={() => setArchiveFolderPrompt(null)}>
+            <TouchableOpacity
+              disabled={archiveMoveBusy}
+              style={[styles.cancelBtn, archiveMoveBusy && styles.disabledBtn]}
+              onPress={() => {
+                setArchiveMoveError('');
+                setArchiveFolderPrompt(null);
+              }}
+            >
               <Text allowFontScaling={false} style={styles.cancelBtnText}>Cancel</Text>
             </TouchableOpacity>
           </View>
@@ -3907,41 +4081,49 @@ export function AgendaScreen(): React.JSX.Element {
           setShowTaskList(false);
           handleEditTask(task);
         }}
+        notePathFor={uid => calendarStorage.getMapping(uid)?.notePath}
+        onNoteAction={(task, existingPath) => {
+          setShowTaskList(false);
+          if (existingPath) {
+            void handleOpenExistingNote(existingPath);
+          } else {
+            handleRequestTaskNote(task);
+          }
+        }}
       />
 
-      {/* Asked once per event, then remembered. Replaces the global
-          Business/Academic mode deciding this for every note at once. */}
-      <Modal visible={kindPromptEvent !== null} transparent animationType="fade">
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setKindPromptEvent(null)}
-        >
-          <View style={styles.actionSheetContentCompact}>
-            <Text allowFontScaling={false} style={styles.actionSheetTitle}>What kind of note?</Text>
-            <Text allowFontScaling={false} style={styles.bodyTextCenter} numberOfLines={2}>
-              "{kindPromptEvent?.summary}"
-            </Text>
+      {noteCreationEvent && (
+        <CreateEventNoteModal
+          visible
+          eventKey={noteIdentity(noteCreationEvent)}
+          eventTitle={noteCreationEvent.summary}
+          initialKind={calendarStorage.getEventKind(noteIdentity(noteCreationEvent)) === 'class' ? 'class' : 'meeting'}
+          initialName={suggestedEventNoteName(
+            noteCreationEvent,
+            calendarStorage.getEventKind(noteIdentity(noteCreationEvent)) === 'class' ? 'class' : 'meeting'
+          )}
+          preferContext={Boolean(calendarStorage.getSettings().routeEventNotesToPara)}
+          meeting={noteChoiceFor(noteCreationEvent, 'meeting')}
+          classNote={noteChoiceFor(noteCreationEvent, 'class')}
+          onCancel={() => setNoteCreationEvent(null)}
+          onCreate={handleConfirmNoteCreation}
+        />
+      )}
 
-            <TouchableOpacity style={styles.deleteOptionBtn} onPress={() => handleAnswerNoteKind('meeting')}>
-              <Text allowFontScaling={false} style={styles.deleteOptionBtnText}>🏢 Meeting Note</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.deleteOptionBtn} onPress={() => handleAnswerNoteKind('class')}>
-              <Text allowFontScaling={false} style={styles.deleteOptionBtnText}>🎓 Class Note</Text>
-            </TouchableOpacity>
-
-            <Text allowFontScaling={false} style={styles.previewHint}>
-              Remembered for this event — a recurring class is only asked once. Change it later
-              from the event's details.
-            </Text>
-
-            <TouchableOpacity style={styles.cancelBtn} onPress={() => setKindPromptEvent(null)}>
-              <Text allowFontScaling={false} style={styles.cancelBtnText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
+      {taskNoteCreationTarget && (
+        <CreateEventNoteModal
+          visible
+          mode="task"
+          eventKey={taskNoteCreationTarget.uid}
+          eventTitle={taskNoteCreationTarget.title}
+          initialKind="task"
+          initialName={taskNoteCreationTarget.title}
+          preferContext
+          taskNote={taskNoteChoiceFor(taskNoteCreationTarget)}
+          onCancel={() => setTaskNoteCreationTarget(null)}
+          onCreate={handleConfirmTaskNote}
+        />
+      )}
 
       <DatePickerModal
         visible={projectDueTarget !== null}
@@ -3982,6 +4164,8 @@ export function AgendaScreen(): React.JSX.Element {
                   ? 'Daily'
                   : templatePickerKind === 'class'
                   ? 'Class'
+                  : templatePickerKind === 'task'
+                  ? 'Task'
                   : 'Meeting'}{' '}
                 Note Template
               </Text>
@@ -4046,18 +4230,18 @@ export function AgendaScreen(): React.JSX.Element {
 
         <FolderPickerModal
           visible={folderPickerTarget !== null}
-          title={folderPickerTarget && (['daily', 'meeting', 'class'] as string[]).includes(folderPickerTarget)
+          title={folderPickerTarget && CONFIGURABLE_NOTE_KINDS.includes(folderPickerTarget as ConfigurableNoteKind)
             ? `Choose ${folderPickerTarget} notes folder`
             : `Choose ${folderPickerTarget || 'PARA'} root`}
-          initialPath={folderPickerTarget && (['daily', 'meeting', 'class'] as string[]).includes(folderPickerTarget)
-            ? noteFolderFor(folderPickerTarget as NoteKind)
+          initialPath={folderPickerTarget && CONFIGURABLE_NOTE_KINDS.includes(folderPickerTarget as ConfigurableNoteKind)
+            ? noteFolderFor(folderPickerTarget as ConfigurableNoteKind)
             : folderPickerTarget ? paraRootFor(folderPickerTarget as ParaRootKind) : '/storage/emulated/0'}
           onCancel={() => setFolderPickerTarget(null)}
           onSelect={async folder => {
             const target = folderPickerTarget;
             if (!target) return;
-            if ((['daily', 'meeting', 'class'] as string[]).includes(target)) {
-              applyNoteFolder(target as NoteKind, folder);
+            if (CONFIGURABLE_NOTE_KINDS.includes(target as ConfigurableNoteKind)) {
+              applyNoteFolder(target as ConfigurableNoteKind, folder);
             } else {
               applyParaRoot(target as ParaRootKind, folder);
             }
@@ -4536,8 +4720,8 @@ export function AgendaScreen(): React.JSX.Element {
               </View>
 
               <Text allowFontScaling={false} style={[styles.sectionTitle, styles.compactSectionTitle]}>Note Templates &amp; Folders</Text>
-              {(['daily', 'meeting', 'class'] as NoteKind[]).map(kind => {
-                const label = kind === 'daily' ? 'Daily' : kind === 'class' ? 'Class' : 'Meeting';
+              {CONFIGURABLE_NOTE_KINDS.map(kind => {
+                const label = kind === 'daily' ? 'Daily' : kind === 'class' ? 'Class' : kind === 'task' ? 'Task' : 'Meeting';
                 const value = noteTemplateFor(kind);
                 const folder = noteFolderFor(kind);
                 return (
@@ -4565,6 +4749,114 @@ export function AgendaScreen(): React.JSX.Element {
                   </View>
                 );
               })}
+
+              <View style={styles.paraNoteRoutingCard}>
+                <View style={styles.paraNoteRoutingHeader}>
+                  <View style={styles.paraNoteRoutingCopy}>
+                    <Text allowFontScaling={false} style={styles.paraNoteRoutingTitle}>
+                      Default Event Note Location
+                    </Text>
+                    <Text allowFontScaling={false} style={styles.paraNoteRoutingSummary}>
+                      Create Note always shows the destination and lets you change it first.
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.noteLocationPolicyRow}>
+                  <TouchableOpacity
+                    style={[styles.noteLocationPolicy, routeEventNotesToPara && styles.noteLocationPolicySelected]}
+                    onPress={() => {
+                      setRouteEventNotesToPara(true);
+                      calendarStorage.updateSettings({ routeEventNotesToPara: true });
+                    }}
+                  >
+                    <Text
+                      allowFontScaling={false}
+                      style={[
+                        styles.noteLocationPolicyText,
+                        routeEventNotesToPara && styles.noteLocationPolicyTextSelected,
+                      ]}
+                    >
+                      Project / Area
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.noteLocationPolicy, !routeEventNotesToPara && styles.noteLocationPolicySelected]}
+                    onPress={() => {
+                      setRouteEventNotesToPara(false);
+                      calendarStorage.updateSettings({ routeEventNotesToPara: false });
+                    }}
+                  >
+                    <Text
+                      allowFontScaling={false}
+                      style={[
+                        styles.noteLocationPolicyText,
+                        !routeEventNotesToPara && styles.noteLocationPolicyTextSelected,
+                      ]}
+                    >
+                      Standard Folders
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <Text allowFontScaling={false} style={styles.checkSettingHint}>
+                  {routeEventNotesToPara
+                    ? 'Prefer the assigned Project, then Area. Unassigned events use the folders above.'
+                    : 'Prefer the Meeting or Class folder above, even when the event has a Project or Area.'}
+                </Text>
+                {routeEventNotesToPara && (
+                  <>
+                    <TouchableOpacity
+                      style={styles.advancedLayoutButton}
+                      onPress={() => setShowAdvancedParaNoteLayout(value => !value)}
+                    >
+                      <Text allowFontScaling={false} style={styles.advancedLayoutButtonText}>
+                        {showAdvancedParaNoteLayout ? '▾ Hide' : '▸ Show'} advanced folder layout
+                      </Text>
+                    </TouchableOpacity>
+                  {showAdvancedParaNoteLayout && (
+                    <View style={styles.relativePathRow}>
+                    <View style={styles.relativePathField}>
+                      <Text allowFontScaling={false} style={[styles.compactNoteLabel, styles.relativePathLabel]}>Meeting subpath</Text>
+                      <HandwritingTextInput
+                        ref={meetingParaSubpathRef}
+                        style={[styles.textInput, styles.compactPathInput]}
+                        value={meetingParaSubpath}
+                        onChangeText={setMeetingParaSubpath}
+                        onEndEditing={() => {
+                          const value = cleanRelativeNoteSubpath(
+                            meetingParaSubpathRef.current?.getValue() ?? meetingParaSubpath
+                          );
+                          setMeetingParaSubpath(value);
+                          calendarStorage.updateSettings({ meetingParaSubpath: value });
+                        }}
+                        placeholder="Meetings (blank = item root)"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                    </View>
+                    <View style={styles.relativePathField}>
+                      <Text allowFontScaling={false} style={[styles.compactNoteLabel, styles.relativePathLabel]}>Class subpath</Text>
+                      <HandwritingTextInput
+                        ref={classParaSubpathRef}
+                        style={[styles.textInput, styles.compactPathInput]}
+                        value={classParaSubpath}
+                        onChangeText={setClassParaSubpath}
+                        onEndEditing={() => {
+                          const value = cleanRelativeNoteSubpath(
+                            classParaSubpathRef.current?.getValue() ?? classParaSubpath
+                          );
+                          setClassParaSubpath(value);
+                          calendarStorage.updateSettings({ classParaSubpath: value });
+                        }}
+                        placeholder="Classes (blank = item root)"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                    </View>
+                    </View>
+                  )}
+                  </>
+                )}
+              </View>
             </View>
 
             <View style={styles.paraRootsSection}>
@@ -4626,7 +4918,8 @@ export function AgendaScreen(): React.JSX.Element {
           <Text allowFontScaling={false} style={styles.bodyText}>
             What kinds of event you have — Class, Work, Personal. Each carries where its notes are
             filed and what they look like, so tagging an event settles both and no prompt appears
-            when you create a note. Untyped events fall back to the per-kind folders above.
+            when you create a note. When PARA-relative filing is enabled, a Project or Area folder
+            wins; the Event Type folder remains the fallback.
           </Text>
 
           {eventTypes.map(type => (
@@ -5121,8 +5414,22 @@ export function AgendaScreen(): React.JSX.Element {
                 ? calendarStorage.getMembership(noteIdentity(editingEvent)).projectId
                 : undefined
             }
+            eventAreaId={
+              editingEvent
+                ? calendarStorage.getMembership(noteIdentity(editingEvent)).areaId
+                : undefined
+            }
             onCreateTask={handleCreateNewTask}
             editingTask={editingTask}
+            taskNotePath={editingTask ? calendarStorage.getMapping(editingTask.uid)?.notePath : undefined}
+            onTaskNoteAction={(task, existingPath) => {
+              if (existingPath) {
+                setShowItemCreationModal(false);
+                void handleOpenExistingNote(existingPath);
+              } else {
+                handleRequestTaskNote(task);
+              }
+            }}
             areas={areas}
             taskAreaId={editingTask ? areaOfTask(editingTask.uid) : undefined}
             onCreateArea={handleCreateArea}
@@ -5301,6 +5608,11 @@ export function AgendaScreen(): React.JSX.Element {
               events={paraUpcomingEvents}
               projectOf={projectOfTask}
               projectOfEvent={event => calendarStorage.getMembership(noteIdentity(event)).projectId}
+              areaOfEvent={event => resolveAreaId(
+                calendarStorage.getMembership(noteIdentity(event)),
+                calendarStorage.getProjects(),
+                calendarStorage.getEventTypes()
+              )}
               areaOf={areaOfTask}
               onNewProject={(name, areaId) => handleCreateProject(name, areaId)}
               onNewArea={name => handleCreateArea(name)}
@@ -6174,6 +6486,36 @@ const styles = StyleSheet.create({
   compactPathInput: { minWidth: 80, paddingVertical: 3, paddingHorizontal: 6, fontSize: 11, marginRight: 6 },
   compactBrowse: { borderWidth: 1, borderColor: '#000000', borderRadius: 4, paddingVertical: 7, paddingHorizontal: 9, marginRight: 5 },
   compactBrowseText: { fontSize: 11, fontWeight: 'bold', color: '#000000' },
+  paraNoteRoutingCard: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 6,
+    padding: 10,
+    marginTop: 10,
+  },
+  paraNoteRoutingHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 5 },
+  paraNoteRoutingCopy: { flex: 1, marginRight: 12 },
+  paraNoteRoutingTitle: { fontSize: 14, lineHeight: 18, fontWeight: 'bold', color: '#000000' },
+  paraNoteRoutingSummary: { fontSize: 11, lineHeight: 15, color: '#303030', marginTop: 2 },
+  noteLocationPolicyRow: { flexDirection: 'row', marginVertical: 6 },
+  noteLocationPolicy: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 4,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
+    marginRight: 6,
+    alignItems: 'center',
+  },
+  noteLocationPolicySelected: { backgroundColor: '#000000' },
+  noteLocationPolicyText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
+  noteLocationPolicyTextSelected: { color: '#ffffff' },
+  advancedLayoutButton: { alignSelf: 'flex-start', paddingVertical: 6, paddingRight: 10 },
+  advancedLayoutButtonText: { fontSize: 11, fontWeight: 'bold', color: '#000000' },
+  relativePathRow: { flexDirection: 'row', marginTop: 4 },
+  relativePathField: { flex: 1, minWidth: 0, marginRight: 8 },
+  relativePathLabel: { width: 'auto', marginBottom: 3 },
   paraRootGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   paraRootCard: { width: '49%', borderWidth: 1, borderColor: '#707070', borderRadius: 5, padding: 7, marginBottom: 7, minHeight: 105 },
   paraRootCardWide: { width: '24%' },
@@ -6764,6 +7106,22 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     fontWeight: 'bold',
     color: '#000000',
+  },
+  archiveErrorBox: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    backgroundColor: '#ffffff',
+    padding: 8,
+    marginBottom: 10,
+  },
+  archiveErrorText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: 'bold',
+    color: '#000000',
+  },
+  disabledBtn: {
+    opacity: 0.45,
   },
   loadingBanner: { borderWidth: 1, borderColor: '#000000', backgroundColor: '#eeeeee', marginHorizontal: 8, marginBottom: 6, paddingVertical: 9, alignItems: 'center' },
   loadingBannerText: { fontSize: 13, fontWeight: 'bold', color: '#000000' },

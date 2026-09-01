@@ -33,7 +33,7 @@ SNFolio works without an online account. Calendar connections and PARA organizat
 - **Day Planner and Weekly Review**: Use the Day Planner for the selected day's schedule, journal, focus tasks, deliverables, project attention, and tomorrow's schedule. Weekly Review summarizes completed, remaining, overdue, and upcoming work and opens or creates a handwritten weekly note.
 - **CalDAV Two-Way Sync**: Synchronize calendar events and, through an optional independent VTODO-capable account, tasks including completion, priorities, undated items, remote deletions, and conflict-protected edits when the server supplies ETags.
 - **PARA Workspace**: Organize actionable Projects, ongoing Areas, reference Resources, and a unified Archive. Reorder Projects, assign them directly to Areas, review open and completed work in separate columns, and link Projects, Areas, and Resources to folders of Supernote notes and other files.
-- **Daily and PARA Notes**: Open or create daily journals and create, browse, and open notes and other files connected to Projects, Areas, and Resources, alongside event-linked notes.
+- **Daily and PARA Notes**: Open or create daily journals and create, browse, and open notes and other files connected to Projects, Areas, and Resources. Create named notes for events and tasks, optionally filing them beneath their assigned Project or Area folder.
 - **Recurring Meetings**: Handle common RRULE schedules, cancellations, and moved occurrences, then append a fresh page using the configured template to the series notebook.
 - **Repeat Controls**: Create daily, weekly, monthly, or yearly series; choose intervals and weekly days; end on a date or after a count; edit a series; and delete one occurrence or the entire series.
 - **Auto-Launch**: Immediately open a newly created note or appended page on device so you can start handwriting right away.
@@ -124,9 +124,9 @@ Time entry is tap-only for device usability: choose an hour, quarter-hour minute
 The **PARA** tab now represents all four categories:
 
 - **Projects** are actionable outcomes with due dates, progress, tasks, assigned events, linked meeting notes, and a folder of supporting files. Each Project card separates open and upcoming items from completed tasks. **Finish** records completion; **Archive** removes unfinished work from the active view without claiming it was completed.
-- **Areas** are ongoing responsibilities that contain active projects and can carry their own folder of notes and reference files. Archiving an Area asks whether its active Projects should also be archived or should remain active and become unfiled.
+- **Areas** are ongoing responsibilities that contain active projects and can carry their own folder of notes and reference files. Tasks and events can be assigned directly to an Area; an event assigned to a Project derives the Project's Area. Archiving an Area asks whether its active Projects should also be archived or should remain active and become unfiled.
 - **Resources** are non-actionable reference topics backed by folders. Link an existing folder by choosing any file inside it; SNFolio lists the same regular files the device exposes, including `.note`, PDF, EPUB, Office, text, and image files. SNFolio can also create additional `.note` files. New Resources default to `/Note/SNFolio/Resources/<Resource name>`.
-- **Archive** combines finished or archived Projects, retired Areas, and archived Resources. Each can be restored; restoring a Project also restores its Area when necessary.
+- **Archive** combines finished or archived Projects, retired Areas, and archived Resources. Projects and Areas are archived in SNFolio before any optional folder move, so a denied permission or failed move leaves the item archived and its folder untouched. Supernote describes moving as file-delete permission because the old path is removed; folder contents are not deleted. Each item can be restored; restoring a Project also restores its Area when necessary.
 - Projects, Areas, and Resources share the same **Refresh Files**, **+ New Note**, and **Choose Folder** workflow. Defaults are `/Note/SNFolio/Projects/<name>`, `/Note/SNFolio/Areas/<name>`, and `/Note/SNFolio/Resources/<name>`; existing Project notebooks migrate to their current containing folder.
 - The left pane follows PARA order—Projects, Areas, Resources, Archive—and each section expands into its items. Selecting an Area opens its projects; selecting a Resource lists the actual files in its folder on the right.
 - Choose **Reorder Projects** and use the arrow controls to save a preferred Project order in both panes.
@@ -145,9 +145,10 @@ The **PARA** tab now represents all four categories:
 - Meetings display start/end times, locations, attendee lists, and agenda previews.
 
 ### 3. Create a Single Meeting Note
-- Tap an event and choose **Create Note**. Taller Day View blocks also show the command directly.
-- The plugin automatically:
-  1. Creates a new `.note` file in the configured meeting-note folder, using the selected meeting template. An event type can override both settings.
+- Tap an event and choose **Create Note**. Taller Day View blocks also show the command directly. For a task, edit it or use its note action in **All Tasks**.
+- Edit the proposed note name, then review the resolved folder and template. Event notes retain the Meeting/Class choice. Choose the assigned Project/Area folder, the standard folder, or browse to another folder without changing the item's PARA membership.
+- The plugin then:
+  1. Creates a new `.note` file in the confirmed folder using the resolved Event Type or Meeting/Class template.
   2. Links the note to the event.
   3. Opens the note so you can start handwriting immediately.
 
@@ -160,7 +161,7 @@ By default, meeting notes are saved in:
 /storage/emulated/0/Note/Meetings/
 ```
 
-You can change the meeting-note folder and template under **⚙ → Connections & Settings → Notes & Storage**. Event types can use their own folder and template.
+You can change the standard Meeting/Class folders and templates under **⚙ → Connections & Settings → Notes & Storage**. Event Types can use their own folder and template. **Default Event Note Location** decides which location Create Note selects initially; the confirmation sheet can override it for one note.
 
 
 

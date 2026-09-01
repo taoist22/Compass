@@ -1,6 +1,10 @@
 import { NativeModules } from 'react-native';
 import { FileUtils } from 'sn-plugin-lib';
-import { ensureFileReadPermission, ensureFileWritePermission } from './pluginPermissions';
+import {
+  ensureFileDeletePermission,
+  ensureFileReadPermission,
+  ensureFileWritePermission,
+} from './pluginPermissions';
 
 type CalendarFileModule = {
   writeTextFile(path: string, content: string): Promise<string>;
@@ -38,14 +42,63 @@ export interface ParaFolderEntry {
 
 /** Fast, same-storage folder move. The native layer refuses overwrite/merge. */
 export async function moveParaFolder(sourcePath: string, destinationPath: string): Promise<ExportResult> {
-  if (!(await ensureFileWritePermission())) {
-    return { success: false, message: 'File access was not allowed.' };
+  // Request sequentially: Android cannot reliably present two permission
+  // prompts at the same time on the plugin panel.
+  const canWrite = await ensureFileWritePermission();
+  const canDelete = canWrite ? await ensureFileDeletePermission() : false;
+  if (!canWrite || !canDelete) {
+    return {
+      success: false,
+      message: 'Folder moves need both File Write and File Delete permission.',
+    };
   }
+
+  const source = sourcePath.replace(/\/+$/, '');
+  const destination = destinationPath.replace(/\/+$/, '');
+  const slash = destination.lastIndexOf('/');
+  const parent = slash > 0 ? destination.slice(0, slash) : '';
+
+  // Use Supernote's supported file bridge first. Plugin permissions are
+  // enforced around this module; an arbitrary native File.renameTo can be
+  // denied even after the user granted the plugin-level permission.
+  if (FileUtils.renameToFile && FileUtils.exists && FileUtils.makeDir) {
+    try {
+      if (!(await FileUtils.exists(source))) {
+        return { success: false, message: `Source folder does not exist: ${source}` };
+      }
+      if (await FileUtils.exists(destination)) {
+        return { success: false, message: `Archive destination already exists: ${destination}` };
+      }
+      if (!parent) return { success: false, message: 'Archive destination has no parent folder.' };
+      const parentReady = await FileUtils.makeDir(parent);
+      if (!parentReady && !(await FileUtils.exists(parent))) {
+        return { success: false, message: `Could not create archive folder: ${parent}` };
+      }
+      const renamed = await FileUtils.renameToFile(source, destination);
+      if (!renamed) {
+        return {
+          success: false,
+          message: 'Supernote could not rename the folder. Check that both locations are on the same storage device.',
+        };
+      }
+      const [sourceStillExists, destinationExists] = await Promise.all([
+        FileUtils.exists(source),
+        FileUtils.exists(destination),
+      ]);
+      if (sourceStillExists || !destinationExists) {
+        return { success: false, message: 'Supernote reported success, but the folder move could not be verified.' };
+      }
+      return { success: true, path: destination, message: `Moved folder to ${destination}` };
+    } catch (e: any) {
+      return { success: false, message: e?.message || 'Supernote folder move failed.' };
+    }
+  }
+
   if (!CalendarFile?.moveFolder) {
     return { success: false, message: 'This build is missing folder-move support.' };
   }
   try {
-    const path = await CalendarFile.moveFolder(sourcePath, destinationPath);
+    const path = await CalendarFile.moveFolder(source, destination);
     return { success: true, path, message: `Moved folder to ${path}` };
   } catch (e: any) {
     return { success: false, message: e?.message || 'Folder move failed.' };

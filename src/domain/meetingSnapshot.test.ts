@@ -1,4 +1,4 @@
-import { createMeetingSnapshot, generateNoteFilename, noteIdentity } from './meetingSnapshot';
+import { createMeetingSnapshot, generateNoteFilename, noteIdentity, safeNoteFilename } from './meetingSnapshot';
 import { CalendarEvent } from './types';
 
 describe('meetingSnapshot', () => {
@@ -30,6 +30,10 @@ describe('meetingSnapshot', () => {
     };
     const filename = generateNoteFilename(recurringEvent, true, 'Series - ');
     expect(filename).toBe('Series - Q3 Product Strategy Sync.note');
+  });
+
+  test('safeNoteFilename accepts a user title without allowing path characters or duplicate extension', () => {
+    expect(safeNoteFilename('  Client: Review / Decisions.note  ')).toBe('Client Review Decisions.note');
   });
 
   test('createMeetingSnapshot formats header text block with all fields', () => {

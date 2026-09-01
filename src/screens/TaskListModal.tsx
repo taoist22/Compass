@@ -30,6 +30,8 @@ interface TaskListModalProps {
   onClose: () => void;
   onToggle: (task: CalendarTask) => void;
   onEdit: (task: CalendarTask) => void;
+  notePathFor: (uid: string) => string | undefined;
+  onNoteAction: (task: CalendarTask, existingPath?: string) => void;
 }
 
 /**
@@ -51,6 +53,8 @@ export function TaskListModal({
   onClose,
   onToggle,
   onEdit,
+  notePathFor,
+  onNoteAction,
 }: TaskListModalProps): React.JSX.Element {
   const [scope, setScope] = useState<TaskScope>('open');
   const [grouping, setGrouping] = useState<TaskGrouping>('due');
@@ -270,7 +274,9 @@ export function TaskListModal({
                     </Text>
                   ) : null}
 
-                  {group.tasks.map(task => (
+                  {group.tasks.map(task => {
+                    const notePath = notePathFor(task.uid);
+                    return (
                     <View key={task.uid} style={styles.row}>
                       <TouchableOpacity onPress={() => onToggle(task)} style={styles.check}>
                         <Text allowFontScaling={false} style={styles.checkText}>
@@ -287,8 +293,19 @@ export function TaskListModal({
                           {taskRowLabel(task, true)}
                         </Text>
                       </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.noteButton}
+                        onPress={() => onNoteAction(task, notePath)}
+                        accessibilityLabel={notePath ? `Open note for ${task.title}` : `Create note for ${task.title}`}
+                      >
+                        <Text allowFontScaling={false} style={styles.noteButtonText}>
+                          {notePath ? '📂 Open Note' : '📝 Create Note'}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
-                  ))}
+                    );
+                  })}
                 </View>
               ))
             )}
@@ -373,5 +390,14 @@ const styles = StyleSheet.create({
   rowBody: { flex: 1, paddingRight: 4 },
   rowText: { fontSize: 13, color: '#000000' },
   rowTextDone: { textDecorationLine: 'line-through', color: '#606060' },
+  noteButton: {
+    borderWidth: 1,
+    borderColor: '#000000',
+    borderRadius: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    marginLeft: 4,
+  },
+  noteButtonText: { fontSize: 11, fontWeight: 'bold', color: '#000000' },
   empty: { fontSize: 13, color: '#505050', textAlign: 'center', paddingVertical: 20 },
 });

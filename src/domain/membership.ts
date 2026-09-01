@@ -12,14 +12,11 @@ import { Area, EventType, ItemMembership, Project } from './types';
  *
  * Order of authority:
  *   1. the item's project, which owns the answer outright
- *   2. its event type's default area
- *   3. an area chosen directly, which is how a task with no project is filed
+ *   2. an Area chosen directly for this task or event
+ *   3. its event type's default Area
  *
- * A type outranks a stored area because only events carry a type, and the only
- * way an event ever acquired a stored area was an earlier version writing the
- * type's area into the record. Preferring the type re-reads that from source
- * and lets a retagged event follow its new type instead of staying frozen on
- * whichever type it was given first.
+ * A direct choice outranks a type default: "default" is a convenience, not a
+ * rule that should silently discard an explicit filing decision.
  */
 export function resolveAreaId(
   membership: ItemMembership | undefined,
@@ -35,12 +32,14 @@ export function resolveAreaId(
     if (project) return project.areaId;
   }
 
+  if (membership.areaId) return membership.areaId;
+
   if (membership.typeId) {
     const type = eventTypes.find(t => t.id === membership.typeId);
     if (type) return type.defaultAreaId;
   }
 
-  return membership.areaId;
+  return undefined;
 }
 
 /**

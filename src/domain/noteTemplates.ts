@@ -142,8 +142,8 @@ export function parseSystemTemplates(raw: unknown): SystemTemplate[] {
 /**
  * Where a note goes and what it looks like, given the event's type.
  *
- * An event type carries its own folder and template, so tagging the event is
- * the whole decision — there is nothing left to ask when a note is created.
+ * An event type carries a default folder and template. Create Note displays
+ * these resolved defaults and may override the folder for that one note.
  * Falls back to the per-kind settings when a type has no preference of its
  * own, or when the event has no type at all.
  */

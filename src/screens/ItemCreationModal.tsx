@@ -81,7 +81,8 @@ interface ItemCreationModalProps {
     event: CalendarEvent,
     targetFeedId: string,
     typeId?: string,
-    projectId?: string
+    projectId?: string,
+    areaId?: string
   ) => void;
   /** dueDate omitted means a genuinely undated task, not one dated today. */
   onCreateTask: (task: {
@@ -101,6 +102,9 @@ interface ItemCreationModalProps {
    * while the real values sit elsewhere.
    */
   editingTask?: CalendarTask | null;
+  /** Linked handwritten note for this task, if one exists. */
+  taskNotePath?: string;
+  onTaskNoteAction?: (task: CalendarTask, existingPath?: string) => void;
   /** Only offered while editing an existing item, never while creating one. */
   onDeleteTask?: (uid: string) => void;
   /** PARA areas to choose from, and the one this task is filed under. */
@@ -115,6 +119,7 @@ interface ItemCreationModalProps {
   eventTypes?: EventType[];
   eventTypeId?: string;
   eventProjectId?: string;
+  eventAreaId?: string;
 }
 
 
@@ -132,6 +137,8 @@ export function ItemCreationModal({
   onCreateTask,
   onDeleteTask,
   editingTask,
+  taskNotePath,
+  onTaskNoteAction,
   areas = [],
   taskAreaId,
   onCreateArea,
@@ -141,6 +148,7 @@ export function ItemCreationModal({
   eventTypes = [],
   eventTypeId,
   eventProjectId,
+  eventAreaId,
 }: ItemCreationModalProps): React.JSX.Element {
   const [title, setTitle] = useState<string>('');
   const titleInputRef = useRef<HandwritingTextInputHandle>(null);
@@ -235,7 +243,7 @@ export function ItemCreationModal({
       setNoDueDate(false);
       setTaskStatusValue(editingTask ? taskStatus(editingTask) : 'todo');
       setTaskPriorityValue(editingTask?.priority || 1);
-      setAreaValue(taskAreaId);
+      setAreaValue(isEditingTask ? taskAreaId : eventAreaId);
       setAddingArea(false);
       setNewAreaName('');
       setProjectValue(taskProjectId ?? eventProjectId);
@@ -279,7 +287,7 @@ export function ItemCreationModal({
     } else {
       setIsAllDay(initialParsed ? initialParsed.allDay : type === 'task');
     }
-  }, [visible, initialTitle, initialParsed, type, editingEvent, targetDate, editingTask, taskAreaId, taskProjectId, eventTypeId, eventProjectId]);
+  }, [visible, initialTitle, initialParsed, type, editingEvent, targetDate, editingTask, taskAreaId, taskProjectId, eventTypeId, eventProjectId, eventAreaId]);
 
   const shiftDate = (days: number) => {
     setItemDate(prev => {
@@ -349,7 +357,13 @@ export function ItemCreationModal({
           'Primary Calendar',
       };
 
-      onCreateEvent(newEvt, selectedFeedId, typeValue, projectValue);
+      onCreateEvent(
+        newEvt,
+        selectedFeedId,
+        typeValue,
+        projectValue,
+        derivedArea ? undefined : areaValue
+      );
     } else {
       onCreateTask({
         uid: editingEvent?.uid,
@@ -897,6 +911,89 @@ export function ItemCreationModal({
               </>
             )}
 
+            {itemKind === 'event' && (areas.length > 0 || Boolean(onCreateArea)) && (
+              <>
+                <Text allowFontScaling={false} style={styles.label}>Area:</Text>
+                {derivedArea ? (
+                  <Text allowFontScaling={false} style={styles.derivedArea}>
+                    {derivedAreaName} — from project
+                  </Text>
+                ) : (
+                  <>
+                    <View style={styles.chipRow}>
+                      <TouchableOpacity
+                        style={[styles.stateChip, !areaValue && styles.stateChipSelected]}
+                        onPress={() => setAreaValue(undefined)}
+                      >
+                        <Text
+                          allowFontScaling={false}
+                          style={[styles.stateChipText, !areaValue && styles.stateChipTextSelected]}
+                        >
+                          {eventTypes.find(eventType => eventType.id === typeValue)?.defaultAreaId
+                            ? 'Type Default'
+                            : 'None'}
+                        </Text>
+                      </TouchableOpacity>
+                      {areas
+                        .filter(area => !area.archived)
+                        .map(area => (
+                          <TouchableOpacity
+                            key={area.id}
+                            style={[styles.stateChip, areaValue === area.id && styles.stateChipSelected]}
+                            onPress={() => setAreaValue(area.id)}
+                          >
+                            <Text
+                              allowFontScaling={false}
+                              style={[
+                                styles.stateChipText,
+                                areaValue === area.id && styles.stateChipTextSelected,
+                              ]}
+                            >
+                              {area.icon ? `${area.icon} ` : ''}{area.name}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      {onCreateArea && !addingArea && (
+                        <TouchableOpacity style={styles.stateChip} onPress={() => setAddingArea(true)}>
+                          <Text allowFontScaling={false} style={styles.stateChipText}>+ New</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                    {addingArea && onCreateArea && (
+                      <View style={styles.timeEntryRow}>
+                        <HandwritingTextInput
+                          ref={newAreaInputRef}
+                          style={[styles.textInput, styles.timeInput]}
+                          value={newAreaName}
+                          onChangeText={setNewAreaName}
+                          placeholder="Area name"
+                          placeholderTextColor="#707070"
+                          autoCorrect={false}
+                        />
+                        <TouchableOpacity
+                          style={styles.meridiemBtn}
+                          onPress={() => {
+                            const name = newAreaInputRef.current?.getValue() ?? newAreaName;
+                            if (!name.trim()) return;
+                            setAreaValue(onCreateArea(name.trim()));
+                            setNewAreaName('');
+                            setAddingArea(false);
+                          }}
+                        >
+                          <Text allowFontScaling={false} style={styles.meridiemText}>Add</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                    {!areaValue && eventTypes.find(eventType => eventType.id === typeValue)?.defaultAreaId && (
+                      <Text allowFontScaling={false} style={styles.derivedArea}>
+                        {areas.find(area => area.id === eventTypes.find(eventType => eventType.id === typeValue)?.defaultAreaId)?.name || 'Area'} — from Event Type
+                      </Text>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+
             {/* Events can belong to a project too: that membership is what
                 gathers their notes into the project's meeting ledger. */}
             {itemKind === 'event' && projects.length > 0 && (
@@ -998,6 +1095,17 @@ export function ItemCreationModal({
                 💾 Save {itemKind === 'event' ? 'Event' : 'Task'}
               </Text>
             </TouchableOpacity>
+
+            {editingTask && onTaskNoteAction && (
+              <TouchableOpacity
+                style={styles.taskNoteBtn}
+                onPress={() => onTaskNoteAction(editingTask, taskNotePath)}
+              >
+                <Text allowFontScaling={false} style={styles.taskNoteBtnText}>
+                  {taskNotePath ? '📂 Open Note' : '📝 Create Note'}
+                </Text>
+              </TouchableOpacity>
+            )}
 
             {/* Editing only: there is nothing to delete from a create form. */}
             {editingTask && onDeleteTask && (
@@ -1292,6 +1400,16 @@ const styles = StyleSheet.create({
   footerGrow: {
     flex: 1,
   },
+  taskNoteBtn: {
+    borderWidth: 2,
+    borderColor: '#000000',
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginLeft: 7,
+    justifyContent: 'center',
+  },
+  taskNoteBtnText: { fontSize: 12, fontWeight: 'bold', color: '#000000' },
   deleteTaskBtn: {
     borderWidth: 2,
     borderColor: '#000000',

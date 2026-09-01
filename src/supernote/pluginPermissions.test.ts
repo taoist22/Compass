@@ -1,8 +1,10 @@
 import {
   ensureFileReadPermission,
+  ensureFileDeletePermission,
   ensureFileWritePermission,
   ensurePluginPermission,
   FILE_READ_PERMISSION,
+  FILE_DELETE_PERMISSION,
   FILE_WRITE_PERMISSION,
 } from './pluginPermissions';
 import { PluginManager } from 'sn-plugin-lib';
@@ -49,6 +51,17 @@ describe('plugin permissions', () => {
     expect(manager.requestPermission).toHaveBeenCalledWith(
       FILE_WRITE_PERMISSION,
       expect.stringContaining('journal'),
+    );
+  });
+
+  test('describes delete access as required for explicit archive folder moves', async () => {
+    manager.hasPermission.mockResolvedValue(0);
+    manager.requestPermission.mockResolvedValue(1);
+
+    await expect(ensureFileDeletePermission()).resolves.toBe(true);
+    expect(manager.requestPermission).toHaveBeenCalledWith(
+      FILE_DELETE_PERMISSION,
+      expect.stringContaining('does not delete the folder contents'),
     );
   });
 

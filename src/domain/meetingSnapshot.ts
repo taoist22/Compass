@@ -1,5 +1,17 @@
 import { CalendarEvent, MeetingSnapshot, NoteKind } from './types';
 
+/** User-facing note title converted to one safe `.note` filename. */
+export function safeNoteFilename(value: string): string {
+  const clean = value
+    .trim()
+    .replace(/\.note$/i, '')
+    .replace(/[/\\?%*:|"<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+  return `${clean || 'Note'}.note`;
+}
+
 /**
  * The identity a note-related fact belongs to.
  *
@@ -22,11 +34,7 @@ export function generateNoteFilename(
   seriesPrefix = 'Series - ',
   kind: NoteKind = 'meeting'
 ): string {
-  const sanitize = (s: string) =>
-    s
-      .replace(/[/\\?%*:|"<>]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
+  const sanitize = (s: string) => safeNoteFilename(s).replace(/\.note$/i, '');
 
   const prefix = kind === 'class' && seriesPrefix === 'Series - ' ? 'Course - ' : seriesPrefix;
 

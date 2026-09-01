@@ -10,10 +10,17 @@ import {
 
 // sn-plugin-lib resolves native modules at import time, which jest has none of.
 jest.mock('sn-plugin-lib', () => ({
+  PluginManager: {
+    hasPermission: jest.fn().mockResolvedValue(1),
+    requestPermission: jest.fn().mockResolvedValue(1),
+  },
   FileUtils: {
     getExportPath: jest.fn().mockResolvedValue('/storage/emulated/0/Export'),
     listFiles: jest.fn().mockResolvedValue(null),
     openFilePath: jest.fn().mockResolvedValue(true),
+    exists: jest.fn().mockResolvedValue(false),
+    makeDir: jest.fn().mockResolvedValue(true),
+    renameToFile: jest.fn().mockResolvedValue(true),
   },
 }));
 
@@ -105,6 +112,20 @@ describe('listStorageRoots', () => {
 });
 
 describe('moveParaFolder', () => {
+  beforeEach(() => {
+    const { FileUtils, PluginManager } = require('sn-plugin-lib');
+    PluginManager.hasPermission.mockReset().mockResolvedValue(1);
+    PluginManager.requestPermission.mockReset().mockResolvedValue(1);
+    FileUtils.exists.mockReset();
+    FileUtils.exists
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    FileUtils.makeDir.mockReset().mockResolvedValue(true);
+    FileUtils.renameToFile.mockReset().mockResolvedValue(true);
+  });
+
   test('returns the destination reported by the native same-storage move', async () => {
     const source = '/storage/emulated/0/Note/Projects/Acme';
     const destination = '/storage/emulated/0/Note/Archive/Projects/Acme';
@@ -114,16 +135,30 @@ describe('moveParaFolder', () => {
       path: destination,
       message: `Moved folder to ${destination}`,
     });
-    expect(NativeModules.CalendarFile.moveFolder).toHaveBeenCalledWith(source, destination);
+    const { FileUtils } = require('sn-plugin-lib');
+    expect(FileUtils.renameToFile).toHaveBeenCalledWith(source, destination);
   });
 
   test('surfaces a native collision without pretending the move succeeded', async () => {
-    NativeModules.CalendarFile.moveFolder.mockRejectedValueOnce(new Error('Destination already exists'));
+    const { FileUtils } = require('sn-plugin-lib');
+    FileUtils.exists.mockReset().mockResolvedValueOnce(true).mockResolvedValueOnce(true);
 
     await expect(moveParaFolder('/storage/source', '/storage/destination')).resolves.toEqual({
       success: false,
-      message: 'Destination already exists',
+      message: 'Archive destination already exists: /storage/destination',
     });
+  });
+
+  test('reports an ungranted delete permission before touching storage', async () => {
+    const { PluginManager, FileUtils } = require('sn-plugin-lib');
+    PluginManager.hasPermission.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+    PluginManager.requestPermission.mockResolvedValueOnce(0);
+
+    await expect(moveParaFolder('/storage/source', '/storage/destination')).resolves.toEqual({
+      success: false,
+      message: 'Folder moves need both File Write and File Delete permission.',
+    });
+    expect(FileUtils.renameToFile).not.toHaveBeenCalled();
   });
 });
 

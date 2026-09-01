@@ -65,7 +65,7 @@ export function ensureFileWritePermission(): Promise<boolean> {
 export function ensureFileDeletePermission(): Promise<boolean> {
   return ensurePluginPermission(
     FILE_DELETE_PERMISSION,
-    'Allow SNFolio to delete a note when you explicitly choose Delete Note.',
+    'Allow SNFolio to move a folder by removing its old path. Moving does not delete the folder contents.',
   );
 }
 

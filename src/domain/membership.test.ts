@@ -42,11 +42,8 @@ describe('resolveAreaId', () => {
     expect(resolveAreaId({ typeId: 'type-class' }, PROJECTS, TYPES)).toBe(WORK.id);
   });
 
-  test('a retagged event follows its new type instead of staying frozen', () => {
-    // The old code wrote the type's area into the record and then guarded it
-    // with `existingArea ||`, so the first type an event was given decided its
-    // area permanently. Reading through the type undoes that.
-    expect(resolveAreaId({ typeId: 'type-class', areaId: HOUSE.id }, PROJECTS, TYPES)).toBe(WORK.id);
+  test('an explicitly selected event area overrides its type default', () => {
+    expect(resolveAreaId({ typeId: 'type-class', areaId: HOUSE.id }, PROJECTS, TYPES)).toBe(HOUSE.id);
   });
 
   test('a type with no default area files nothing', () => {

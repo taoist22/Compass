@@ -1,6 +1,6 @@
 import { FileUtils, PluginCommAPI, PluginFileAPI } from 'sn-plugin-lib';
-import { CalendarEvent, CalendarSettings, EventType, NoteKind } from '../domain/types';
-import { generateNoteFilename } from '../domain/meetingSnapshot';
+import { CalendarEvent, CalendarSettings, CalendarTask, EventType, NoteKind } from '../domain/types';
+import { generateNoteFilename, safeNoteFilename } from '../domain/meetingSnapshot';
 import {
   DEFAULT_SYSTEM_TEMPLATE,
   resolveNoteDestination,
@@ -156,17 +156,51 @@ export class MeetingNoteService {
     return res.success ? { success: true, notePath } : { success: false, error: res.error };
   }
 
+  /** Creates one note linked to a task; tasks do not append recurring pages. */
+  async createTaskNote(
+    task: CalendarTask,
+    noteName: string,
+    folder: string,
+    template: string
+  ): Promise<{ success: boolean; notePath: string; error?: string }> {
+    const notePath = `${folder.replace(/\/+$/, '')}/${safeNoteFilename(noteName)}`;
+    if (!(await this.ensureDirectory(folder))) {
+      return { success: false, notePath, error: 'File write access was not allowed.' };
+    }
+    try {
+      const existing: any = await PluginFileAPI.getNoteTotalPageNum(notePath);
+      if (existing?.success && typeof existing.data === 'number' && existing.data > 0) {
+        return { success: false, notePath, error: `${safeNoteFilename(noteName)} already exists in this folder.` };
+      }
+      const created = await this.createNoteWithTemplate(notePath, template || DEFAULT_SYSTEM_TEMPLATE);
+      if (!created.success) return { success: false, notePath, error: created.error };
+      calendarStorage.setMapping({
+        eventUid: task.uid,
+        seriesId: task.uid,
+        notePath,
+        lastPageNum: 1,
+        lastCreatedIso: new Date().toISOString(),
+      });
+      return { success: true, notePath };
+    } catch (error: any) {
+      return { success: false, notePath, error: error?.message || 'Could not create task note.' };
+    }
+  }
+
   async createOrAppendMeetingNote(
     event: CalendarEvent,
     forceNewFile = false,
     kind: NoteKind = 'meeting',
     /** The event's type, when it has one; its folder and template win. */
-    eventType?: EventType
+    eventType?: EventType,
+    /** Folder confirmed by the user; omitted only by legacy/internal callers. */
+    selectedFolder?: string,
+    /** Editable title confirmed before the first file is created. */
+    noteName?: string
   ): Promise<MeetingNoteResult> {
     const settings = calendarStorage.getSettings();
-    // An event type answers both questions, so a typed event needs no prompt.
-    // Falls back to the per-kind settings when it has no type, or when its type
-    // has no preference of its own.
+    // The confirmation UI shows this same resolution. Event Type remains a
+    // default for folder/template rather than preventing a per-note override.
     const destination = resolveNoteDestination(eventType, {
       folder:
         (kind === 'class'
@@ -177,12 +211,22 @@ export class MeetingNoteService {
         DEFAULT_SYSTEM_TEMPLATE,
     });
 
-    const targetDir = destination.folder;
     const templateValue = destination.template;
 
     const isRecurringSeries = Boolean(event.recurringSeriesId && !forceNewFile);
-    const filename = generateNoteFilename(event, isRecurringSeries, settings.seriesNotebookPrefix, kind);
-    const notePath = `${targetDir}/${filename}`;
+    const filename = noteName
+      ? safeNoteFilename(noteName)
+      : generateNoteFilename(event, isRecurringSeries, settings.seriesNotebookPrefix, kind);
+    // Once a note exists, its recorded path wins. Otherwise changing a
+    // Project, Area, Event Type, or routing setting would split a recurring
+    // series across multiple notebooks without warning.
+    const existingMapping = forceNewFile
+      ? undefined
+      : calendarStorage.getMapping(event.recurringSeriesId || event.uid);
+    const proposedDir = selectedFolder || destination.folder;
+    const notePath = existingMapping?.notePath || `${proposedDir}/${filename}`;
+    const noteSlash = notePath.lastIndexOf('/');
+    const targetDir = noteSlash > 0 ? notePath.slice(0, noteSlash) : proposedDir;
     if (!(await this.ensureDirectory(targetDir))) {
       return {
         success: false,
@@ -201,6 +245,15 @@ export class MeetingNoteService {
       const totalPagesRes: any = await PluginFileAPI.getNoteTotalPageNum(notePath);
 
       if (totalPagesRes && totalPagesRes.success && typeof totalPagesRes.data === 'number' && totalPagesRes.data > 0) {
+        if (noteName && !existingMapping) {
+          return {
+            success: false,
+            notePath,
+            pageNum: totalPagesRes.data,
+            isNewFile: false,
+            error: `${filename} already exists in this folder. Choose another note name.`,
+          };
+        }
         // File exists -> Append page to existing series notebook
         const lastPage = totalPagesRes.data;
         // insertNotePage documents its template as a name, so the configured

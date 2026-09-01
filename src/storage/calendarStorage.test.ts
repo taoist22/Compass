@@ -778,6 +778,30 @@ describe('PARA folder moves', () => {
   });
 });
 
+describe('event Area override migration', () => {
+  beforeEach(async () => {
+    await AsyncStorage.clear();
+  });
+
+  test('clears copied type defaults once without affecting task Areas', async () => {
+    await AsyncStorage.setItem('@sn-calendar/settings', JSON.stringify({
+      feeds: [],
+      eventAreaOverridesMigrated: false,
+    }));
+    await AsyncStorage.setItem('@sn-calendar/itemMembership', JSON.stringify({
+      typedEvent: { typeId: 'type-work', areaId: 'old-type-default' },
+      task: { areaId: 'chosen-task-area' },
+    }));
+
+    const store = new CalendarStorage();
+    await store.load();
+
+    expect(store.getMembership('typedEvent')).toEqual({ typeId: 'type-work', areaId: undefined });
+    expect(store.getMembership('task')).toEqual({ areaId: 'chosen-task-area' });
+    expect(store.getSettings().eventAreaOverridesMigrated).toBe(true);
+  });
+});
+
 describe('task account lifecycle persistence', () => {
   beforeEach(async () => {
     await AsyncStorage.clear();

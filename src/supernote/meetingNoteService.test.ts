@@ -1,5 +1,5 @@
 import { meetingNoteService } from './meetingNoteService';
-import { CalendarEvent } from '../domain/types';
+import { CalendarEvent, CalendarTask } from '../domain/types';
 import { calendarStorage } from '../storage/calendarStorage';
 import { noteIdentity } from '../domain/meetingSnapshot';
 import { PluginFileAPI } from 'sn-plugin-lib';
@@ -195,6 +195,84 @@ describe('note kind routing', () => {
       uid: 'evt-default-1',
     });
     expect(res.notePath).toContain('/Note/Meetings/');
+  });
+
+  test('a contextual Project or Area folder overrides the global folder but not the template', async () => {
+    const res = await meetingNoteService.createOrAppendMeetingNote(
+      { ...sampleEvent, uid: 'evt-project-route' },
+      false,
+      'meeting',
+      undefined,
+      '/storage/emulated/0/Note/Clients/Acme/Meetings'
+    );
+
+    expect(res.notePath).toContain('/Note/Clients/Acme/Meetings/');
+    const [args] = (PluginFileAPI.createNote as jest.Mock).mock.calls[0];
+    expect(args.template).toBe('style_meeting_notes');
+  });
+
+  test('uses an editable event-note name and refuses to append to an unrelated collision', async () => {
+    (PluginFileAPI.getNoteTotalPageNum as jest.Mock).mockResolvedValueOnce({ success: true, data: 2 });
+    const res = await meetingNoteService.createOrAppendMeetingNote(
+      { ...sampleEvent, uid: 'evt-custom-collision' },
+      false,
+      'meeting',
+      undefined,
+      '/storage/emulated/0/Note/Meetings',
+      'My Review'
+    );
+
+    expect(res.success).toBe(false);
+    expect(res.notePath).toBe('/storage/emulated/0/Note/Meetings/My Review.note');
+    expect(res.error).toContain('already exists');
+    expect(PluginFileAPI.insertNotePage).not.toHaveBeenCalledWith(expect.objectContaining({
+      notePath: res.notePath,
+    }));
+  });
+
+  test('creates and maps a named note linked to a task', async () => {
+    const task: CalendarTask = {
+      uid: 'task-note-1',
+      title: 'Prepare proposal',
+      completed: false,
+      createdAt: new Date('2026-08-31T00:00:00Z'),
+    };
+    const res = await meetingNoteService.createTaskNote(
+      task,
+      'Proposal Working Notes',
+      '/storage/emulated/0/Note/Task Notes',
+      'style_8mm_ruled_line'
+    );
+
+    expect(res.success).toBe(true);
+    expect(res.notePath).toBe('/storage/emulated/0/Note/Task Notes/Proposal Working Notes.note');
+    expect(calendarStorage.getMapping(task.uid)?.notePath).toBe(res.notePath);
+  });
+
+  test('an existing series mapping wins after routing settings or membership change', async () => {
+    const mappedPath = '/storage/emulated/0/Note/Old Filing/Series - Design Review.note';
+    calendarStorage.setMapping({
+      eventUid: 'evt-series-routed-week-1',
+      seriesId: 'series-routed',
+      kind: 'meeting',
+      notePath: mappedPath,
+      lastPageNum: 1,
+      lastCreatedIso: new Date().toISOString(),
+    });
+    (PluginFileAPI.getNoteTotalPageNum as jest.Mock).mockResolvedValueOnce({ success: true, data: 1 });
+
+    const res = await meetingNoteService.createOrAppendMeetingNote(
+      { ...sampleEvent, uid: 'evt-series-routed-week-2', recurringSeriesId: 'series-routed' },
+      false,
+      'meeting',
+      undefined,
+      '/storage/emulated/0/Note/Projects/New Project/Meetings'
+    );
+
+    expect(res.notePath).toBe(mappedPath);
+    expect(PluginFileAPI.insertNotePage).toHaveBeenCalledWith(expect.objectContaining({
+      notePath: mappedPath,
+    }));
   });
 });
 
