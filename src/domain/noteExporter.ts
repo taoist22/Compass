@@ -10,6 +10,34 @@ function formatIcsDateTime(d: Date): string {
   )}${pad(d.getUTCSeconds())}Z`;
 }
 
+/** RFC 5545 local DATE-TIME form in either the device or an explicit IANA zone. */
+function formatIcsWallTime(d: Date, timeZone?: string): string {
+  if (!timeZone) {
+    return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}T${pad(d.getHours())}${pad(
+      d.getMinutes()
+    )}${pad(d.getSeconds())}`;
+  }
+  if (!/^[A-Za-z0-9._+/-]+$/.test(timeZone)) throw new Error('Invalid calendar timezone');
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }).formatToParts(d).map(part => [part.type, part.value])
+  );
+  return `${parts.year}${parts.month}${parts.day}T${parts.hour}${parts.minute}${parts.second}`;
+}
+
+function formatTimedProperty(name: 'DTSTART' | 'DTEND' | 'EXDATE', d: Date, event: CalendarEvent): string {
+  if (event.recurrenceValueType === 'zoned' && event.recurrenceTimeZone) {
+    return `${name};TZID=${event.recurrenceTimeZone}:${formatIcsWallTime(d, event.recurrenceTimeZone)}`;
+  }
+  if (event.recurrenceValueType === 'floating' || (!event.recurrenceValueType && event.rrule)) {
+    return `${name}:${formatIcsWallTime(d)}`;
+  }
+  return `${name}:${formatIcsDateTime(d)}`;
+}
+
 /** RFC 5545 DATE form for all-day events, e.g. 20260825 */
 function formatIcsDate(d: Date): string {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
@@ -74,17 +102,21 @@ export function generateOutboundIcsEvent(event: CalendarEvent): string {
 
   const dateLines = event.allDay
     ? [`DTSTART;VALUE=DATE:${formatIcsDate(event.start)}`, `DTEND;VALUE=DATE:${formatIcsDate(event.end)}`]
-    : [`DTSTART:${formatIcsDateTime(event.start)}`, `DTEND:${formatIcsDateTime(event.end)}`];
-  const exceptionLine = event.exceptionDates && event.exceptionDates.length > 0
-    ? event.allDay
-      ? `EXDATE;VALUE=DATE:${event.exceptionDates.map(d => d.replace(/-/g, '')).join(',')}`
-      : `EXDATE:${event.exceptionDates.map(key => {
-          const [year, month, day] = key.split('-').map(Number);
-          const date = new Date(event.start);
-          date.setFullYear(year, month - 1, day);
-          return formatIcsDateTime(date);
-        }).join(',')}`
-    : '';
+    : [formatTimedProperty('DTSTART', event.start, event), formatTimedProperty('DTEND', event.end, event)];
+  const exceptionLines: string[] = [];
+  if (event.allDay && event.exceptionDates?.length) {
+    exceptionLines.push(`EXDATE;VALUE=DATE:${event.exceptionDates.map(d => d.replace(/-/g, '')).join(',')}`);
+  } else if (!event.allDay) {
+    const exceptionInstants = (event.recurrenceExceptionInstants || [])
+      .map(value => new Date(value))
+      .filter(date => !Number.isNaN(date.getTime()))
+      .map(date => formatTimedProperty('EXDATE', date, event));
+    if (exceptionInstants.length) {
+      const unique = [...new Set(exceptionInstants)];
+      const prefix = unique[0].slice(0, unique[0].indexOf(':') + 1);
+      exceptionLines.push(`${prefix}${unique.map(line => line.slice(prefix.length)).join(',')}`);
+    }
+  }
   const organizerLine = event.organizer?.email
     ? `ORGANIZER${event.organizer.name ? `;CN=${escapeIcsText(event.organizer.name)}` : ''}:mailto:${event.organizer.email}`
     : '';
@@ -118,7 +150,7 @@ export function generateOutboundIcsEvent(event: CalendarEvent): string {
     event.location ? `LOCATION:${escapeIcsText(event.location)}` : '',
     event.description ? `DESCRIPTION:${escapeIcsText(event.description)}` : '',
     event.rrule ? `RRULE:${event.rrule}` : '',
-    exceptionLine,
+    ...exceptionLines,
     organizerLine,
     ...attendeeLines,
     ...alarmLines,
