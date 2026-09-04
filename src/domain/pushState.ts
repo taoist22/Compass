@@ -45,7 +45,7 @@ export function emptyPushState(target = ''): CaldavPushState {
  * permanently dirty.
  */
 export function pushSignature(item: CalendarEvent): string {
-  return [
+  return JSON.stringify([
     item.summary || '',
     item.start instanceof Date ? item.start.getTime() : '',
     item.end instanceof Date ? item.end.getTime() : '',
@@ -57,7 +57,22 @@ export function pushSignature(item: CalendarEvent): string {
     item.undatedTask ? '1' : '0',
     item.priority || '',
     Number.isFinite(item.alarmMinutesBefore) ? item.alarmMinutesBefore : '',
-  ].join('|');
+    // Recurrence, exceptions, participants, and task-mirror state are all
+    // serialized by generateOutboundIcs*, so a change to any of them changes
+    // the bytes the server must receive. While they were missing, editing only
+    // a repeat rule, an attendee, or a deleted occurrence produced a signature
+    // identical to the last successful push, and the edit was never uploaded.
+    item.rrule || '',
+    (item.exceptionDates || []).join(','),
+    (item.recurrenceExceptionInstants || []).join(','),
+    item.recurrenceTimeZone || '',
+    item.timeZone || '',
+    item.recurrenceValueType || '',
+    item.organizer?.name || '',
+    item.organizer?.email || '',
+    (item.attendees || []).map(a => [a.name || '', a.email || '', a.status || '']),
+    item.isTaskMirror ? '1' : '0',
+  ]);
 }
 
 /** Reads the state for a collection, discarding it if it belongs to another. */

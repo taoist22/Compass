@@ -2623,7 +2623,12 @@ export function AgendaScreen(): React.JSX.Element {
       const serverBacked = Boolean(storedRemote || master.caldavUrl);
       const updated = {
         ...master,
-        exceptionDates: [...new Set([...(master.exceptionDates || []), dateStr])],
+        exceptionDates: master.allDay
+          ? [...new Set([...(master.exceptionDates || []), dateStr])]
+          : master.exceptionDates,
+        recurrenceExceptionInstants: master.allDay
+          ? master.recurrenceExceptionInstants
+          : [...new Set([...(master.recurrenceExceptionInstants || []), event.start.toISOString()])],
       };
       if (serverBacked && caldavEnabled && caldavAppleId && caldavPassword) {
         const pushed = await caldavService.pushIcloudEvent(updated, {
@@ -2800,6 +2805,7 @@ export function AgendaScreen(): React.JSX.Element {
       recurringSeriesId: undefined,
       recurrenceId: undefined,
       exceptionDates: undefined,
+      recurrenceExceptionInstants: undefined,
       caldavUrl: undefined,
       etag: undefined,
       sourceKind: 'local',
